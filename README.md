@@ -19,6 +19,23 @@ npx skills add youjiaxing/skills --skill yjx-discuss
 ## 已有 skills
 
 - `yjx-discuss`：通过简短、逐问、敢于纠错的讨论收敛想法，再形成总结。
+- `yjx-local-tracker-setup`：在 Matt Pocock Local Markdown tracker 上增量启用 `Closed` 完成真源和机器配置，默认只预览。
+- `yjx-local-kanban`：只读输出 Local Markdown implementation issues 的人类看板、完整 JSON 依赖图和 Mermaid。
+- `yjx-local-ralph`：从 Local Markdown frontier 手动确认并启动单张 issue，完成后停止；依赖 `yjx-local-kanban`。
+
+### Local Markdown tracker 组合
+
+先通过 Matt Pocock 的 `setup-matt-pocock-skills` 为项目选择 Local Markdown tracker，再安装并运行 `yjx-local-tracker-setup`。该 skill 会生成 `docs/agents/local-tracker.json`，并可在人工确认后为旧 implementation issues 补 `Closed: false`。
+
+典型安装：
+
+```bash
+npx skills add youjiaxing/skills --skill yjx-local-tracker-setup
+npx skills add youjiaxing/skills --skill yjx-local-kanban
+npx skills add youjiaxing/skills --skill yjx-local-ralph
+```
+
+`yjx-local-tracker-setup` 和 `yjx-local-kanban` 可独立安装；`yjx-local-ralph` 必须和 `yjx-local-kanban` 安装在同一个 Agent skills 根目录。脚本要求 Node.js 20 或更高版本，只使用 Node 标准库，不依赖 Claude API、Claude Agent SDK 或 Claude Code 专有运行时，因此可由支持 Agent Skills 和 shell 命令的不同 Agent 使用。
 
 ## 开发者设置
 
