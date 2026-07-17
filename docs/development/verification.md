@@ -1,8 +1,3 @@
----
-name: verify
-description: 在隔离目录中端到端验证 skill 开发链接 CLI。
----
-
 # 验证开发链接 CLI
 
 只使用仓库内 `.verify/` 作为目标目录，禁止触碰真实 Agent 全局 skill 目录。

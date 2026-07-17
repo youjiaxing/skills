@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -18,6 +18,28 @@ async function fixture() {
 async function createLink(source, destination) {
   await symlink(path.resolve(source), destination, process.platform === 'win32' ? 'junction' : 'dir');
 }
+
+async function collectSkillFiles(root) {
+  const files = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.name === '.git' || entry.name === 'node_modules') continue;
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...await collectSkillFiles(entryPath));
+    else if (entry.isFile() && entry.name === 'SKILL.md') files.push(entryPath);
+  }
+  return files;
+}
+
+test('可发布 SKILL.md 只能位于顶层 skills 目录', async () => {
+  const repository = path.resolve(import.meta.dirname, '..');
+  const files = await collectSkillFiles(repository);
+  const unexpected = files.filter((file) => {
+    const relative = path.relative(repository, file).split(path.sep);
+    return relative.length !== 3 || relative[0] !== 'skills' || relative[2] !== 'SKILL.md';
+  });
+
+  assert.deepEqual(unexpected, []);
+});
 
 test('只扫描包含 SKILL.md 的直接子目录', async (t) => {
   const work = await fixture();

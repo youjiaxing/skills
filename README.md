@@ -82,3 +82,5 @@ make test
 - 不可用或未准备发布的 skill 应删除或移出 `skills/`。
 - GitHub 仓库是唯一可编辑真源；Agent 全局目录中的开发链接指向该工作副本。
 - macOS 使用目录符号链接，Windows 使用目录联接（junction）。
+
+开发链接 CLI 的隔离验证步骤见 [`docs/development/verification.md`](docs/development/verification.md)。
