@@ -1,0 +1,21 @@
+{
+  "name": "yjx-skills",
+  "version": "0.1.0",
+  "private": true,
+  "description": "尤嘉兴维护的 Agent skills 与开发链接工具",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "init": "node scripts/link-skills.mjs init",
+    "link": "node scripts/link-skills.mjs link",
+    "force": "node scripts/link-skills.mjs link --force",
+    "prune": "node scripts/link-skills.mjs link --prune",
+    "status": "node scripts/link-skills.mjs status",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  }
+}

@@ -1,0 +1,15 @@
+# 本文件是开发链接配置模板。
+# 首次执行链接命令时，脚本会复制为 developer-targets.local.yaml。
+# 本机配置不会纳入版本控制；请取消需要使用的目录注释，或运行 npm run init。
+
+targets: []
+
+# 常见 Agent 的用户全局 skill 目录（默认全部禁用）：
+# Claude Code
+# - ~/.claude/skills
+
+# Codex
+# - ~/.codex/skills
+
+# Agent Skills 通用目录
+# - ~/.agents/skills
