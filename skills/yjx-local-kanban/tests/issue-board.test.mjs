@@ -9,6 +9,7 @@ import {
   graphPayload,
   loadConfig,
   loadGraph,
+  renderReadyOnly,
   renderText,
   validateConfig,
 } from '../scripts/issue-board.mjs';
@@ -44,6 +45,7 @@ async function writeIssue(feature, filename, {
   blockedBy = null,
   bold = false,
   type = null,
+  inlineBlockedBy = false,
   comments = '',
 } = {}) {
   const field = (name, value) => bold ? `**${name}:** ${value}` : `${name}: ${value}`;
@@ -51,7 +53,8 @@ async function writeIssue(feature, filename, {
   if (status !== null) lines.push(field('Status', status));
   if (closed !== null) lines.push(field('Closed', closed));
   if (type !== null) lines.push(field('Type', type));
-  if (blockedBy !== null && bold) lines.push('', field('Blocked by', blockedBy));
+  if (inlineBlockedBy) lines.push(field('Blocked by', blockedBy ?? 'none'));
+  else if (blockedBy !== null && bold) lines.push('', field('Blocked by', blockedBy));
   else {
     lines.push('', '## Blocked by', '', blockedBy ?? 'None - can start immediately');
   }
@@ -118,12 +121,78 @@ test('custom project status mapping maps back to canonical roles', async (t) => 
   assert.equal(graph.groupOf(issue(graph, '01-ready.md')), 'AGENT READY');
 });
 
-test('wayfinder artifacts are excluded from implementation graph', async (t) => {
+test('auto-detects Wayfinder graph and exposes its frontier with the required skill', async (t) => {
   const work = await fixture(t);
-  await writeIssue(work.feature, '01-research.md', { status: 'claimed', closed: null, type: 'research' });
-  await writeIssue(work.feature, '02-implementation.md');
+  await writeFile(path.join(work.feature, 'map.md'), '# Map\n\nLabel: wayfinder:map\n');
+  await writeIssue(work.feature, '01-resolved.md', {
+    title: 'Resolved decision',
+    status: 'resolved',
+    closed: null,
+    type: 'grilling',
+    inlineBlockedBy: true,
+  });
+  await writeIssue(work.feature, '02-claimed.md', {
+    title: 'Claimed task',
+    status: 'claimed',
+    closed: null,
+    type: 'task',
+    inlineBlockedBy: true,
+  });
+  await writeIssue(work.feature, '03-blocked.md', {
+    title: 'Blocked task',
+    status: 'open',
+    closed: null,
+    type: 'task',
+    blockedBy: '02',
+    inlineBlockedBy: true,
+  });
+  await writeIssue(work.feature, '04-frontier.md', {
+    title: 'Frontier task',
+    status: 'open',
+    closed: null,
+    type: 'task',
+    blockedBy: '01',
+    inlineBlockedBy: true,
+  });
+
   const graph = await loadGraph(work.feature, work.config);
-  assert.deepEqual(graph.issues.map((item) => item.id), ['02-implementation.md']);
+  assert.equal(graph.workflow, 'wayfinder');
+  assert.equal(graph.requiredSkill, '/wayfinder');
+  assert.equal(graph.groupOf(issue(graph, '01-resolved.md')), 'RESOLVED');
+  assert.equal(graph.groupOf(issue(graph, '02-claimed.md')), 'CLAIMED');
+  assert.equal(graph.groupOf(issue(graph, '03-blocked.md')), 'BLOCKED');
+  assert.equal(graph.groupOf(issue(graph, '04-frontier.md')), 'FRONTIER');
+
+  const payload = graphPayload(work.feature, graph, work.root);
+  assert.equal(payload.workflow, 'wayfinder');
+  assert.equal(payload.requiredSkill, '/wayfinder');
+  assert.equal(payload.issues[3].requiredSkill, '/wayfinder');
+  assert.deepEqual(payload.issues[3].blockedByOpen, []);
+
+  const text = renderText(work.feature, graph, work.root);
+  assert.match(text, /required_skill=\/wayfinder/);
+  assert.match(text, /^LEGEND/);
+  assert.match(text, /LEGEND.*✓ 已完成.*> 已领取\/进行中.*× 被阻塞.*○ 可实施/s);
+  assert.match(text, /DEPENDENCY TREE/);
+  assert.match(text, /NOW  可新增并行实施：1 \| 进行中：1/);
+  assert.ok(text.lastIndexOf('\nNOW  ') > text.indexOf('DEPENDENCY TREE'));
+  const readyOnly = renderReadyOnly(work.feature, graph, work.root);
+  assert.match(readyOnly, /Wayfinder frontier/);
+  assert.match(readyOnly, /04 Frontier task/);
+  assert.doesNotMatch(readyOnly, /03 Blocked task/);
+});
+
+test('tree projection renders each issue once and preserves multiple blockers', async (t) => {
+  const work = await fixture(t);
+  await writeIssue(work.feature, '01-first.md', { title: 'First', closed: 'true' });
+  await writeIssue(work.feature, '02-second.md', { title: 'Second', closed: 'true' });
+  await writeIssue(work.feature, '03-joined.md', { title: 'Joined', blockedBy: '01, 02' });
+  const graph = await loadGraph(work.feature, work.config);
+  const text = renderText(work.feature, graph, work.root);
+  const tree = text.slice(text.indexOf('DEPENDENCY TREE'), text.indexOf('\nNOW  '));
+  assert.equal(tree.match(/03 Joined/g)?.length, 1);
+  assert.match(tree, /03 Joined <- 01, 02/);
+  assert.match(text, /NOW  可新增并行实施：1 \| 进行中：0/);
 });
 
 test('duplicate numbers require a unique title match', async (t) => {
@@ -167,15 +236,18 @@ test('JSON remains a complete flat graph without recommendations', async (t) => 
   assert.deepEqual(payload.issues[1].blockedByOpen, ['01-ready.md']);
 });
 
-test('human board keeps immediately actionable groups last', async (t) => {
+test('human board uses symbols and puts NOW at the bottom', async (t) => {
   const work = await fixture(t);
-  await writeIssue(work.feature, '01-info.md', { status: 'needs-info' });
-  await writeIssue(work.feature, '02-human.md', { status: 'ready-for-human' });
-  await writeIssue(work.feature, '03-agent.md');
+  await writeIssue(work.feature, '01-info.md', { title: 'Info', status: 'needs-info' });
+  await writeIssue(work.feature, '02-human.md', { title: 'Human', status: 'ready-for-human' });
+  await writeIssue(work.feature, '03-agent.md', { title: 'Agent' });
   const graph = await loadGraph(work.feature, work.config);
   const text = renderText(work.feature, graph, work.root);
-  assert.ok(text.indexOf('\nWAITING FOR INFO\n') < text.indexOf('\nHUMAN READY\n'));
-  assert.ok(text.indexOf('\nHUMAN READY\n') < text.indexOf('\nAGENT READY\n'));
+  assert.match(text, /\? 01 Info/);
+  assert.match(text, /\? 02 Human/);
+  assert.match(text, /○ 03 Agent/);
+  assert.match(text, /NOW  可新增并行实施：1 \| 进行中：0/);
+  assert.equal(text.trimEnd().endsWith('- 无'), true);
 });
 
 test('config validation rejects non-unique status mappings', () => {

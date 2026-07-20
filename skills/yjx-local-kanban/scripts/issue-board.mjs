@@ -13,7 +13,11 @@ const SECTION_RE = /^##\s+(?<title>.+?)\s*$/;
 const PLAIN_FIELD_RE = /^(?<name>[A-Za-z][A-Za-z0-9 _-]*):\s*(?<value>.*)$/;
 const BOLD_FIELD_RE = /^\*\*(?<name>[A-Za-z][A-Za-z0-9 _-]*):\*\*\s*(?<value>.*)$/;
 const WAYFINDER_TYPES = new Set(['research', 'prototype', 'grilling', 'task']);
-const WAYFINDER_STATUSES = new Set(['claimed', 'resolved']);
+const WAYFINDER_STATUSES = new Set(['open', 'claimed', 'resolved']);
+
+export const WORKFLOW_IMPLEMENTATION = 'implementation';
+export const WORKFLOW_WAYFINDER = 'wayfinder';
+export const WAYFINDER_REQUIRED_SKILL = '/wayfinder';
 
 export const CONFIG_RELATIVE_PATH = path.join('docs', 'agents', 'local-tracker.json');
 export const CANONICAL_ROLES = [
@@ -31,6 +35,13 @@ export const GROUP_ORDER = [
   'OTHER / WARNINGS',
   'HUMAN READY',
   'AGENT READY',
+];
+export const WAYFINDER_GROUP_ORDER = [
+  'RESOLVED',
+  'BLOCKED',
+  'CLAIMED',
+  'OTHER / WARNINGS',
+  'FRONTIER',
 ];
 
 const DEFAULT_STATUS_ROLES = Object.fromEntries(CANONICAL_ROLES.map((role) => [role, role]));
@@ -235,23 +246,31 @@ function statusRoleMap(config) {
   return new Map(CANONICAL_ROLES.map((role) => [config.statusRoles[role], role]));
 }
 
-function isWayfinder(fields, roleByStatus) {
-  const type = normalizeKey((fields.get('type') ?? []).at(-1) ?? '');
-  const status = (fields.get('status') ?? []).at(-1) ?? '';
-  if (WAYFINDER_TYPES.has(type)) return true;
-  return WAYFINDER_STATUSES.has(normalizeKey(status)) && !roleByStatus.has(status);
+async function detectWorkflow(featureDir, issuePaths) {
+  const mapPath = path.join(featureDir, 'map.md');
+  try {
+    const mapFields = readHeaderFields((await readFile(mapPath, 'utf8')).split(/\r?\n/));
+    const labels = mapFields.get('label') ?? [];
+    if (labels.some((label) => normalizeKey(label) === 'wayfinder:map')) return WORKFLOW_WAYFINDER;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+
+  for (const issuePath of issuePaths) {
+    const fields = readHeaderFields((await readFile(issuePath, 'utf8')).split(/\r?\n/));
+    const types = fields.get('type') ?? [];
+    if (types.some((type) => WAYFINDER_TYPES.has(normalizeKey(type)))) return WORKFLOW_WAYFINDER;
+  }
+  return WORKFLOW_IMPLEMENTATION;
 }
 
-async function parseIssueDraft(issuePath, config) {
+async function parseIssueDraft(issuePath, config, workflow) {
   const text = await readFile(issuePath, 'utf8');
   const lines = text.split(/\r?\n/);
   const fileMatch = issuePath.match(/(?:^|[\\/])(?<file>[^\\/]+)$/)?.groups.file.match(ISSUE_FILE_RE);
   if (!fileMatch) throw new Error(`issue filename must look like NN-slug.md: ${issuePath}`);
 
   const fields = readHeaderFields(lines);
-  const roleByStatus = statusRoleMap(config);
-  if (isWayfinder(fields, roleByStatus)) return null;
-
   const warnings = [];
   const metadataErrors = [];
   const id = path.basename(issuePath);
@@ -260,6 +279,61 @@ async function parseIssueDraft(issuePath, config) {
 
   const statuses = fields.get('status') ?? [];
   const status = statuses.at(-1) ?? '';
+  if (workflow === WORKFLOW_WAYFINDER) {
+    const normalizedStatus = normalizeKey(status);
+    const types = fields.get('type') ?? [];
+    const type = normalizeKey(types.at(-1) ?? '');
+    if (types.length === 0) {
+      metadataErrors.push('missing-type');
+      warnings.push({ code: 'missing-type', issue: id, detail: 'Type field is required for Wayfinder tickets' });
+    } else if (new Set(types.map(normalizeKey)).size > 1) {
+      metadataErrors.push('conflicting-type');
+      warnings.push({ code: 'conflicting-type', issue: id, detail: types.join(' | ') });
+    } else if (!WAYFINDER_TYPES.has(type)) {
+      metadataErrors.push('invalid-type');
+      warnings.push({ code: 'invalid-type', issue: id, detail: type || '<empty>' });
+    }
+    if (statuses.length === 0) {
+      metadataErrors.push('missing-status');
+      warnings.push({ code: 'missing-status', issue: id, detail: 'Status field is missing' });
+    } else if (new Set(statuses.map(normalizeKey)).size > 1) {
+      metadataErrors.push('conflicting-status');
+      warnings.push({ code: 'conflicting-status', issue: id, detail: statuses.join(' | ') });
+    } else if (!WAYFINDER_STATUSES.has(normalizedStatus)) {
+      metadataErrors.push('invalid-status');
+      warnings.push({ code: 'invalid-status', issue: id, detail: status || '<empty>' });
+    }
+
+    const sectionLines = readSection(lines, 'Blocked by');
+    const inlineValues = readInlineFieldValues(lines, 'Blocked by');
+    const referenceLines = sectionLines.length > 0 ? sectionLines : inlineValues;
+    const references = referenceLines.flatMap(referenceTokens);
+    return {
+      issue: {
+        id,
+        number,
+        title: displayTitle(heading.trim(), number),
+        workflow,
+        requiredSkill: WAYFINDER_REQUIRED_SKILL,
+        type,
+        status,
+        statusRole: normalizedStatus,
+        hasStatusField: statuses.length > 0,
+        closed: normalizedStatus === 'resolved',
+        resolved: normalizedStatus === 'resolved',
+        claimed: normalizedStatus === 'claimed',
+        metadataValid: metadataErrors.length === 0,
+        metadataErrors,
+        blockedBy: [],
+        blockedByInvalid: [],
+        path: issuePath,
+        _references: references,
+      },
+      warnings,
+    };
+  }
+
+  const roleByStatus = statusRoleMap(config);
   const statusRole = roleByStatus.get(status) ?? '';
   if (statuses.length === 0) {
     metadataErrors.push('missing-status');
@@ -302,6 +376,7 @@ async function parseIssueDraft(issuePath, config) {
       id,
       number,
       title: displayTitle(heading.trim(), number),
+      workflow,
       status,
       statusRole,
       hasStatusField: statuses.length > 0,
@@ -402,8 +477,11 @@ export function dependencyCycles(graph) {
   return cycles;
 }
 
-function makeGraph(issues, warnings) {
+function makeGraph(issues, warnings, workflow) {
   const graph = {
+    workflow,
+    requiredSkill: workflow === WORKFLOW_WAYFINDER ? WAYFINDER_REQUIRED_SKILL : null,
+    groupOrder: workflow === WORKFLOW_WAYFINDER ? WAYFINDER_GROUP_ORDER : GROUP_ORDER,
     issues,
     warnings,
     issueById: new Map(issues.map((issue) => [issue.id, issue])),
@@ -426,6 +504,14 @@ function makeGraph(issues, warnings) {
       return issue.blockedByInvalid.length > 0 || this.missingBlockersOf(issue).length > 0 || this.cycleOf(issue).length > 0;
     },
     groupOf(issue) {
+      if (this.workflow === WORKFLOW_WAYFINDER) {
+        if (issue.resolved && issue.metadataValid) return 'RESOLVED';
+        if (!issue.metadataValid || this.hasGraphError(issue)) return 'OTHER / WARNINGS';
+        if (this.openBlockersOf(issue).length > 0) return 'BLOCKED';
+        if (issue.claimed) return 'CLAIMED';
+        if (normalizeKey(issue.status) === 'open') return 'FRONTIER';
+        return 'OTHER / WARNINGS';
+      }
       if (issue.closed && issue.metadataValid) return 'CLOSED';
       if (!issue.metadataValid || this.hasGraphError(issue)) return 'OTHER / WARNINGS';
       if (this.openBlockersOf(issue).length > 0) return 'BLOCKED';
@@ -452,17 +538,20 @@ export async function loadGraph(featureDir, config) {
     throw error;
   }
 
+  const issuePaths = entries
+    .filter((item) => item.isFile() && ISSUE_FILE_RE.test(item.name))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => path.join(issuesDir, entry.name));
+  if (issuePaths.length === 0) throw new Error(`no issue markdown files found under: ${issuesDir}`);
+
+  const workflow = await detectWorkflow(featureDir, issuePaths);
   const parsed = [];
-  for (const entry of entries.filter((item) => item.isFile() && ISSUE_FILE_RE.test(item.name)).sort((left, right) => left.name.localeCompare(right.name))) {
-    const draft = await parseIssueDraft(path.join(issuesDir, entry.name), config);
-    if (draft) parsed.push(draft);
-  }
-  if (parsed.length === 0) throw new Error(`no implementation issue markdown files found under: ${issuesDir}`);
+  for (const issuePath of issuePaths) parsed.push(await parseIssueDraft(issuePath, config, workflow));
 
   const issues = parsed.map((item) => item.issue);
   const warnings = parsed.flatMap((item) => item.warnings);
   resolveReferences(issues, warnings);
-  let graph = makeGraph(issues, warnings);
+  let graph = makeGraph(issues, warnings, workflow);
   for (const issue of issues) {
     for (const blocker of graph.missingBlockersOf(issue)) warnings.push({ code: 'missing-blocker', issue: issue.id, detail: blocker });
   }
@@ -470,7 +559,7 @@ export async function loadGraph(featureDir, config) {
     const detail = [...cycle, cycle[0]].join(' -> ');
     for (const issue of cycle) warnings.push({ code: 'dependency-cycle', issue, detail });
   }
-  graph = makeGraph(issues, warnings);
+  graph = makeGraph(issues, warnings, workflow);
   return graph;
 }
 
@@ -486,6 +575,9 @@ function issueReferenceLines(label, issues) {
 
 export function renderIssueLines(issue, graph, projectRoot = process.cwd()) {
   const lines = [`- ${issue.number} ${issue.title}`, `  status: ${issue.status || 'unknown'}`];
+  if (graph.workflow === WORKFLOW_WAYFINDER) {
+    lines.push(`  type: ${issue.type || 'unknown'}`, `  required skill: ${issue.requiredSkill}`);
+  }
   lines.push(...issueReferenceLines('open blockers', graph.openBlockersOf(issue)));
   const missing = graph.missingBlockersOf(issue);
   if (missing.length > 0) lines.push('  missing blockers:', ...missing.map((id) => `    - ${id}`));
@@ -495,6 +587,20 @@ export function renderIssueLines(issue, graph, projectRoot = process.cwd()) {
 }
 
 export function summaryPayload(graph) {
+  const edges = graph.issues.reduce((count, issue) => count + issue.blockedBy.filter((id) => graph.issueById.has(id)).length, 0);
+  if (graph.workflow === WORKFLOW_WAYFINDER) {
+    return {
+      issues: graph.issues.length,
+      open: graph.issues.filter((issue) => !issue.resolved).length,
+      resolved: graph.issuesInGroup('RESOLVED').length,
+      blocked: graph.issuesInGroup('BLOCKED').length,
+      claimed: graph.issuesInGroup('CLAIMED').length,
+      frontier: graph.issuesInGroup('FRONTIER').length,
+      other: graph.issuesInGroup('OTHER / WARNINGS').length,
+      edges,
+      warnings: graph.warnings.length,
+    };
+  }
   return {
     issues: graph.issues.length,
     open: graph.issues.filter((issue) => !issue.closed).length,
@@ -506,33 +612,129 @@ export function summaryPayload(graph) {
     needsTriage: graph.issuesInGroup('NEEDS TRIAGE').length,
     other: graph.issuesInGroup('OTHER / WARNINGS').length,
     missingClosed: graph.issues.filter((issue) => !issue.hasClosedField).length,
-    edges: graph.issues.reduce((count, issue) => count + issue.blockedBy.filter((id) => graph.issueById.has(id)).length, 0),
+    edges,
     warnings: graph.warnings.length,
   };
+}
+
+function issueSymbol(issue, graph) {
+  const group = graph.groupOf(issue);
+  if (group === 'CLOSED' || group === 'RESOLVED') return '✓';
+  if (group === 'AGENT READY' || group === 'FRONTIER') return '○';
+  if (group === 'CLAIMED') return '>';
+  if (group === 'BLOCKED') return '×';
+  if (group === 'HUMAN READY' || group === 'WAITING FOR INFO' || group === 'NEEDS TRIAGE') return '?';
+  return '!';
+}
+
+function issueDependencyLabel(issue, graph) {
+  if (issue.blockedBy.length === 0) return '';
+  const blockers = issue.blockedBy.map((id) => {
+    const blocker = graph.issueById.get(id);
+    return blocker ? blocker.number : id;
+  });
+  return ` <- ${blockers.join(', ')}`;
+}
+
+function treeParentMap(graph) {
+  const order = new Map(graph.issues.map((issue, index) => [issue.id, index]));
+  const parentByChild = new Map();
+  for (const issue of graph.issues) {
+    // 环成员不挂到彼此下面，避免异常依赖让渲染递归失控。
+    if (graph.cycleOf(issue).length > 0) continue;
+    const blockers = graph.blockersOf(issue).sort((left, right) => order.get(left.id) - order.get(right.id));
+    if (blockers.length > 0) parentByChild.set(issue.id, blockers.at(-1).id);
+  }
+  return parentByChild;
+}
+
+function renderDependencyTree(graph) {
+  const parentByChild = treeParentMap(graph);
+  const childrenByParent = new Map(graph.issues.map((issue) => [issue.id, []]));
+  for (const [childId, parentId] of parentByChild) childrenByParent.get(parentId)?.push(childId);
+
+  const issueOrder = new Map(graph.issues.map((issue, index) => [issue.id, index]));
+  for (const children of childrenByParent.values()) children.sort((left, right) => issueOrder.get(left) - issueOrder.get(right));
+  const roots = graph.issues.filter((issue) => !parentByChild.has(issue.id)).map((issue) => issue.id);
+  const rendered = new Set();
+  const lines = [];
+
+  function visit(issueId, prefix, isLast) {
+    if (rendered.has(issueId)) return;
+    rendered.add(issueId);
+    const issue = graph.issueById.get(issueId);
+    lines.push(`${prefix}${isLast ? '└─' : '├─'} ${issueSymbol(issue, graph)} ${issue.number} ${issue.title}${issueDependencyLabel(issue, graph)}`);
+    const children = childrenByParent.get(issueId) ?? [];
+    const childPrefix = `${prefix}${isLast ? '  ' : '│ '}`;
+    children.forEach((childId, index) => visit(childId, childPrefix, index === children.length - 1));
+  }
+
+  roots.forEach((rootId, index) => visit(rootId, '', index === roots.length - 1));
+  // 依赖环或异常图可能没有可达根节点，剩余节点各自作为根展示。
+  for (const issue of graph.issues) if (!rendered.has(issue.id)) visit(issue.id, '', true);
+  return lines;
+}
+
+function renderNowLines(graph) {
+  const readyGroup = graph.workflow === WORKFLOW_WAYFINDER ? 'FRONTIER' : 'AGENT READY';
+  const ready = graph.issuesInGroup(readyGroup);
+  const claimed = graph.workflow === WORKFLOW_WAYFINDER ? graph.issuesInGroup('CLAIMED') : [];
+  const lines = [
+    '',
+    `NOW  可新增并行实施：${ready.length} | 进行中：${claimed.length}`,
+    '',
+    '可新增并行实施',
+  ];
+  if (ready.length === 0) lines.push('- 无');
+  for (const issue of ready) {
+    const skill = issue.requiredSkill ? ` | skill=${issue.requiredSkill}` : '';
+    lines.push(`- ${issueSymbol(issue, graph)} ${issue.number} ${issue.title}${skill}`);
+  }
+  lines.push('', '进行中');
+  if (claimed.length === 0) lines.push('- 无');
+  for (const issue of claimed) lines.push(`- ${issueSymbol(issue, graph)} ${issue.number} ${issue.title} | skill=${issue.requiredSkill}`);
+  return lines;
+}
+
+function renderWarnings(graph) {
+  if (graph.warnings.length === 0) return [];
+  return ['', 'WARNINGS', ...graph.warnings.map((warning) => `- code=${warning.code}${warning.issue ? ` issue=${warning.issue}` : ''} detail=${warning.detail}`)];
+}
+
+function renderLegend() {
+  return [
+    'LEGEND  ✓ 已完成 | > 已领取/进行中 | × 被阻塞 | ○ 可实施 | ? 等待人工 | ! 异常',
+  ];
+}
+
+function renderSummaryLine(featureDir, graph, summary) {
+  const completed = graph.workflow === WORKFLOW_WAYFINDER ? summary.resolved : summary.closed;
+  return [
+    ...renderLegend(),
+    `KANBAN ${path.basename(featureDir)} | workflow=${graph.workflow}${graph.requiredSkill ? ` | required_skill=${graph.requiredSkill}` : ''}`,
+    `ISSUES ${summary.issues} | 已完成 ${completed} | 未完成 ${summary.open} | 阻塞 ${summary.blocked}`,
+    '',
+    'DEPENDENCY TREE',
+  ];
 }
 
 export function renderText(featureDir, graph, projectRoot = process.cwd()) {
   const summary = summaryPayload(graph);
   const lines = [
-    `Issue board: ${path.basename(featureDir)}`,
-    `issues=${summary.issues} open=${summary.open} closed=${summary.closed} agent_ready=${summary.agentReady} blocked=${summary.blocked} human_ready=${summary.humanReady} waiting_info=${summary.waitingForInfo} needs_triage=${summary.needsTriage} other=${summary.other} warnings=${summary.warnings}`,
+    ...renderSummaryLine(featureDir, graph, summary),
+    ...renderDependencyTree(graph),
+    ...renderWarnings(graph),
+    ...renderNowLines(graph),
   ];
-  for (const group of GROUP_ORDER) {
-    lines.push('', group);
-    const grouped = graph.issuesInGroup(group);
-    if (grouped.length === 0) lines.push('- none');
-    for (const issue of grouped) lines.push(...renderIssueLines(issue, graph, projectRoot));
-    if (group === 'OTHER / WARNINGS' && graph.warnings.length > 0) {
-      lines.push('', 'WARNINGS');
-      for (const warning of graph.warnings) lines.push(`- code=${warning.code}${warning.issue ? ` issue=${warning.issue}` : ''} detail=${warning.detail}`);
-    }
-  }
   return `${lines.join('\n')}\n`;
 }
 
 export function renderReadyOnly(featureDir, graph, projectRoot = process.cwd()) {
-  const ready = graph.issuesInGroup('AGENT READY');
-  const lines = [`Agent-ready issues: ${path.basename(featureDir)}`, `agent_ready=${ready.length} warnings=${graph.warnings.length}`, '', 'AGENT READY'];
+  const group = graph.workflow === WORKFLOW_WAYFINDER ? 'FRONTIER' : 'AGENT READY';
+  const ready = graph.issuesInGroup(group);
+  const lines = graph.workflow === WORKFLOW_WAYFINDER
+    ? [`Wayfinder frontier: ${path.basename(featureDir)}`, `required_skill=${graph.requiredSkill} frontier=${ready.length} warnings=${graph.warnings.length}`, '', group]
+    : [`Agent-ready issues: ${path.basename(featureDir)}`, `agent_ready=${ready.length} warnings=${graph.warnings.length}`, '', group];
   if (ready.length === 0) lines.push('- none');
   for (const issue of ready) lines.push(...renderIssueLines(issue, graph, projectRoot));
   if (graph.warnings.length > 0) {
@@ -543,6 +745,28 @@ export function renderReadyOnly(featureDir, graph, projectRoot = process.cwd()) 
 }
 
 export function issuePayload(issue, graph, projectRoot = process.cwd()) {
+  if (graph.workflow === WORKFLOW_WAYFINDER) {
+    return {
+      id: issue.id,
+      number: issue.number,
+      title: issue.title,
+      type: issue.type,
+      status: issue.status,
+      resolved: issue.resolved,
+      claimed: issue.claimed,
+      requiredSkill: issue.requiredSkill,
+      hasStatusField: issue.hasStatusField,
+      metadataValid: issue.metadataValid,
+      metadataErrors: issue.metadataErrors,
+      path: displayPath(issue.path, projectRoot),
+      blockedBy: issue.blockedBy,
+      blockedByOpen: graph.openBlockersOf(issue).map((blocker) => blocker.id),
+      blockedByMissing: graph.missingBlockersOf(issue),
+      blockedByInvalid: issue.blockedByInvalid,
+      unlocks: graph.dependentsOf(issue).map((dependent) => dependent.id),
+      dependencyCycle: graph.cycleOf(issue),
+    };
+  }
   return {
     id: issue.id,
     number: issue.number,
@@ -568,6 +792,9 @@ export function issuePayload(issue, graph, projectRoot = process.cwd()) {
 export function graphPayload(featureDir, graph, projectRoot = process.cwd()) {
   return {
     feature: path.basename(featureDir),
+    workflow: graph.workflow,
+    requiredSkill: graph.requiredSkill,
+    ...(graph.workflow === WORKFLOW_WAYFINDER ? { map: displayPath(path.join(featureDir, 'map.md'), projectRoot) } : {}),
     summary: summaryPayload(graph),
     issues: graph.issues.map((issue) => issuePayload(issue, graph, projectRoot)),
     warnings: graph.warnings,
@@ -593,13 +820,15 @@ export function renderMermaid(featureDir, outputPath, graph, projectRoot = proce
   for (const issue of graph.issues) {
     for (const blocker of issue.blockedBy) if (ids.has(blocker)) lines.push(`  ${ids.get(blocker)} --> ${ids.get(issue.id)}`);
   }
-  lines.push('```', '', '## Issues', '', '| Issue | Status | Closed | Group | Blocked by |', '| --- | --- | --- | --- | --- |');
+  const lifecycleHeader = graph.workflow === WORKFLOW_WAYFINDER ? 'Resolved' : 'Closed';
+  lines.push('```', '', '## Issues', '', `| Issue | Status | ${lifecycleHeader} | Group | Blocked by |`, '| --- | --- | --- | --- | --- |');
   for (const issue of graph.issues) {
     const issueLink = path.relative(path.dirname(outputPath), issue.path).split(path.sep).join('/');
     const blockers = issue.blockedBy.map((id) => graph.issueById.has(id)
       ? `[${graph.issueById.get(id).number}](${path.relative(path.dirname(outputPath), graph.issueById.get(id).path).split(path.sep).join('/')})`
       : `\`${id}\``).join(', ') || 'None';
-    lines.push(`| [${issue.number} ${issue.title}](${issueLink}) | \`${issue.status || 'unknown'}\` | \`${issue.closed}\` | ${graph.groupOf(issue)} | ${blockers} |`);
+    const lifecycle = graph.workflow === WORKFLOW_WAYFINDER ? issue.resolved : issue.closed;
+    lines.push(`| [${issue.number} ${issue.title}](${issueLink}) | \`${issue.status || 'unknown'}\` | \`${lifecycle}\` | ${graph.groupOf(issue)} | ${blockers} |`);
   }
   if (graph.warnings.length > 0) {
     lines.push('', '## Warnings', '');
@@ -644,11 +873,11 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node issue-board.mjs [options] [feature-dir]\n\nOptions:\n  --project-root PATH   Project root containing docs/agents/local-tracker.json\n  --list-features       List feature directories under the configured tracker root\n  --json                Emit the complete machine-readable graph\n  --non-interactive     Never prompt; fail when feature selection is ambiguous\n  --ready-only          Emit only the human AGENT READY list\n  --format mermaid      Render a Mermaid projection (requires --output)\n  --output PATH         Write output to a file\n  -h, --help            Show help`);
+  console.log(`Usage: node issue-board.mjs [options] [feature-dir]\n\nAuto-detects implementation and Wayfinder issue graphs.\n\nOptions:\n  --project-root PATH   Project root containing docs/agents/local-tracker.json\n  --list-features       List feature directories under the configured tracker root\n  --json                Emit the complete machine-readable graph\n  --non-interactive     Never prompt; fail when feature selection is ambiguous\n  --ready-only          Emit only AGENT READY or the Wayfinder FRONTIER\n  --format mermaid      Render a Mermaid projection (requires --output)\n  --output PATH         Write output to a file\n  -h, --help            Show help`);
 }
 
 async function chooseFeature(features, nonInteractive) {
-  if (features.length === 0) throw new Error('no feature directories with implementation issues found');
+  if (features.length === 0) throw new Error('no feature directories with issues found');
   if (features.length === 1) return features[0];
   if (nonInteractive || !process.stdin.isTTY) throw new Error('multiple features found; pass an explicit feature directory or use --list-features');
   console.log('Select feature:');
