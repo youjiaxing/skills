@@ -13,10 +13,17 @@ const SECTION_RE = /^##\s+(?<title>.+?)\s*$/;
 const PLAIN_FIELD_RE = /^(?<name>[A-Za-z][A-Za-z0-9 _-]*):\s*(?<value>.*)$/;
 const BOLD_FIELD_RE = /^\*\*(?<name>[A-Za-z][A-Za-z0-9 _-]*):\*\*\s*(?<value>.*)$/;
 const WAYFINDER_TYPES = new Set(['research', 'prototype', 'grilling', 'task']);
-const WAYFINDER_STATUSES = new Set(['open', 'claimed', 'resolved']);
+// ready-for-agent：与 implementation triage 混用时的开放别名，等价于 open（仍可领取 /research|/wayfinder）。
+const WAYFINDER_STATUSES = new Set(['open', 'claimed', 'resolved', 'ready-for-agent']);
+const WAYFINDER_OPEN_STATUSES = new Set(['open', 'ready-for-agent']);
+// Implementation 执行锁：与 triage role 正交，不进 statusRoles 配置。
+const IMPLEMENTATION_CLAIMED_STATUS = 'claimed';
+// Implementation 完成态别名：与 Wayfinder 同名同义；Closed: true 仍是主完成字段，resolved 也可单独表示完成。
+const IMPLEMENTATION_RESOLVED_STATUS = 'resolved';
 
 export const WORKFLOW_IMPLEMENTATION = 'implementation';
 export const WORKFLOW_WAYFINDER = 'wayfinder';
+export const WORKFLOW_MIXED = 'mixed';
 export const WAYFINDER_REQUIRED_SKILL = '/wayfinder';
 
 export const CONFIG_RELATIVE_PATH = path.join('docs', 'agents', 'local-tracker.json');
@@ -30,6 +37,7 @@ export const CANONICAL_ROLES = [
 export const GROUP_ORDER = [
   'CLOSED',
   'BLOCKED',
+  'CLAIMED',
   'WAITING FOR INFO',
   'NEEDS TRIAGE',
   'OTHER / WARNINGS',
@@ -41,6 +49,18 @@ export const WAYFINDER_GROUP_ORDER = [
   'BLOCKED',
   'CLAIMED',
   'OTHER / WARNINGS',
+  'FRONTIER',
+];
+export const MIXED_GROUP_ORDER = [
+  'CLOSED',
+  'RESOLVED',
+  'BLOCKED',
+  'CLAIMED',
+  'WAITING FOR INFO',
+  'NEEDS TRIAGE',
+  'OTHER / WARNINGS',
+  'HUMAN READY',
+  'AGENT READY',
   'FRONTIER',
 ];
 
@@ -246,25 +266,106 @@ function statusRoleMap(config) {
   return new Map(CANONICAL_ROLES.map((role) => [config.statusRoles[role], role]));
 }
 
-async function detectWorkflow(featureDir, issuePaths) {
+function isImplementationClaimedStatus(status) {
+  return normalizeKey(status) === IMPLEMENTATION_CLAIMED_STATUS;
+}
+
+function isImplementationResolvedStatus(status) {
+  return normalizeKey(status) === IMPLEMENTATION_RESOLVED_STATUS;
+}
+
+// Status 是否为 implementation 图已知值：canonical triage role、执行锁 claimed、或完成别名 resolved。
+function isKnownImplementationStatus(status, config) {
+  return statusRoleMap(config).has(status)
+    || isImplementationClaimedStatus(status)
+    || isImplementationResolvedStatus(status);
+}
+
+// 判断一张票是否声明属于 Wayfinder 决策流程；非法 Type 也不能静默落入 implementation。
+function isWayfinderTicket(fields) {
+  return (fields.get('type') ?? []).length > 0;
+}
+
+// 判断 Wayfinder 票是否拥有合法类型且已经完成，作为进入实施阶段的前置条件。
+function isResolvedWayfinderTicket(fields) {
+  const types = fields.get('type') ?? [];
+  const status = normalizeKey((fields.get('status') ?? []).at(-1) ?? '');
+  return types.length === 1 && WAYFINDER_TYPES.has(normalizeKey(types[0])) && status === 'resolved';
+}
+
+// 交接时入图：无 Type 即视为 implementation 候选。Status 合法性留给 parse，禁止静默丢票。
+function isImplementationCandidate(fields) {
+  return !fields.has('type');
+}
+
+// 仅识别 Matt to-tickets 原生的三个行内字段，避免放宽任意缺少 Closed 的项目票。
+function isMattNativeImplementationTicket(fields) {
+  return !fields.has('closed')
+    && !fields.has('type')
+    && ['what to build', 'blocked by', 'status'].every((name) => fields.has(name));
+}
+
+async function readIssueHeaders(issuePaths) {
+  return Promise.all(issuePaths.map(async (issuePath) => ({
+    issuePath,
+    fields: readHeaderFields((await readFile(issuePath, 'utf8')).split(/\r?\n/)),
+  })));
+}
+
+// 同 feature 可混合 Wayfinder（Type）与 implementation（无 Type）票；各自解析、共依赖图。
+// 未完成的 research 只阻塞其下游，不再整板 fail-closed。
+async function selectWorkflow(featureDir, issuePaths, config) {
+  const headers = await readIssueHeaders(issuePaths);
+  const wayfinderTickets = headers.filter(({ fields }) => isWayfinderTicket(fields));
+  const implementationCandidates = headers.filter(({ fields }) => isImplementationCandidate(fields));
+  const empty = { warnings: [] };
+
+  if (wayfinderTickets.length > 0 && implementationCandidates.length > 0) {
+    const warnings = [];
+    for (const { issuePath, fields } of implementationCandidates) {
+      const status = (fields.get('status') ?? []).at(-1) ?? '';
+      if (status && !isKnownImplementationStatus(status, config)) {
+        warnings.push({
+          code: 'non-canonical-status-on-handoff',
+          issue: path.basename(issuePath),
+          detail: status,
+        });
+      }
+    }
+    return {
+      workflow: WORKFLOW_MIXED,
+      issuePaths,
+      warnings,
+    };
+  }
+
+  // 仅有 Wayfinder 票时：map.md 标签或 Type 识别为 wayfinder 图。
   const mapPath = path.join(featureDir, 'map.md');
   try {
     const mapFields = readHeaderFields((await readFile(mapPath, 'utf8')).split(/\r?\n/));
     const labels = mapFields.get('label') ?? [];
-    if (labels.some((label) => normalizeKey(label) === 'wayfinder:map')) return WORKFLOW_WAYFINDER;
+    if (labels.some((label) => normalizeKey(label) === 'wayfinder:map')) {
+      return { workflow: WORKFLOW_WAYFINDER, issuePaths, ...empty };
+    }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-
-  for (const issuePath of issuePaths) {
-    const fields = readHeaderFields((await readFile(issuePath, 'utf8')).split(/\r?\n/));
-    const types = fields.get('type') ?? [];
-    if (types.some((type) => WAYFINDER_TYPES.has(normalizeKey(type)))) return WORKFLOW_WAYFINDER;
-  }
-  return WORKFLOW_IMPLEMENTATION;
+  if (wayfinderTickets.length > 0) return { workflow: WORKFLOW_WAYFINDER, issuePaths, ...empty };
+  return { workflow: WORKFLOW_IMPLEMENTATION, issuePaths, ...empty };
 }
 
-async function parseIssueDraft(issuePath, config, workflow) {
+function resolveTicketWorkflow(fields, graphWorkflow) {
+  if (graphWorkflow === WORKFLOW_MIXED) {
+    return isWayfinderTicket(fields) ? WORKFLOW_WAYFINDER : WORKFLOW_IMPLEMENTATION;
+  }
+  return graphWorkflow;
+}
+
+function isWayfinderOpenStatus(status) {
+  return WAYFINDER_OPEN_STATUSES.has(normalizeKey(status));
+}
+
+async function parseIssueDraft(issuePath, config, graphWorkflow) {
   const text = await readFile(issuePath, 'utf8');
   const lines = text.split(/\r?\n/);
   const fileMatch = issuePath.match(/(?:^|[\\/])(?<file>[^\\/]+)$/)?.groups.file.match(ISSUE_FILE_RE);
@@ -276,6 +377,7 @@ async function parseIssueDraft(issuePath, config, workflow) {
   const id = path.basename(issuePath);
   const number = fileMatch.groups.number;
   const heading = lines.map((line) => line.match(TITLE_RE)).find(Boolean)?.groups.title ?? path.parse(id).name;
+  const workflow = resolveTicketWorkflow(fields, graphWorkflow);
 
   const statuses = fields.get('status') ?? [];
   const status = statuses.at(-1) ?? '';
@@ -335,24 +437,38 @@ async function parseIssueDraft(issuePath, config, workflow) {
 
   const roleByStatus = statusRoleMap(config);
   const statusRole = roleByStatus.get(status) ?? '';
+  const claimed = isImplementationClaimedStatus(status);
+  const resolvedStatus = isImplementationResolvedStatus(status);
   if (statuses.length === 0) {
     metadataErrors.push('missing-status');
     warnings.push({ code: 'missing-status', issue: id, detail: 'Status field is missing' });
   } else if (new Set(statuses).size > 1) {
     metadataErrors.push('conflicting-status');
     warnings.push({ code: 'conflicting-status', issue: id, detail: statuses.join(' | ') });
-  } else if (!statusRole) {
+  } else if (!statusRole && !claimed && !resolvedStatus) {
     metadataErrors.push('invalid-status');
     warnings.push({ code: 'invalid-status', issue: id, detail: status || '<empty>' });
+    // 常见误用：把完成写在 Status 上。Status: done 不是完成字段；请用 Closed: true 或 Status: resolved。
+    if (normalizeKey(status) === 'done') {
+      warnings.push({
+        code: 'status-done-not-completion',
+        issue: id,
+        detail: 'use Closed: true or Status: resolved; Status: done is not a completion field',
+      });
+    }
   }
 
   const completionKey = normalizeKey(config.completionField);
   const completionValues = fields.get(completionKey) ?? [];
   const closedRaw = completionValues.at(-1) ?? '';
   const parsedClosed = completionValues.length > 0 ? parseClosed(closedRaw) : null;
+  const closedImplicit = completionValues.length === 0 && isMattNativeImplementationTicket(fields);
+  // 原生 Matt 模板未声明 Closed 时，兼容地按仍开放的 implementation issue 处理。
   if (completionValues.length === 0) {
-    metadataErrors.push('missing-closed');
-    warnings.push({ code: 'missing-closed', issue: id, detail: `${config.completionField} field is required` });
+    if (!closedImplicit && !resolvedStatus) {
+      metadataErrors.push('missing-closed');
+      warnings.push({ code: 'missing-closed', issue: id, detail: `${config.completionField} field is required` });
+    }
   } else if (new Set(completionValues.map(normalizeKey)).size > 1) {
     metadataErrors.push('conflicting-closed');
     warnings.push({ code: 'conflicting-closed', issue: id, detail: completionValues.join(' | ') });
@@ -361,7 +477,26 @@ async function parseIssueDraft(issuePath, config, workflow) {
     warnings.push({ code: 'invalid-closed', issue: id, detail: closedRaw || '<empty>' });
   }
 
-  if (statusRole === 'wontfix' && parsedClosed !== true) {
+  // Status: resolved 与 Closed: false 冲突；resolved 且未显式打开时视为已完成。
+  if (resolvedStatus && parsedClosed === false) {
+    metadataErrors.push('conflicting-resolved-open');
+    warnings.push({
+      code: 'conflicting-resolved-open',
+      issue: id,
+      detail: 'Status: resolved conflicts with Closed: false; use Closed: true or drop Closed',
+    });
+  }
+
+  // Closed: true 是完成真源之一；Status: resolved 是完成别名。不要求 Status 仍为某个固定 triage 值。
+  const closed = parsedClosed === true || (resolvedStatus && parsedClosed !== false);
+  if (closed) {
+    for (const code of ['invalid-status', 'missing-status', 'missing-closed']) {
+      const index = metadataErrors.indexOf(code);
+      if (index >= 0) metadataErrors.splice(index, 1);
+    }
+  }
+
+  if (statusRole === 'wontfix' && !closed) {
     metadataErrors.push('open-wontfix');
     warnings.push({ code: 'open-wontfix', issue: id, detail: 'wontfix must be closed' });
   }
@@ -379,10 +514,12 @@ async function parseIssueDraft(issuePath, config, workflow) {
       workflow,
       status,
       statusRole,
+      claimed,
       hasStatusField: statuses.length > 0,
-      closed: parsedClosed === true,
+      closed,
       closedRaw,
       hasClosedField: completionValues.length > 0,
+      closedImplicit,
       metadataValid: metadataErrors.length === 0,
       metadataErrors,
       blockedBy: [],
@@ -481,7 +618,11 @@ function makeGraph(issues, warnings, workflow) {
   const graph = {
     workflow,
     requiredSkill: workflow === WORKFLOW_WAYFINDER ? WAYFINDER_REQUIRED_SKILL : null,
-    groupOrder: workflow === WORKFLOW_WAYFINDER ? WAYFINDER_GROUP_ORDER : GROUP_ORDER,
+    groupOrder: workflow === WORKFLOW_WAYFINDER
+      ? WAYFINDER_GROUP_ORDER
+      : workflow === WORKFLOW_MIXED
+        ? MIXED_GROUP_ORDER
+        : GROUP_ORDER,
     issues,
     warnings,
     issueById: new Map(issues.map((issue) => [issue.id, issue])),
@@ -504,17 +645,19 @@ function makeGraph(issues, warnings, workflow) {
       return issue.blockedByInvalid.length > 0 || this.missingBlockersOf(issue).length > 0 || this.cycleOf(issue).length > 0;
     },
     groupOf(issue) {
-      if (this.workflow === WORKFLOW_WAYFINDER) {
+      // 混合图按票自身 workflow 分组，避免全局 workflow 抹掉 Type 语义。
+      if (issue.workflow === WORKFLOW_WAYFINDER || (this.workflow === WORKFLOW_WAYFINDER && issue.workflow !== WORKFLOW_IMPLEMENTATION)) {
         if (issue.resolved && issue.metadataValid) return 'RESOLVED';
         if (!issue.metadataValid || this.hasGraphError(issue)) return 'OTHER / WARNINGS';
         if (this.openBlockersOf(issue).length > 0) return 'BLOCKED';
         if (issue.claimed) return 'CLAIMED';
-        if (normalizeKey(issue.status) === 'open') return 'FRONTIER';
+        if (isWayfinderOpenStatus(issue.status)) return 'FRONTIER';
         return 'OTHER / WARNINGS';
       }
       if (issue.closed && issue.metadataValid) return 'CLOSED';
       if (!issue.metadataValid || this.hasGraphError(issue)) return 'OTHER / WARNINGS';
       if (this.openBlockersOf(issue).length > 0) return 'BLOCKED';
+      if (issue.claimed) return 'CLAIMED';
       if (issue.statusRole === 'needs-info') return 'WAITING FOR INFO';
       if (issue.statusRole === 'needs-triage') return 'NEEDS TRIAGE';
       if (issue.statusRole === 'ready-for-human') return 'HUMAN READY';
@@ -544,14 +687,14 @@ export async function loadGraph(featureDir, config) {
     .map((entry) => path.join(issuesDir, entry.name));
   if (issuePaths.length === 0) throw new Error(`no issue markdown files found under: ${issuesDir}`);
 
-  const workflow = await detectWorkflow(featureDir, issuePaths);
+  const selection = await selectWorkflow(featureDir, issuePaths, config);
   const parsed = [];
-  for (const issuePath of issuePaths) parsed.push(await parseIssueDraft(issuePath, config, workflow));
+  for (const issuePath of selection.issuePaths) parsed.push(await parseIssueDraft(issuePath, config, selection.workflow));
 
   const issues = parsed.map((item) => item.issue);
-  const warnings = parsed.flatMap((item) => item.warnings);
+  const warnings = [...(selection.warnings ?? []), ...parsed.flatMap((item) => item.warnings)];
   resolveReferences(issues, warnings);
-  let graph = makeGraph(issues, warnings, workflow);
+  let graph = makeGraph(issues, warnings, selection.workflow);
   for (const issue of issues) {
     for (const blocker of graph.missingBlockersOf(issue)) warnings.push({ code: 'missing-blocker', issue: issue.id, detail: blocker });
   }
@@ -559,7 +702,7 @@ export async function loadGraph(featureDir, config) {
     const detail = [...cycle, cycle[0]].join(' -> ');
     for (const issue of cycle) warnings.push({ code: 'dependency-cycle', issue, detail });
   }
-  graph = makeGraph(issues, warnings, workflow);
+  graph = makeGraph(issues, warnings, selection.workflow);
   return graph;
 }
 
@@ -575,7 +718,7 @@ function issueReferenceLines(label, issues) {
 
 export function renderIssueLines(issue, graph, projectRoot = process.cwd()) {
   const lines = [`- ${issue.number} ${issue.title}`, `  status: ${issue.status || 'unknown'}`];
-  if (graph.workflow === WORKFLOW_WAYFINDER) {
+  if (issue.workflow === WORKFLOW_WAYFINDER) {
     lines.push(`  type: ${issue.type || 'unknown'}`, `  required skill: ${issue.requiredSkill}`);
   }
   lines.push(...issueReferenceLines('open blockers', graph.openBlockersOf(issue)));
@@ -584,6 +727,10 @@ export function renderIssueLines(issue, graph, projectRoot = process.cwd()) {
   lines.push(...issueReferenceLines('open dependents', graph.dependentsOf(issue).filter((candidate) => !candidate.closed)));
   lines.push(`  path: ${displayPath(issue.path, projectRoot)}`);
   return lines;
+}
+
+function isImplementationLikeIssue(issue) {
+  return issue.workflow !== WORKFLOW_WAYFINDER;
 }
 
 export function summaryPayload(graph) {
@@ -601,17 +748,22 @@ export function summaryPayload(graph) {
       warnings: graph.warnings.length,
     };
   }
+  const implementationIssues = graph.issues.filter(isImplementationLikeIssue);
   return {
     issues: graph.issues.length,
     open: graph.issues.filter((issue) => !issue.closed).length,
-    closed: graph.issuesInGroup('CLOSED').length,
+    closed: graph.issuesInGroup('CLOSED').length + (graph.workflow === WORKFLOW_MIXED ? graph.issuesInGroup('RESOLVED').length : 0),
+    resolved: graph.issuesInGroup('RESOLVED').length,
     blocked: graph.issuesInGroup('BLOCKED').length,
+    claimed: graph.issuesInGroup('CLAIMED').length,
     agentReady: graph.issuesInGroup('AGENT READY').length,
+    frontier: graph.issuesInGroup('FRONTIER').length,
     humanReady: graph.issuesInGroup('HUMAN READY').length,
     waitingForInfo: graph.issuesInGroup('WAITING FOR INFO').length,
     needsTriage: graph.issuesInGroup('NEEDS TRIAGE').length,
     other: graph.issuesInGroup('OTHER / WARNINGS').length,
-    missingClosed: graph.issues.filter((issue) => !issue.hasClosedField).length,
+    missingClosed: implementationIssues.filter((issue) => !issue.hasClosedField && !issue.closedImplicit).length,
+    implicitClosed: implementationIssues.filter((issue) => issue.closedImplicit).length,
     edges,
     warnings: graph.warnings.length,
   };
@@ -625,6 +777,20 @@ function issueSymbol(issue, graph) {
   if (group === 'BLOCKED') return '×';
   if (group === 'HUMAN READY' || group === 'WAITING FOR INFO' || group === 'NEEDS TRIAGE') return '?';
   return '!';
+}
+
+// 人类看板类型标签：始终打印，便于扫一眼区分票种与完成态（完成看行首 ✓ 等符号）。
+// Wayfinder 有 Type 时打印 research/grilling/task/prototype；缺失时 [unknown]。
+// 实施票（无 Type 字段）统一 [impl]，含纯 implementation 图与 mixed 图。
+function issueTypeTag(issue, _graph) {
+  if (issue.workflow === WORKFLOW_WAYFINDER) {
+    return issue.type ? ` [${issue.type}]` : ' [unknown]';
+  }
+  return ' [impl]';
+}
+
+function issueHeadline(issue, graph) {
+  return `${issue.number}${issueTypeTag(issue, graph)} ${issue.title}`;
 }
 
 function issueDependencyLabel(issue, graph) {
@@ -663,7 +829,7 @@ function renderDependencyTree(graph) {
     if (rendered.has(issueId)) return;
     rendered.add(issueId);
     const issue = graph.issueById.get(issueId);
-    lines.push(`${prefix}${isLast ? '└─' : '├─'} ${issueSymbol(issue, graph)} ${issue.number} ${issue.title}${issueDependencyLabel(issue, graph)}`);
+    lines.push(`${prefix}${isLast ? '└─' : '├─'} ${issueSymbol(issue, graph)} ${issueHeadline(issue, graph)}${issueDependencyLabel(issue, graph)}`);
     const children = childrenByParent.get(issueId) ?? [];
     const childPrefix = `${prefix}${isLast ? '  ' : '│ '}`;
     children.forEach((childId, index) => visit(childId, childPrefix, index === children.length - 1));
@@ -675,10 +841,38 @@ function renderDependencyTree(graph) {
   return lines;
 }
 
-function renderNowLines(graph) {
-  const readyGroup = graph.workflow === WORKFLOW_WAYFINDER ? 'FRONTIER' : 'AGENT READY';
-  const ready = graph.issuesInGroup(readyGroup);
-  const claimed = graph.workflow === WORKFLOW_WAYFINDER ? graph.issuesInGroup('CLAIMED') : [];
+function readyIssueCommand(issue, graph, projectRoot) {
+  const issuePath = displayPath(issue.path, projectRoot);
+  if (issue.workflow === WORKFLOW_WAYFINDER || graph.workflow === WORKFLOW_WAYFINDER) {
+    return `${issue.requiredSkill || WAYFINDER_REQUIRED_SKILL} ${issuePath}`;
+  }
+  return `/implement ${issuePath}`;
+}
+
+function readyIssues(graph) {
+  if (graph.workflow === WORKFLOW_WAYFINDER) return graph.issuesInGroup('FRONTIER');
+  if (graph.workflow === WORKFLOW_MIXED) {
+    return [...graph.issuesInGroup('FRONTIER'), ...graph.issuesInGroup('AGENT READY')]
+      .sort((left, right) => left.number.localeCompare(right.number));
+  }
+  return graph.issuesInGroup('AGENT READY');
+}
+
+function renameSessionTitle(featureDir, issue) {
+  return `${path.basename(featureDir)}/${issue.number}-${issue.title}`;
+}
+
+function renderReadyIssueLines(issue, graph, projectRoot, featureDir) {
+  return [
+    `- ${issueSymbol(issue, graph)} ${issueHeadline(issue, graph)}`,
+    `  /rename ${renameSessionTitle(featureDir, issue)}`,
+    `  ${readyIssueCommand(issue, graph, projectRoot)}`,
+  ];
+}
+
+function renderNowLines(graph, projectRoot, featureDir) {
+  const ready = readyIssues(graph);
+  const claimed = graph.issuesInGroup('CLAIMED');
   const lines = [
     '',
     `NOW  可新增并行实施：${ready.length} | 进行中：${claimed.length}`,
@@ -686,13 +880,15 @@ function renderNowLines(graph) {
     '可新增并行实施',
   ];
   if (ready.length === 0) lines.push('- 无');
-  for (const issue of ready) {
-    const skill = issue.requiredSkill ? ` | skill=${issue.requiredSkill}` : '';
-    lines.push(`- ${issueSymbol(issue, graph)} ${issue.number} ${issue.title}${skill}`);
-  }
+  for (const issue of ready) lines.push(...renderReadyIssueLines(issue, graph, projectRoot, featureDir));
   lines.push('', '进行中');
   if (claimed.length === 0) lines.push('- 无');
-  for (const issue of claimed) lines.push(`- ${issueSymbol(issue, graph)} ${issue.number} ${issue.title} | skill=${issue.requiredSkill}`);
+  for (const issue of claimed) {
+    const skill = issue.workflow === WORKFLOW_WAYFINDER || graph.workflow === WORKFLOW_WAYFINDER
+      ? `skill=${issue.requiredSkill || WAYFINDER_REQUIRED_SKILL}`
+      : `cmd=${readyIssueCommand(issue, graph, projectRoot)}`;
+    lines.push(`- ${issueSymbol(issue, graph)} ${issueHeadline(issue, graph)} | ${skill}`);
+  }
   return lines;
 }
 
@@ -708,7 +904,9 @@ function renderLegend() {
 }
 
 function renderSummaryLine(featureDir, graph, summary) {
-  const completed = graph.workflow === WORKFLOW_WAYFINDER ? summary.resolved : summary.closed;
+  const completed = graph.workflow === WORKFLOW_WAYFINDER
+    ? summary.resolved
+    : summary.closed;
   return [
     ...renderLegend(),
     `KANBAN ${path.basename(featureDir)} | workflow=${graph.workflow}${graph.requiredSkill ? ` | required_skill=${graph.requiredSkill}` : ''}`,
@@ -724,19 +922,20 @@ export function renderText(featureDir, graph, projectRoot = process.cwd()) {
     ...renderSummaryLine(featureDir, graph, summary),
     ...renderDependencyTree(graph),
     ...renderWarnings(graph),
-    ...renderNowLines(graph),
+    ...renderNowLines(graph, projectRoot, featureDir),
   ];
   return `${lines.join('\n')}\n`;
 }
 
 export function renderReadyOnly(featureDir, graph, projectRoot = process.cwd()) {
-  const group = graph.workflow === WORKFLOW_WAYFINDER ? 'FRONTIER' : 'AGENT READY';
-  const ready = graph.issuesInGroup(group);
+  const ready = readyIssues(graph);
   const lines = graph.workflow === WORKFLOW_WAYFINDER
-    ? [`Wayfinder frontier: ${path.basename(featureDir)}`, `required_skill=${graph.requiredSkill} frontier=${ready.length} warnings=${graph.warnings.length}`, '', group]
-    : [`Agent-ready issues: ${path.basename(featureDir)}`, `agent_ready=${ready.length} warnings=${graph.warnings.length}`, '', group];
-  if (ready.length === 0) lines.push('- none');
-  for (const issue of ready) lines.push(...renderIssueLines(issue, graph, projectRoot));
+    ? [`Wayfinder frontier: ${path.basename(featureDir)}`, `required_skill=${graph.requiredSkill} frontier=${ready.length} warnings=${graph.warnings.length}`, '', 'FRONTIER']
+    : graph.workflow === WORKFLOW_MIXED
+      ? [`Mixed ready issues: ${path.basename(featureDir)}`, `ready=${ready.length} warnings=${graph.warnings.length}`, '', 'FRONTIER + AGENT READY']
+      : [`Agent-ready issues: ${path.basename(featureDir)}`, `agent_ready=${ready.length} warnings=${graph.warnings.length}`, '', 'AGENT READY'];
+  if (ready.length === 0) lines.push(graph.workflow === WORKFLOW_IMPLEMENTATION ? '- none' : '- 无');
+  for (const issue of ready) lines.push(...renderReadyIssueLines(issue, graph, projectRoot, featureDir));
   if (graph.warnings.length > 0) {
     lines.push('', 'WARNINGS');
     for (const warning of graph.warnings) lines.push(`- code=${warning.code}${warning.issue ? ` issue=${warning.issue}` : ''} detail=${warning.detail}`);
@@ -745,15 +944,17 @@ export function renderReadyOnly(featureDir, graph, projectRoot = process.cwd()) 
 }
 
 export function issuePayload(issue, graph, projectRoot = process.cwd()) {
-  if (graph.workflow === WORKFLOW_WAYFINDER) {
+  if (issue.workflow === WORKFLOW_WAYFINDER) {
     return {
       id: issue.id,
       number: issue.number,
       title: issue.title,
+      workflow: issue.workflow,
       type: issue.type,
       status: issue.status,
       resolved: issue.resolved,
       claimed: issue.claimed,
+      closed: Boolean(issue.closed),
       requiredSkill: issue.requiredSkill,
       hasStatusField: issue.hasStatusField,
       metadataValid: issue.metadataValid,
@@ -771,12 +972,15 @@ export function issuePayload(issue, graph, projectRoot = process.cwd()) {
     id: issue.id,
     number: issue.number,
     title: issue.title,
+    workflow: issue.workflow || WORKFLOW_IMPLEMENTATION,
     status: issue.status,
     statusRole: issue.statusRole,
+    claimed: Boolean(issue.claimed),
     hasStatusField: issue.hasStatusField,
     closed: issue.closed,
     closedRaw: issue.closedRaw,
     hasClosedField: issue.hasClosedField,
+    closedImplicit: issue.closedImplicit,
     metadataValid: issue.metadataValid,
     metadataErrors: issue.metadataErrors,
     path: displayPath(issue.path, projectRoot),
@@ -794,7 +998,9 @@ export function graphPayload(featureDir, graph, projectRoot = process.cwd()) {
     feature: path.basename(featureDir),
     workflow: graph.workflow,
     requiredSkill: graph.requiredSkill,
-    ...(graph.workflow === WORKFLOW_WAYFINDER ? { map: displayPath(path.join(featureDir, 'map.md'), projectRoot) } : {}),
+    ...((graph.workflow === WORKFLOW_WAYFINDER || graph.workflow === WORKFLOW_MIXED)
+      ? { map: displayPath(path.join(featureDir, 'map.md'), projectRoot) }
+      : {}),
     summary: summaryPayload(graph),
     issues: graph.issues.map((issue) => issuePayload(issue, graph, projectRoot)),
     warnings: graph.warnings,
@@ -814,20 +1020,21 @@ export function renderMermaid(featureDir, outputPath, graph, projectRoot = proce
   const ids = new Map(graph.issues.map((issue) => [issue.id, mermaidId(issue.id.replace(/\.md$/i, ''))]));
   const lines = [`# Issue DAG: ${path.basename(featureDir)}`, '', '```mermaid', 'graph TD'];
   for (const issue of graph.issues) {
-    const label = `${issue.number} ${issue.title}\\n${issue.status || 'unknown'} / ${graph.groupOf(issue)}`.replace(/"/g, '\\"');
+    const typePart = issueTypeTag(issue, graph);
+    const label = `${issue.number}${typePart} ${issue.title}\\n${issue.status || 'unknown'} / ${graph.groupOf(issue)}`.replace(/"/g, '\\"');
     lines.push(`  ${ids.get(issue.id)}["${label}"]`);
   }
   for (const issue of graph.issues) {
     for (const blocker of issue.blockedBy) if (ids.has(blocker)) lines.push(`  ${ids.get(blocker)} --> ${ids.get(issue.id)}`);
   }
-  const lifecycleHeader = graph.workflow === WORKFLOW_WAYFINDER ? 'Resolved' : 'Closed';
+  const lifecycleHeader = graph.workflow === WORKFLOW_WAYFINDER ? 'Resolved' : 'Done';
   lines.push('```', '', '## Issues', '', `| Issue | Status | ${lifecycleHeader} | Group | Blocked by |`, '| --- | --- | --- | --- | --- |');
   for (const issue of graph.issues) {
     const issueLink = path.relative(path.dirname(outputPath), issue.path).split(path.sep).join('/');
     const blockers = issue.blockedBy.map((id) => graph.issueById.has(id)
       ? `[${graph.issueById.get(id).number}](${path.relative(path.dirname(outputPath), graph.issueById.get(id).path).split(path.sep).join('/')})`
       : `\`${id}\``).join(', ') || 'None';
-    const lifecycle = graph.workflow === WORKFLOW_WAYFINDER ? issue.resolved : issue.closed;
+    const lifecycle = issue.workflow === WORKFLOW_WAYFINDER ? issue.resolved : issue.closed;
     lines.push(`| [${issue.number} ${issue.title}](${issueLink}) | \`${issue.status || 'unknown'}\` | \`${lifecycle}\` | ${graph.groupOf(issue)} | ${blockers} |`);
   }
   if (graph.warnings.length > 0) {
