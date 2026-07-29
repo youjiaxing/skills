@@ -2,6 +2,7 @@
 name: yjx-discuss
 description: 通过简短、逐问、敢于纠错的讨论收敛想法，再形成总结。
 argument-hint: "要讨论的问题或想法"
+disable-model-invocation: true
 ---
 
 # 讨论

@@ -2,6 +2,7 @@
 name: yjx-local-tracker-setup
 description: 在 Matt Pocock Local Markdown issue tracker 项目上增量启用可判定的 Closed 完成字段和机器配置；默认只预览，确认后才写入或迁移旧票。
 argument-hint: "[项目根目录]"
+disable-model-invocation: true
 ---
 
 # Local Tracker Setup

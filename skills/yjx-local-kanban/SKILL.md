@@ -1,6 +1,7 @@
 ---
 name: yjx-local-kanban
 description: 只读解析 Matt Local Markdown tracker 的普通 implementation issue 或 Wayfinder child ticket 依赖图，输出人类看板、完整 JSON 图或 Mermaid；用于 make kanban、查看执行 frontier、核对阻塞关系或为执行者提供 requiredSkill，不选票、不改状态。
+disable-model-invocation: true
 ---
 
 # Local Kanban

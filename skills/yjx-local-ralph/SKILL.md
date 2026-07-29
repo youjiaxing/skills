@@ -2,6 +2,7 @@
 name: yjx-local-ralph
 description: 为 Matt Local Markdown tracker 手动选择并启动一张合法、无阻塞的 implementation issue；开始前确认，完成单票后停止，不自动循环。
 argument-hint: "<feature 目录>"
+disable-model-invocation: true
 ---
 
 # Local Ralph
