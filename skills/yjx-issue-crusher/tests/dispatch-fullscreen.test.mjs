@@ -306,20 +306,30 @@ function snapWithBoard(overrides = {}) {
   };
 }
 
-test('renderTopBar shows feature / runtime / subsequent mode / chain status incl. 停链', () => {
+test('renderTopBar shows feature / runtime / subsequent mode / autoAdvance / chain status', () => {
   const live = renderTopBar(snapWithBoard({
     status: 'soft-stuck',
     subsequentMode: 'vibe',
     stopped: false,
+    autoAdvance: true,
   }));
   assert.match(live, /功能:\s*demo/);
   assert.match(live, /runtime:\s*grok|运行时:\s*grok/);
   assert.match(live, /后续 mode:\s*vibe/);
+  assert.match(live, /自动开下一张:\s*开/);
   assert.match(live, /软卡住|soft-stuck/);
+
+  const off = renderTopBar(snapWithBoard({
+    status: 'idle',
+    stopped: false,
+    autoAdvance: false,
+  }));
+  assert.match(off, /自动开下一张:\s*关/);
 
   const stopped = renderTopBar(snapWithBoard({
     status: 'stopped',
     stopped: true,
+    autoAdvance: false,
   }));
   assert.match(stopped, /已停链/);
 });
@@ -527,7 +537,8 @@ test('runFullscreenDispatch poll tick refreshes shell from successive snapshots'
 test('mapFullscreenKey maps m/f/r/y/n/s/t/q and list nav to surface command types', () => {
   assert.deepEqual(mapFullscreenKey('q'), { type: 'quit' });
   assert.deepEqual(mapFullscreenKey('Q'), { type: 'quit' });
-  assert.deepEqual(mapFullscreenKey('s'), { type: 'stop' });
+  // Fullscreen s toggles auto-open-next (not chain stop).
+  assert.deepEqual(mapFullscreenKey('s'), { type: 'toggleAutoAdvance' });
   assert.deepEqual(mapFullscreenKey('t'), { type: 'tick' });
   assert.deepEqual(mapFullscreenKey('f'), { type: 'forceAdvance' });
   assert.deepEqual(mapFullscreenKey('r'), { type: 'resume' });
@@ -652,26 +663,41 @@ test('handleFullscreenKey y/n match HITL confirm/reject surface semantics', asyn
   assert.match(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
 });
 
-test('handleFullscreenKey s stops auto-spawn; q stops and signals quit', async () => {
+test('handleFullscreenKey s toggles autoAdvance; q stops and signals quit', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, surface } = makeSurface({
     candidates: [first, second],
+    autoAdvance: false,
   });
 
+  await surface.refresh();
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  // s on → empty slot may auto-spawn without Enter
+  const turnedOn = await handleFullscreenKey(surface, 's');
+  assert.match(turnedOn.message || '', /自动开下一张.*开/);
+  assert.equal(surface.snapshot().autoAdvance, true);
+  assert.equal(surface.snapshot().stopped, false);
+
   await surface.tick();
-  const stopped = await handleFullscreenKey(surface, 's');
-  assert.match(stopped.message || '', /停链/);
-  assert.equal(surface.snapshot().stopped, true);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+
+  // s off → no auto handoff
+  const turnedOff = await handleFullscreenKey(surface, 's');
+  assert.match(turnedOff.message || '', /自动开下一张.*关/);
+  assert.equal(surface.snapshot().autoAdvance, false);
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
-  assert.equal(launcher.launches.length, 1, 'stopped chain must not auto-spawn next');
+  assert.equal(launcher.launches.length, 1, 's-off must not auto-spawn next');
 
   const quit = await handleFullscreenKey(surface, 'q');
   assert.equal(quit.quit, true);
   assert.equal(surface.snapshot().stopped, true);
+  assert.equal(surface.snapshot().autoAdvance, false);
 });
 
 test('handleFullscreenKey t runs a manual surface tick', async () => {
@@ -763,13 +789,13 @@ test('list selection keys never spawn or claim — display-only, no graph dispat
 test('renderFooter lists surface keys; shell has no mouse / worker embed / graph dispatch', () => {
   const footer = renderFooter(snapWithBoard({
     status: 'needs-confirmation',
+    autoAdvance: false,
     actions: {
       setMode: { available: true },
       forceAdvance: { available: false },
       resume: { available: false },
       confirmHitl: { available: true },
       rejectHitl: { available: true },
-      stop: { available: true },
     },
     pendingHitl: {
       issueId: '01-wayfinder.md',
@@ -780,9 +806,11 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
   assert.match(footer, /\[m\]/);
   assert.match(footer, /\[y\]/);
   assert.match(footer, /\[n\]/);
-  assert.match(footer, /\[s\]/);
+  assert.match(footer, /\[s\].*自动/);
+  assert.doesNotMatch(footer, /\[s\] 停链/);
   assert.match(footer, /\[t\]/);
-  assert.match(footer, /\[q\]/);
+  assert.match(footer, /\[q\].*退出/);
+  assert.doesNotMatch(footer, /\[q\] 退出并停链/);
   assert.match(footer, /\[j\/k\]|j\/k|数字/);
 
   const text = renderToString(createElement(DispatchShell, {
@@ -836,12 +864,13 @@ test('runFullscreenDispatch m then q: mode dial + stop-and-exit via keys', async
 
 // Shared handleDispatchCommand still the single apply path for surface commands.
 test('mapFullscreenKey commands are accepted by handleDispatchCommand', async () => {
-  const { surface } = makeSurface({ candidates: [] });
-  await surface.tick();
+  const { surface } = makeSurface({ candidates: [], autoAdvance: false });
+  await surface.refresh();
   const cmd = mapFullscreenKey('s');
   const result = await handleDispatchCommand(surface, cmd);
-  assert.match(result.message || '', /停链/);
-  assert.equal(surface.snapshot().stopped, true);
+  assert.match(result.message || '', /自动开下一张.*开/);
+  assert.equal(surface.snapshot().autoAdvance, true);
+  assert.equal(surface.snapshot().stopped, false);
 });
 
 // --- dispatch-tui-start-and-polish / 02: Enter start + auto handoff ---
@@ -956,4 +985,51 @@ test('slot empty + auto on + highlight + Enter can cut in on highlighted ticket'
   });
   assert.equal(cutIn.spawned, true);
   assert.equal(launcher.launches[launcher.launches.length - 1].issue.id, '03-third.md');
+});
+
+// --- dispatch-tui-start-and-polish / 03: s toggle + Enter does not reopen ---
+
+test('after s-off, Enter opens one ticket but does not reopen autoAdvance', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  await handleFullscreenKey(surface, '\r', { selectedIssueId: '01-first.md' });
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  await handleFullscreenKey(surface, 's');
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(surface.snapshot().slot, null);
+
+  const started = await handleFullscreenKey(surface, '\r', {
+    selectedIssueId: '02-second.md',
+  });
+  assert.equal(started.spawned, true);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(surface.snapshot().autoAdvance, false, 'Enter after s-off must not reopen auto');
+});
+
+test('s on with empty slot auto-spawns on tick without Enter', async () => {
+  const only = candidate('01-ready.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [only],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+  assert.equal(launcher.launches.length, 0);
+
+  await handleFullscreenKey(surface, 's');
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  await surface.tick();
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().slot?.issueId, '01-ready.md');
 });

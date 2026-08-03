@@ -476,3 +476,61 @@ test('surface.start while slot occupied rejects without second spawn', async () 
   assert.equal(blocked.reason, 'slot-occupied');
   assert.equal(launcher.launches.length, 1);
 });
+
+// --- dispatch-tui-start-and-polish / 03: toggle autoAdvance ---
+
+test('surface.toggleAutoAdvance flips projection; off blocks tick; on restores', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await surface.refresh();
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  const on = await surface.toggleAutoAdvance();
+  assert.equal(on.ok, true);
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  await surface.tick();
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+
+  const off = await surface.toggleAutoAdvance();
+  assert.equal(off.ok, true);
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(launcher.launches.length, 1, 's-off must block auto handoff spawn');
+  assert.equal(surface.snapshot().slot, null);
+});
+
+test('surface: after toggle off, start succeeds but autoAdvance stays off', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await surface.refresh();
+  await surface.start('01-first.md');
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  await surface.toggleAutoAdvance();
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(surface.snapshot().slot, null);
+
+  const result = await surface.start('02-second.md');
+  assert.equal(result.ok, true);
+  assert.equal(result.spawned, true);
+  assert.equal(surface.snapshot().autoAdvance, false);
+});

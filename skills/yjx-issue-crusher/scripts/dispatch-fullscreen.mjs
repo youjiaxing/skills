@@ -4,11 +4,11 @@
  * Interactive TTY path: alternate-screen layout with regions
  * 顶栏 / 中部 / 当前槽 / 底栏. Keyboard drives the same Dispatch Surface
  * actions as the printable TUI (`m` mode dial, `f` force, `r` resume,
- * `y`/`n` HITL, `s` stop, `t` tick, `q` quit; `j`/`k`/digits select
- * executable list highlight; **Enter** starts highlighted (or board default).
- * Orchestration contract is unchanged: board is read-only, single slot,
- * dual-condition handoff still owned by Chain Run / surface.tick.
- * No graph dispatch, no embedded Worker terminal.
+ * `y`/`n` HITL, `s` toggle auto-open-next, `t` tick, `q` quit;
+ * `j`/`k`/digits select executable list highlight; **Enter** starts
+ * highlighted (or board default). Orchestration contract is unchanged:
+ * board is read-only, single slot, dual-condition handoff still owned by
+ * Chain Run / surface.tick. No graph dispatch, no embedded Worker terminal.
  */
 
 import { createElement, useEffect, useRef, useState } from 'react';
@@ -60,7 +60,7 @@ function modeHint(mode) {
 }
 
 /**
- * Top bar: feature / runtime / subsequent mode / chain status.
+ * Top bar: feature / runtime / subsequent mode / auto-open-next / chain status.
  * Pure — safe for unit tests without a terminal.
  *
  * @param {object | null | undefined} snap
@@ -71,11 +71,14 @@ export function renderTopBar(snap) {
     return '[顶栏] Issue Crusher · 调度（启动中…）';
   }
   const mode = snap.subsequentMode ?? '—';
+  // Default true when field omitted (older fakes / once path projection).
+  const autoLabel = snap.autoAdvance === false ? '关' : '开';
   return [
     '[顶栏] Issue Crusher · 调度',
     `功能: ${snap.feature ?? '—'}`,
     `runtime: ${snap.runtime ?? '—'}`,
     `后续 mode: ${mode}${modeHint(mode)}`,
+    `自动开下一张: ${autoLabel}`,
     statusLine(snap),
   ].join('  ·  ');
 }
@@ -192,8 +195,10 @@ export function renderFooter(snap) {
   if (actions.resume?.available) keys.push('[r] 恢复');
   if (actions.confirmHitl?.available) keys.push('[y] 同意');
   if (actions.rejectHitl?.available) keys.push('[n] 拒绝');
-  if (actions.stop?.available !== false) keys.push('[s] 停链');
-  keys.push('[t] 刷新', '[j/k|数字] 选择', '[Enter] 开始', '[q] 退出并停链');
+  // s is the auto-open-next dial (not chain stop). Show current state plainly.
+  const autoLabel = snap?.autoAdvance === false ? '关' : '开';
+  keys.push(`[s] 自动开下一张(${autoLabel})`);
+  keys.push('[t] 刷新', '[j/k|数字] 选择', '[Enter] 开始', '[q] 退出');
   return `[底栏]  ${keys.join('  ')}`;
 }
 
@@ -237,7 +242,8 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
   const lower = String(input).toLowerCase();
 
   if (lower === 'q') return { type: 'quit' };
-  if (lower === 's') return { type: 'stop' };
+  // Fullscreen s toggles auto-open-next (printable TUI still uses s/stop for stop).
+  if (lower === 's') return { type: 'toggleAutoAdvance' };
   if (lower === 't') return { type: 'tick' };
   if (lower === 'f') return { type: 'forceAdvance' };
   if (lower === 'r') return { type: 'resume' };

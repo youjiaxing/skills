@@ -42,6 +42,16 @@ export async function handleDispatchCommand(surface, command) {
   if (!command) return {};
   switch (command.type) {
     case 'quit':
+      // q / Ctrl+C: turn off auto-open-next and freeze chain before leave.
+      if (typeof surface.setAutoAdvance === 'function') {
+        try {
+          if (surface.snapshot().autoAdvance !== false) {
+            await surface.setAutoAdvance(false);
+          }
+        } catch {
+          // snapshot may be unavailable before first tick; stop still freezes.
+        }
+      }
       if (!surface.snapshot().stopped) {
         await surface.stop();
       }
@@ -49,6 +59,24 @@ export async function handleDispatchCommand(surface, command) {
     case 'stop': {
       const result = await surface.stop();
       return { message: result.ok ? '已停链。' : `停链失败: ${result.reason}` };
+    }
+    case 'toggleAutoAdvance': {
+      if (typeof surface.toggleAutoAdvance !== 'function') {
+        return { message: '当前表面不支持切换自动开下一张。', ok: false };
+      }
+      const result = await surface.toggleAutoAdvance();
+      if (!result?.ok) {
+        return {
+          message: `无法切换自动开下一张: ${result?.reason ?? 'unknown'}`,
+          ok: false,
+        };
+      }
+      const label = result.autoAdvance ? '开' : '关';
+      return {
+        message: `自动开下一张：${label}`,
+        ok: true,
+        autoAdvance: result.autoAdvance,
+      };
     }
     case 'start': {
       if (typeof surface.start !== 'function') {

@@ -1009,3 +1009,111 @@ test('startIssue while slot occupied does not second-spawn', async () => {
   assert.equal(launcher.launches.length, 1);
   assert.equal(chain.slot?.issue?.id, '01-first.md');
 });
+
+// --- dispatch-tui-start-and-polish / 03: s toggle autoAdvance ---
+
+test('toggleAutoAdvance flips on/off and is observable', async () => {
+  const only = candidate('01-ready.md');
+  const { chain } = makeChain({
+    candidates: [only],
+    autoAdvance: false,
+  });
+
+  assert.equal(chain.autoAdvance, false);
+  const on = chain.toggleAutoAdvance();
+  assert.equal(on.ok, true);
+  assert.equal(on.autoAdvance, true);
+  assert.equal(chain.autoAdvance, true);
+
+  const off = chain.toggleAutoAdvance();
+  assert.equal(off.ok, true);
+  assert.equal(off.autoAdvance, false);
+  assert.equal(chain.autoAdvance, false);
+
+  const onAgain = chain.toggleAutoAdvance();
+  assert.equal(onAgain.autoAdvance, true);
+  assert.equal(chain.autoAdvance, true);
+});
+
+test('after user toggle off, successful startIssue does not reopen autoAdvance', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  // Clean first Enter still opens auto (ticket 02).
+  await chain.startIssue('01-first.md');
+  assert.equal(chain.autoAdvance, true);
+
+  // User s-off.
+  chain.toggleAutoAdvance();
+  assert.equal(chain.autoAdvance, false);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.step(); // release only; auto off → no spawn
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(chain.slot, null);
+
+  // Enter only opens one; must NOT sneak auto back on.
+  const started = await chain.startIssue('02-second.md');
+  assert.equal(started.ok, true);
+  assert.equal(started.spawned, true);
+  assert.equal(chain.autoAdvance, false, 'Enter after s-off must not reopen autoAdvance');
+});
+
+test('programmatic setAutoAdvance(false) still allows first start to open auto', async () => {
+  // Fullscreen mount uses setAutoAdvance(false); that must not lock out ticket 02.
+  const only = candidate('01-ready.md');
+  const { chain } = makeChain({
+    candidates: [only],
+    autoAdvance: true,
+  });
+
+  chain.setAutoAdvance(false);
+  assert.equal(chain.autoAdvance, false);
+
+  await chain.startIssue('01-ready.md');
+  assert.equal(chain.autoAdvance, true, 'mount gate must not suppress first-Enter open');
+});
+
+test('empty slot + toggle on allows step auto-spawn without prior Enter', async () => {
+  const only = candidate('01-ready.md');
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    autoAdvance: false,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches.length, 0);
+
+  chain.toggleAutoAdvance();
+  assert.equal(chain.autoAdvance, true);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+});
+
+test('after s-off then s-on, step auto-spawns again', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await chain.startIssue('01-first.md');
+  chain.toggleAutoAdvance(); // off
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.step();
+  assert.equal(launcher.launches.length, 1);
+
+  chain.toggleAutoAdvance(); // on again
+  const handoff = await chain.step();
+  assert.equal(handoff.spawned, true);
+  assert.equal(launcher.launches.length, 2);
+});

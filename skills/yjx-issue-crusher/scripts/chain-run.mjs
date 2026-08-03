@@ -16,6 +16,8 @@
  *   (fullscreen mounts off; --once / default chain stays on).
  * dispatch-tui-start-and-polish/02: startIssue / startNext for Enter;
  *   first successful manual start opens autoAdvance for AFK handoff.
+ * dispatch-tui-start-and-polish/03: toggleAutoAdvance (user s dial);
+ *   after explicit off, manual start must not reopen autoAdvance.
  */
 
 import {
@@ -72,6 +74,12 @@ export function createChainRun({
   let stopped = false;
   /** @type {boolean} */
   let autoAdvance = Boolean(autoAdvanceOption);
+  /**
+   * When false, successful startIssue/startNext must not flip autoAdvance on.
+   * Set only by user toggleAutoAdvance → off (fullscreen `s`), not by
+   * programmatic setAutoAdvance(false) used at fullscreen mount.
+   */
+  let openAutoOnManualStart = true;
   let nextIssue = null;
   /**
    * Pending HITL ask (empty slot). Not a worker occupation.
@@ -281,8 +289,10 @@ export function createChainRun({
 
   /**
    * Explicit operator start (Enter): spawn one ready impl into an empty slot.
-   * Bypasses autoAdvance gate. First successful start opens autoAdvance so
-   * subsequent Closed∧exit handoffs can AFK without another Enter.
+   * Bypasses autoAdvance gate. On a clean path (user never s-off'd), first
+   * successful start opens autoAdvance so Closed∧exit handoffs can AFK.
+   * After user toggleAutoAdvance → off, start still spawns one but leaves
+   * autoAdvance off — only another s (or set/toggle on) re-enables it.
    *
    * @param {string | null | undefined} issueId
    *   When set, spawn that auto-ready id; otherwise board default (recommendNext).
@@ -327,8 +337,10 @@ export function createChainRun({
 
     pendingHitl = null;
     const result = await spawnFromIssue(issue, resolveEntryClass(issue.entryClass, issue));
-    // Clean first-success path: open auto handoff after a manual start.
-    autoAdvance = true;
+    // Clean first-success path only: do not sneak auto back on after user s-off.
+    if (openAutoOnManualStart) {
+      autoAdvance = true;
+    }
     return {
       ...result,
       ok: true,
@@ -387,15 +399,28 @@ export function createChainRun({
     },
     /**
      * Allow or forbid auto spawn on subsequent step()/tick cycles.
-     * Does not clear the live slot; does not imply stop().
+     * Programmatic only (fullscreen mount / tests / once path).
+     * Does not lock out Enter→open-auto; does not clear the live slot; not stop().
      */
     setAutoAdvance(enabled) {
       autoAdvance = Boolean(enabled);
       return { ok: true, autoAdvance };
     },
     /**
+     * Operator dial (fullscreen `s`): flip auto-open-next.
+     * Turning off also locks Enter so a later manual start will not reopen auto.
+     * Turning on allows tick/poll auto spawn (empty slot needs no Enter).
+     */
+    toggleAutoAdvance() {
+      autoAdvance = !autoAdvance;
+      if (!autoAdvance) {
+        openAutoOnManualStart = false;
+      }
+      return { ok: true, autoAdvance };
+    },
+    /**
      * Explicit start of a ready impl by id (Enter + highlight).
-     * Ignores autoAdvance gate; opens autoAdvance on success.
+     * Ignores autoAdvance gate; may open autoAdvance on success (see startIssue).
      */
     async startIssue(issueId) {
       return startIssue(issueId);

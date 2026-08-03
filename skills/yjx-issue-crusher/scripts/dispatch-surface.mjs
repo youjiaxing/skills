@@ -234,8 +234,9 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       return result;
     },
     /**
-     * Toggle whether tick() may auto-spawn the next ready impl.
+     * Programmatic gate: whether tick() may auto-spawn the next ready impl.
      * Fullscreen mounts with false; --once keeps chain default true.
+     * Does not lock Enter→open-auto (use toggleAutoAdvance for operator s).
      */
     async setAutoAdvance(enabled) {
       if (typeof chain.setAutoAdvance !== 'function') {
@@ -246,8 +247,25 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       return result;
     },
     /**
+     * Operator dial (fullscreen `s`): flip auto-open-next.
+     * Off also prevents a later Enter from reopening auto.
+     * Requires chain.toggleAutoAdvance — do not fake via setAutoAdvance
+     * (that path would not lock Enter→open-auto).
+     */
+    async toggleAutoAdvance() {
+      if (typeof chain.toggleAutoAdvance !== 'function') {
+        return { ok: false, reason: 'no-auto-advance' };
+      }
+      const result = chain.toggleAutoAdvance();
+      const label = result.autoAdvance ? '开' : '关';
+      pushMessage('info', `自动开下一张：${label}`);
+      await buildSnapshot();
+      return result;
+    },
+    /**
      * Explicit Enter start: spawn highlighted id, or board default when omitted.
-     * Bypasses autoAdvance gate; first success opens autoAdvance on the chain.
+     * Bypasses autoAdvance gate; clean first success opens autoAdvance unless
+     * the operator previously turned it off via toggleAutoAdvance.
      *
      * @param {string | null | undefined} issueId
      */
