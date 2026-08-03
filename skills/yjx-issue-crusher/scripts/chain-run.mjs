@@ -199,6 +199,8 @@ export function createChainRun({
       issue,
       mode: spawnMode,
       entryClass,
+      model,
+      effort,
     });
     const result = await launcher.launch(contract);
 
@@ -210,6 +212,8 @@ export function createChainRun({
       cwd,
       mode: spawnMode,
       title: contract.title,
+      model: contract.model,
+      effort: contract.effort,
       forceAdvanceRequested: false,
     };
     status = 'soft-stuck';
@@ -347,6 +351,8 @@ export function createChainRun({
         title: slot.title,
         sessionId: slot.sessionId,
         mode: slot.mode,
+        model: slot.model,
+        effort: slot.effort,
       });
       const result = await launcher.launch(contract);
 

@@ -9,14 +9,14 @@ disable-model-invocation: true
 
 `yjx-issue-crusher` 是 **issue 串行接力编排器** 的独立 skill 包。实现与测试在本目录；试点仓（如 `issue-crusher`）只消费本 skill，**不内嵌**编排器源码。
 
-## 现状（ticket 07–11）
+## 现状（ticket 07–12）
 
 已具备：
 
 - **Chain Run** 测试缝：可注入假 `TrackerPort` + 假 `WorkerLauncher` + 假/真 `ModeConfig`
 - **local-markdown** Tracker 适配：读 fixture/真实 `.scratch/<feature>/issues`，自动候选与 ralph 合同对齐
-- 最小 CLI：`recommend`（只读下一张，不 spawn 真 agent）
-- **impl launch 合同**（假 Launcher）：必填 runtime/cwd/feature/issue；标题 `<feature>/<NN>-<slug>`；`initialPrompt` 含 `/implement <相对路径>`（不贴全文）；Grok 首行 `/rename`，Claude 用结构化 `title` 供 `-n`；mode 硬默认 **review**（禁自动 commit/关票），链上解析为 vibe 时换文案
+- 最小 CLI：`recommend`（只读下一张）；`probe-launch`（真启动器 dry-run / 可选前台 spawn）
+- **impl launch 合同**（假 Launcher）：必填 runtime/cwd/feature/issue；标题 `<feature>/<NN>-<slug>`；`initialPrompt` 含 `/implement <相对路径>`（不贴全文）；Grok 首行 `/rename`，Claude 用结构化 `title` 供 `-n`；mode 硬默认 **review**（禁自动 commit/关票），链上解析为 vibe 时换文案；可选 `model`/`effort`（空则不传 flag）
 - **双条件接力**：可开下一张 = `Closed` ∧（进程退出 ∨ 已 Closed 下 `forceAdvance`）；只退未关 / 只关未退均不 spawn 下一张
 - **边沿状态（ticket 09）**：
   - `soft-stuck`：进程存活 + 未 Closed → 禁止下一张，不杀进程
@@ -36,8 +36,15 @@ disable-model-invocation: true
   - `confirmHitl()`：按类预填入口（wayfinder → `/wayfinder` 路径；human/unknown → 中性打开路径、无具体 skill slash）；mode 与票 10 解析一致、spawn 钉死
   - `rejectHitl()`：零 spawn，槽保持空闲
   - ready auto 与 HITL 互不误判：有 ready 时仍直接 spawn `/implement`
+- **真前台 Worker 启动器（ticket 12）**：
+  - `scripts/real-launcher.mjs`：与假 Launcher **同一 launch DTO**，`createChainRun({ launcher })` 可替换注入
+  - 前台可介入：`detached` + 可见控制台；**不**把 headless `-p` / `--print` / `--single` 当默认主路径
+  - 省略 `model`/`effort` 时不传对应 flag；可恢复路径**禁止** `--no-session-persistence`
+  - Claude 初始带 `-n <title>`；Grok 初始靠 prompt 首行 `/rename` + `--cwd`
+  - spawn 记账至少 `pid`；默认预分配 UUID 经 `--session-id` 写入（`sessionIdStatus: preallocated`）；关闭预分配时 `sessionId: null` + 明确 `sessionIdNote`，不假装已记
+  - resume：`--resume <已记 id>` + 原 cwd/runtime，**不**重塞 skill 入口
 
-尚未具备（后续票）：真 Worker 启动、调度 TUI 完整 UI。
+尚未具备（后续票）：调度 TUI 完整 UI / 整链 CLI 产品面（ticket 13）。
 
 ## 依赖与可移植脚本
 
@@ -68,6 +75,46 @@ node <skill-dir>/scripts/cli.mjs recommend \
 ```
 
 输出 JSON：`candidates`、`recommended`。不启动 Grok/Claude。
+
+### 真启动器探测（ticket 12）
+
+默认 **dry-run**（只打印 argv / session 记账，不起进程）：
+
+```bash
+# Grok 前台启动合同（省略 model/effort）
+node <skill-dir>/scripts/cli.mjs probe-launch --runtime grok --cwd <repo>
+
+# Claude 前台启动合同（含 -n 标题）
+node <skill-dir>/scripts/cli.mjs probe-launch --runtime claude --cwd <repo> \
+  --feature issue-chain-orchestrator \
+  --issue .scratch/issue-chain-orchestrator/issues/12-real-worker-launcher.md
+
+# resume 形状（不重塞 /implement）
+node <skill-dir>/scripts/cli.mjs probe-launch --runtime claude --cwd <repo> \
+  --resume <session-uuid>
+```
+
+可选本机前台 spawn（会开独立控制台；探针可用 `--kill-after` 收回）：
+
+```bash
+node <skill-dir>/scripts/cli.mjs probe-launch --runtime grok --cwd <repo> --run --kill-after 3000
+node <skill-dir>/scripts/cli.mjs probe-launch --runtime claude --cwd <repo> --run --kill-after 3000
+```
+
+程序内注入：
+
+```js
+import { createRealLauncher } from './real-launcher.mjs';
+import { createChainRun } from './chain-run.mjs';
+
+const chain = createChainRun({
+  tracker,
+  launcher: createRealLauncher(),
+  feature,
+  cwd,
+  runtime: 'claude', // or grok
+});
+```
 
 ## 自动候选合同（与 ralph 同向）
 

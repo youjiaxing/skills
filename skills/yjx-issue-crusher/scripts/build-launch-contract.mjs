@@ -29,6 +29,49 @@ const NEUTRAL_VIBE_CONSTRAINT =
   'Hard constraints: confirm completion rules with the human before writing any close field. '
   + 'Mode: vibe -- after finishing, commit when appropriate only if the human already authorized close.';
 
+/** Soft upper bound on session title length (Unicode scalar values / JS code points). */
+export const SESSION_TITLE_MAX = 120;
+
+/**
+ * Truncate a session title without cutting `feature/` or `NN-` prefixes.
+ * Only the title-slug tail is trimmed; trailing `-` after cut is stripped.
+ * If the protected prefix alone fills the budget, allow `feature/NN` with empty slug.
+ */
+export function truncateSessionTitle(title, max = SESSION_TITLE_MAX) {
+  const text = String(title ?? '');
+  const chars = Array.from(text);
+  if (chars.length <= max) return text;
+
+  const slash = text.indexOf('/');
+  if (slash < 0) {
+    return chars.slice(0, max).join('').replace(/-+$/u, '');
+  }
+
+  const featurePrefix = text.slice(0, slash + 1); // includes trailing '/'
+  const after = text.slice(slash + 1);
+  const match = after.match(/^(\d+)(?:-(.*))?$/u);
+  if (!match) {
+    const room = max - Array.from(featurePrefix).length;
+    if (room <= 0) return Array.from(featurePrefix).slice(0, max).join('');
+    return featurePrefix + Array.from(after).slice(0, room).join('').replace(/-+$/u, '');
+  }
+
+  const nn = match[1];
+  const slug = match[2] ?? '';
+  const protectedPrefix = `${featurePrefix}${nn}-`;
+  const protectedChars = Array.from(protectedPrefix);
+  if (protectedChars.length >= max) {
+    const bare = `${featurePrefix}${nn}`;
+    const bareChars = Array.from(bare);
+    if (bareChars.length <= max) return bare;
+    return bareChars.slice(0, max).join('');
+  }
+
+  const room = max - protectedChars.length;
+  const cutSlug = Array.from(slug).slice(0, room).join('').replace(/-+$/u, '');
+  return protectedPrefix + cutSlug;
+}
+
 /**
  * Session title: <feature>/<NN>-<slug> from the issue filename (not body H1).
  */
@@ -39,7 +82,7 @@ export function buildSessionTitle(feature, issue) {
   const base = String(raw).split(/[/\\]/).pop() || '';
   const stem = base.replace(/\.md$/i, '');
   if (!stem) throw new Error('cannot derive title slug from issue identity');
-  return `${feature}/${stem}`;
+  return truncateSessionTitle(`${feature}/${stem}`);
 }
 
 /**
@@ -100,6 +143,15 @@ function entryLines(entryClass, issuePath) {
 }
 
 /**
+ * Normalize optional model/effort: empty string → null (omit flag; runtime product default).
+ */
+export function normalizeOptionalFlag(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
  * @param {object} input
  * @param {'grok'|'claude'} input.runtime
  * @param {string} input.feature
@@ -107,6 +159,8 @@ function entryLines(entryClass, issuePath) {
  * @param {{ id: string, path: string, number?: string, title?: string, entryClass?: string, type?: string, workflow?: string, statusRole?: string }} input.issue
  * @param {'review'|'vibe'} [input.mode]
  * @param {'impl'|'wayfinder'|'human'|'unknown'} [input.entryClass]
+ * @param {string|null} [input.model] omitted → runtime product default (no CLI flag)
+ * @param {string|null} [input.effort] omitted → runtime product default (no CLI flag)
  */
 export function buildLaunchContract({
   runtime,
@@ -115,6 +169,8 @@ export function buildLaunchContract({
   issue,
   mode,
   entryClass,
+  model = null,
+  effort = null,
 } = {}) {
   if (!runtime) throw new Error('runtime is required');
   if (!feature) throw new Error('feature is required');
@@ -148,6 +204,8 @@ export function buildLaunchContract({
     title,
     mode: effectiveMode,
     entryClass: resolvedEntry,
+    model: normalizeOptionalFlag(model),
+    effort: normalizeOptionalFlag(effort),
     initialPrompt: lines.join('\n'),
   };
 }
@@ -165,6 +223,8 @@ export function buildResumeContract({
   title,
   sessionId,
   mode,
+  model = null,
+  effort = null,
 } = {}) {
   if (!runtime) throw new Error('runtime is required');
   if (!feature) throw new Error('feature is required');
@@ -184,6 +244,8 @@ export function buildResumeContract({
     title: resolvedTitle,
     sessionId,
     mode: effectiveMode,
+    model: normalizeOptionalFlag(model),
+    effort: normalizeOptionalFlag(effort),
     // Empty / neutral prompt: continue the existing session, no fresh skill entry.
     initialPrompt: '',
   };
