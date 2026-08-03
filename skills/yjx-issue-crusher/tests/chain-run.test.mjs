@@ -868,3 +868,55 @@ test('stop blocks force-advance path that would open the next ticket', async () 
   assert.equal(result.spawned, false);
   assert.equal(launcher.launches.length, 1);
 });
+
+// --- dispatch-tui-start-and-polish / 01: autoAdvance gate ---
+
+test('autoAdvance defaults on: step still auto-spawns ready impl (once / non-fullscreen seam)', async () => {
+  const only = candidate('01-ready.md');
+  const { launcher, chain } = makeChain({ candidates: [only] });
+
+  assert.equal(chain.autoAdvance, true);
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+});
+
+test('autoAdvance off: repeated step never auto-spawns ready impl', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  assert.equal(chain.autoAdvance, false);
+
+  for (let i = 0; i < 3; i += 1) {
+    const result = await chain.step();
+    assert.equal(result.spawned, false);
+    assert.equal(result.reason, 'auto-advance-off');
+  }
+
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(chain.slot, null);
+  assert.equal(chain.status, 'idle');
+});
+
+test('setAutoAdvance(true) re-enables auto spawn on subsequent step', async () => {
+  const only = candidate('01-ready.md');
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    autoAdvance: false,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches.length, 0);
+
+  const toggled = chain.setAutoAdvance(true);
+  assert.equal(toggled.ok, true);
+  assert.equal(chain.autoAdvance, true);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+});

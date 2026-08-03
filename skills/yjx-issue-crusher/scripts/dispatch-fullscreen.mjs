@@ -570,6 +570,12 @@ export async function runFullscreenDispatch({
 } = {}) {
   if (!surface) throw new Error('surface is required');
 
+  // Fullscreen start model: never auto-fire on mount. --once does not enter here.
+  // Mock surfaces used in pure poll tests may omit setAutoAdvance — skip quietly.
+  if (typeof surface.setAutoAdvance === 'function') {
+    await surface.setAutoAdvance(false);
+  }
+
   const ticksRef = { current: 0 };
   let enteredAlt = false;
 

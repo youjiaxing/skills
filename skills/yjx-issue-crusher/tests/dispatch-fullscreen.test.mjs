@@ -175,6 +175,56 @@ test('runFullscreenDispatch starts shell and quits cleanly on q', async () => {
   assert.match(out, /\[顶栏\]|\[底栏\]|Issue Crusher/);
 });
 
+// --- dispatch-tui-start-and-polish / 01: fullscreen default no auto-spawn ---
+
+test('fullscreen mount: autoAdvance off; ready board + multi tick/poll → zero spawn', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  // Default chain autoAdvance is on (once seam); fullscreen mount must force it off.
+  const { launcher, surface } = makeSurface({ candidates: [first, second] });
+
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 250,
+    alternateScreen: false,
+  });
+
+  // bootstrap + at least one poll interval of continuous tick
+  await new Promise((r) => setTimeout(r, 700));
+
+  let snap = null;
+  try {
+    snap = surface.snapshot();
+  } catch {
+    snap = null;
+  }
+  assert.ok(snap, 'fullscreen bootstrap should produce a snapshot');
+  assert.equal(snap.autoAdvance, false, 'fullscreen initial autoAdvance must be off');
+  assert.equal(snap.slot, null);
+  assert.equal(launcher.launches.length, 0, 'ready board must not auto-spawn under fullscreen');
+
+  // another poll window — still zero
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  stdin.write('q');
+  const result = await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('fullscreen zero-spawn test did not exit')), 3000);
+    }),
+  ]);
+  assert.equal(result.mode, 'fullscreen');
+  assert.equal(launcher.launches.length, 0);
+});
+
 test('runDispatchTui on non-TTY never hangs on Ink and still supports q', async () => {
   const surface = makeSurfaceOnly();
   const input = new PassThrough();

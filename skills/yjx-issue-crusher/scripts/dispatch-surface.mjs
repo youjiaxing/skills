@@ -128,6 +128,8 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
     const status = stopped ? 'stopped' : chain.status;
     const closed = await closedForSlot();
     const board = await loadBoard();
+    // Default true when chain omits the field (older fakes / once path).
+    const autoAdvance = chain.autoAdvance !== false;
     const slot = chain.slot
       ? {
         issueId: chain.slot.issue?.id ?? null,
@@ -158,6 +160,7 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       workerMode: slot?.mode ?? null,
       status,
       stopped,
+      autoAdvance,
       slot,
       pendingHitl: pending,
       board,
@@ -222,6 +225,18 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
     async stop() {
       const result = await chain.stop();
       pushMessage('info', 'Chain stopped — no further auto spawn');
+      await buildSnapshot();
+      return result;
+    },
+    /**
+     * Toggle whether tick() may auto-spawn the next ready impl.
+     * Fullscreen mounts with false; --once keeps chain default true.
+     */
+    async setAutoAdvance(enabled) {
+      if (typeof chain.setAutoAdvance !== 'function') {
+        return { ok: false, reason: 'no-auto-advance' };
+      }
+      const result = chain.setAutoAdvance(enabled);
       await buildSnapshot();
       return result;
     },

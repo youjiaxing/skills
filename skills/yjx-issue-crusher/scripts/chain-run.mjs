@@ -12,6 +12,8 @@
  * Ticket 11: non-ready / Wayfinder HITL — auto path only ready impl; otherwise
  *            emit needs-confirmation, spawn only after confirmHitl (entry by class).
  * Ticket 13: stop() freezes auto spawn / force-advance; dispatch TUI consumes this.
+ * dispatch-tui-start-and-polish/01: autoAdvance gates tick/poll auto spawn
+ *   (fullscreen mounts off; --once / default chain stays on).
  */
 
 import {
@@ -39,6 +41,11 @@ export function createChainRun({
   modeConfig = null,
   model = null,
   effort = null,
+  /**
+   * Whether step() may auto-spawn the next ready impl (and open HITL offers).
+   * Default true preserves --once / chain unit seams; fullscreen mount sets false.
+   */
+  autoAdvance: autoAdvanceOption = true,
   // Intentionally accepted and ignored: no user-level or feature-level mode layer.
   userHome: _userHome,
   userMode: _userMode,
@@ -61,6 +68,8 @@ export function createChainRun({
 
   let status = 'idle';
   let stopped = false;
+  /** @type {boolean} */
+  let autoAdvance = Boolean(autoAdvanceOption);
   let nextIssue = null;
   /**
    * Pending HITL ask (empty slot). Not a worker occupation.
@@ -238,6 +247,13 @@ export function createChainRun({
     get stopped() {
       return stopped;
     },
+    /**
+     * Whether tick/step may auto-spawn the next ready impl.
+     * Independent of `stopped` (stop is stronger: also blocks force-advance).
+     */
+    get autoAdvance() {
+      return autoAdvance;
+    },
     get nextIssue() {
       return nextIssue;
     },
@@ -271,6 +287,14 @@ export function createChainRun({
       stopped = true;
       status = 'stopped';
       return { ok: true };
+    },
+    /**
+     * Allow or forbid auto spawn on subsequent step()/tick cycles.
+     * Does not clear the live slot; does not imply stop().
+     */
+    setAutoAdvance(enabled) {
+      autoAdvance = Boolean(enabled);
+      return { ok: true, autoAdvance };
     },
     /**
      * Scheduler / TUI mode dial.
@@ -418,6 +442,7 @@ export function createChainRun({
      * One evaluation cycle:
      * - If stopped, never auto-spawn or open HITL offers.
      * - If a slot is held, release it only when dual conditions are met.
+     * - If autoAdvance is false, reclassify/release only — no auto spawn / HITL offer.
      * - Then spawn at most one auto candidate into an empty slot (single slot).
      * - If no auto candidate but a HITL candidate exists, emit needs-confirmation
      *   and do not spawn until confirmHitl.
@@ -449,6 +474,28 @@ export function createChainRun({
         }
         slot = null;
         status = 'idle';
+      }
+
+      // Fullscreen default / manual-start gate: tick may refresh but must not fire.
+      if (!autoAdvance) {
+        if (pendingHitl) {
+          status = 'needs-confirmation';
+          return {
+            spawned: false,
+            advanced: false,
+            reason: 'auto-advance-off',
+            next: pendingHitl.issue,
+            status,
+          };
+        }
+        status = 'idle';
+        return {
+          spawned: false,
+          advanced: false,
+          reason: 'auto-advance-off',
+          next: nextIssue,
+          status,
+        };
       }
 
       // Auto ready-impl path wins over HITL — never misclassify ready as ask-first.

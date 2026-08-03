@@ -381,3 +381,46 @@ test('snapshotFingerprint changes when slot migrates', async () => {
   const b = snapshotFingerprint(surface.snapshot());
   assert.notEqual(a, b);
 });
+
+// --- dispatch-tui-start-and-polish / 01: autoAdvance projection + gate ---
+
+test('surface projects autoAdvance; off blocks tick spawn with ready board', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await surface.tick();
+  let snap = surface.snapshot();
+  assert.equal(snap.autoAdvance, false);
+  assert.equal(snap.slot, null);
+  assert.equal(launcher.launches.length, 0);
+
+  await surface.tick();
+  await surface.tick();
+  snap = surface.snapshot();
+  assert.equal(snap.autoAdvance, false);
+  assert.equal(launcher.launches.length, 0, 'tick must not auto-spawn while autoAdvance is off');
+});
+
+test('surface setAutoAdvance(true) restores tick auto-spawn (non-fullscreen / once seam)', async () => {
+  const only = candidate('01-ready.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [only],
+    autoAdvance: false,
+  });
+
+  await surface.tick();
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  const toggled = await surface.setAutoAdvance(true);
+  assert.equal(toggled.ok, true);
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  await surface.tick();
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().slot?.issueId, '01-ready.md');
+});
