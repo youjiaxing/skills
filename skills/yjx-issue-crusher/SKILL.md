@@ -1,6 +1,6 @@
 ---
 name: yjx-issue-crusher
-description: 按 kanban 对 feature 做 issue 串行接力编排（Chain Run）：经 Tracker 端口读自动候选，spawn 独立前台 Worker，盯 Closed 完成闸门。一期 local-markdown；测试可注入假 Tracker/Launcher。调度 TUI + CLI chain 一键开链。
+description: 按 kanban 对 feature 做 issue 串行接力编排（Chain Run）：经 Tracker 端口读自动候选，spawn 独立前台 Worker，盯 Closed 完成闸门。一期 local-markdown；测试可注入假 Tracker/Launcher。交互 dual-TTY 为 Ink 全屏调度 TUI；CLI chain 一键开链。
 argument-hint: "<feature-slug>"
 disable-model-invocation: true
 ---
@@ -21,8 +21,8 @@ disable-model-invocation: true
 
 | 角色 | 做 | 不做 |
 |------|----|------|
-| **编排器（CLI ± 调度 TUI）** | 读候选/完成态；spawn Worker；盯完成闸门；按 review/vibe 决定可否开下一张；失败/未关票停开下一张；调度交互与只读图 | 不当 agent 主界面；不自动换模/effort；不把进程退出当唯一成功；不内嵌 Worker；不做多仓总控 |
-| **Worker（Grok Build / Claude Code 前台）** | 在指定 cwd 做票；人可介入；会话可回看 | 不选下一张、不跨 feature 调度 |
+| **编排器（CLI ± Ink 全屏调度 TUI）** | 读候选/完成态；spawn Worker；盯完成闸门；按 review/vibe 决定可否开下一张；失败/未关票停开下一张；全屏分区调度与只读图 | 不当 agent 主界面；不自动换模/effort；不把进程退出当唯一成功；**不内嵌 Worker 终端**；不做多仓总控 |
+| **Worker（Grok Build / Claude Code 独立前台窗）** | 在指定 cwd 做票；人可介入；会话可回看；与调度 TUI **分窗** | 不选下一张、不跨 feature 调度 |
 | **Tracker 适配器** | 读候选 / 完成 / 只读看板投影 | 不含编排策略、不 spawn Worker |
 
 ### 三概念与可开下一张
@@ -108,12 +108,14 @@ closed == false
 
 - **Chain Run** 测试缝与状态机（双条件、边沿、单槽、stop）  
 - **local-markdown** Tracker 适配 + 只读 `getBoard()`  
-- **假 / 真** WorkerLauncher（同一 launch DTO）  
+- **假 / 真** WorkerLauncher（同一 launch DTO；真启动器开 **独立前台窗**，不进调度屏）  
 - **mode** 解析与仓文件写回  
 - **HITL** confirm/reject（Wayfinder / human / 未知）  
-- **CLI：** `recommend` · `probe-launch` · **`chain`**（调度 TUI + 可选假启动器）  
-- 交互 TTY：**Ink 全屏调度壳**（顶栏 / 中部 / 当前槽 / 底栏；`q` 退出）；`--once` / 非 TTY 仍打印帧并退出  
-- 交互 TUI **后台 poll**（默认 2s）自动 tick，支持 AFK 接力  
+- **CLI：** `recommend` · `probe-launch` · **`chain`**（默认命令；可选假启动器）  
+- **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏键位；键盘驱动既有 surface 动作）  
+- **启动期全屏选单**：缺 feature / runtime 时用 Ink 列表（`j`/`k`/数字 + Enter；`q` 取消），不再以 readline 问句为主路径  
+- **非全屏路径：** `--once` / 非 TTY / 非交互 → 打印调度帧后退出（不挂全屏、不询问）；单 TTY 等退化场景可走可打印帧 + 行内命令后备  
+- 交互全屏 **后台 poll**（默认 2s）自动 tick，支持 AFK 接力  
 
 ---
 
@@ -169,8 +171,18 @@ issue-crusher my-feature
 ic
 ```
 
-含义：在当前目录开链（`--cwd` / `--project-root` 默认 `pwd`），命令默认 `chain`。  
-调度界面默认**中文**，含 **ASCII 依赖图**（★可执行 ▶进行中 ·阻塞 ✓完成）与「现在可执行」清单。
+含义：在当前目录开链（`--cwd` / `--project-root` 默认 `pwd`），命令默认 `chain`。
+
+**交互 dual-TTY（stdin+stdout 皆 TTY，且未传 `--once`）** 进入 **Ink 全屏调度应用**（像全屏工具，不是日志滚动页）：
+
+| 分区 | 内容 |
+|------|------|
+| **顶栏** | feature · runtime · 后续 mode · 链状态 |
+| **中部** | 中文 ASCII 依赖图（★可执行 ▶进行中 ·阻塞 ✓完成）+「现在可执行」清单（只读，无图上派票） |
+| **当前槽** | 在跑票 / pid / Closed / 钉死 mode；有待确认时显示 HITL |
+| **底栏** | 当前可用键位 |
+
+Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 **不内嵌** Worker 输出。多 feature / 多仓 = **多开** `ic` 进程（各管各的调度窗 + Worker 窗）。
 
 | 还想指定 | 写法 |
 |----------|------|
@@ -188,8 +200,9 @@ ic
 ```
 
 解析：  
-- **runtime**：`--runtime` → 仓 `runtime` → **交互询问**（非交互/脚本须显式指定；`--fake-launcher` 冒烟默认 grok）  
-- **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（拨杆仍会写回仓 `mode`）
+- **runtime**：`--runtime` → 仓 `runtime` → **交互 dual-TTY 全屏选单**（`grok` / `claude`）；非交互/脚本/`--once` 须显式指定（`--fake-launcher` 冒烟缺省时默认 grok）  
+- **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（全屏拨杆 `m` 仍会写回仓 `mode`）  
+- **feature**：位置参数 → 否则 dual-TTY **全屏列出** `.scratch` 下 feature 选取；非交互须显式给出
 
 未 `npm link` 时仍可用长路径：
 
@@ -206,11 +219,19 @@ node <skill-dir>/scripts/cli.mjs my-feature
 | `--project-root` | Tracker 根（默认：与 cwd 相同） |
 | `--runtime` | `grok` \| `claude`（见上默认） |
 | `--mode` | 仅本进程 `review`\|`vibe`，默认不写仓 |
-| `--fake-launcher` | 假启动器（冒烟，不开真窗） |
-| `--once` | 非交互：tick 后打印帧并退出 |
+| `--fake-launcher` | 假启动器（冒烟，不开真 Worker 窗） |
+| `--once` | **非全屏**：tick 后打印调度帧并退出（脚本/CI/冒烟） |
 | `--stop` | 与 `--once` 联用：tick 后停链 |
 
-空链 / 停链冒烟：
+### 何时全屏 / 何时打印帧
+
+| 条件 | 行为 |
+|------|------|
+| stdin+stdout 皆 TTY，且无 `--once` | **Ink 全屏**调度（alternate-screen）；缺 feature/runtime 时先挂全屏选单 |
+| `--once`、管道、非 TTY、显式非交互 | **不挂** Ink；打印一帧（或有限 tick）后退出；缺参按非交互合同报错/默认，**不**弹选单 |
+| 退化交互（例如仅一侧 TTY） | 可打印帧 + 行内 `>` 命令后备（**不是**主 UI；日常请用 dual-TTY 全屏） |
+
+空链 / 停链冒烟（非全屏、可脚本化）：
 
 ```bash
 ic my-feature --fake-launcher --once --stop
@@ -225,21 +246,34 @@ ic demo \
   --fake-launcher --once
 ```
 
-多 feature / 多仓 = **多开** `ic` 进程。
+### 全屏调度键位
 
-### 调度 TUI 键位
+主路径为**单键**（无 readline 行编辑）。底栏会按 `snapshot.actions` 隐藏不可用项。
 
 ```text
-m review | m vibe   mode 拨杆（写仓；切 vibe 一行提示；只影响后续票）
+m                   mode 拨杆：在 review ↔ vibe 间切换（写仓；切 vibe 一行后果提示；只影响后续 spawn）
 f                   强制推进（仅当前票 Closed 可用）
 r                   needs-resume 一键恢复
 y / n               HITL 同意 / 拒绝
 s                   停链（此后不再自动 spawn）
-t                   手动 tick 一次
-q                   停链并退出 TUI
+t                   手动 tick / 刷新一次
+j / k               「现在可执行」列表高亮下一项 / 上一项（只影响显示，不派票）
+1–9                 高亮对应可执行项（只影响显示）
+q                   停链并退出全屏（Ctrl+C 等同）
 ```
 
-看板区 **read-only**，无图上派票。
+看板与依赖图 **read-only**，无图上派票、无内嵌 Worker。
+
+### 启动全屏选单键位
+
+缺 feature 或 runtime、且 dual-TTY 交互时：
+
+```text
+j / k 或 ↓ / ↑     移动高亮
+1–9                 跳到对应项
+Enter               确认
+q / Esc             取消（不留下残缺终端状态）
+```
 
 ### 其它 CLI
 
@@ -257,19 +291,24 @@ node <skill-dir>/scripts/cli.mjs probe-launch \
 ## 依赖与测试
 
 - Node.js 20+  
-- 运行时依赖（skills monorepo 根 `package.json`）：**Ink** + **React**（交互 TTY 全屏调度壳）；其余编排逻辑以 Node 标准库为主  
+- 运行时依赖装在 **skills monorepo 根** `package.json`（本 skill **无**独立子 `package.json`）：  
+  - **`ink`** + **`react`**：交互 dual-TTY 全屏调度壳与启动选单  
+  - **`yaml`**：与 monorepo 其它工具共用  
+  - 编排核心（Chain Run、Tracker、Launcher 合同）仍以 **Node 标准库**为主  
+- **不是**「仅 Node 标准库」包：交互全屏路径需要 Ink/React（`npm install` 装在 monorepo 根）  
 - local-md 适配软依赖同 skills 根下的 **`yjx-local-kanban`**  
-- **不**运行时硬依赖 `yjx-local-ralph`（候选在本包 `select-candidates.mjs`）
+- **不**运行时硬依赖 `yjx-local-ralph`（候选在本包 `select-candidates.mjs`）  
+- **不**依赖 Claude API / Claude Agent SDK / Claude Code 专有运行时（Worker 是外部前台进程）
 
 ```bash
 # skills monorepo 根
 node --test skills/yjx-issue-crusher/tests/*.test.mjs
-# 或
+# 或整仓
 npm test
 ```
 
 主 seam：`tests/chain-run.test.mjs`。  
-调度面：`tests/dispatch-surface.test.mjs` · `tests/dispatch-fullscreen.test.mjs` · `tests/cli-chain.test.mjs`。  
+调度 / 全屏 / 启动选单：`tests/dispatch-surface.test.mjs` · `tests/dispatch-fullscreen.test.mjs` · `tests/startup-select.test.mjs` · `tests/cli-chain.test.mjs` · `tests/interactive-prompts.test.mjs`。  
 local-md fixture：`empty-frontier` / `single-ready` / `mixed-board` / `hitl-only`。
 
 ---
@@ -277,10 +316,10 @@ local-md fixture：`empty-frontier` / `single-ready` / `mixed-board` / `hitl-onl
 ## 程序内注入（可选）
 
 ```js
-import { createRealLauncher } from './real-launcher.mjs';
-import { createChainRun } from './chain-run.mjs';
-import { createDispatchSurface } from './dispatch-surface.mjs';
-import { runDispatchTui } from './dispatch-tui.mjs';
+import { createRealLauncher } from './scripts/real-launcher.mjs';
+import { createChainRun } from './scripts/chain-run.mjs';
+import { createDispatchSurface } from './scripts/dispatch-surface.mjs';
+import { runDispatchTui } from './scripts/dispatch-tui.mjs';
 
 const chain = createChainRun({
   tracker,
