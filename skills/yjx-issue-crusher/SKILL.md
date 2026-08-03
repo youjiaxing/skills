@@ -19,19 +19,20 @@ disable-model-invocation: true
 
 尚未具备（后续票）：完整 launch 合同、双条件接力、边沿态、mode、真 Worker 启动、调度 TUI。
 
-## 依赖
+## 依赖与可移植脚本
 
-- Node.js 20+
-- **local-md 适配**软依赖同 skills 根下的 `yjx-local-kanban`（解析看板图；不硬编码安装路径以外的包管理）
-- **不**运行时硬依赖 `yjx-local-ralph`；候选过滤在本包 `select-candidates.mjs` 语义对齐
+- Node.js 20+；只使用 Node 标准库，不调用 Claude API / Agent SDK / 专有运行时
+- **local-md 适配**软依赖**同一 Agent skills 根目录**下的 `yjx-local-kanban`（相对路径 import 其 `issue-board.mjs`）
+- **不**运行时硬依赖 `yjx-local-ralph`；候选过滤在本包 `select-candidates.mjs`，语义与 ralph 对齐
+- 根据当前 Agent 提供的 skill 加载信息定位本 `SKILL.md`，再解析 `<skill-dir>`；不要假设安装在 `.claude`、`.agents`、`.codex` 或固定全局目录
 
 ## 测试
 
-在 **skills monorepo 根**或本 skill 目录：
+在 **skills monorepo 根**：
 
 ```bash
-node --test skills/yjx-issue-crusher/tests/*.test.mjs
-# 或在 monorepo 根：
+node --test skills/yjx-issue-crusher/tests/chain-run.test.mjs skills/yjx-issue-crusher/tests/local-md-tracker.test.mjs
+# 或：
 npm test
 ```
 

@@ -34,9 +34,10 @@ npx skills add youjiaxing/skills --skill yjx-discuss
 npx skills add youjiaxing/skills --skill yjx-local-tracker-setup
 npx skills add youjiaxing/skills --skill yjx-local-kanban
 npx skills add youjiaxing/skills --skill yjx-local-ralph
+npx skills add youjiaxing/skills --skill yjx-issue-crusher
 ```
 
-`yjx-local-tracker-setup` 和 `yjx-local-kanban` 可独立安装；`yjx-local-ralph` 必须和 `yjx-local-kanban` 安装在同一个 Agent skills 根目录。脚本要求 Node.js 20 或更高版本，只使用 Node 标准库，不依赖 Claude API、Claude Agent SDK 或 Claude Code 专有运行时，因此可由支持 Agent Skills 和 shell 命令的不同 Agent 使用。
+`yjx-local-tracker-setup` 和 `yjx-local-kanban` 可独立安装；`yjx-local-ralph` 与 `yjx-issue-crusher`（local-md 适配读图）都必须和 `yjx-local-kanban` 安装在同一个 Agent skills 根目录。脚本要求 Node.js 20 或更高版本，只使用 Node 标准库，不依赖 Claude API、Claude Agent SDK 或 Claude Code 专有运行时，因此可由支持 Agent Skills 和 shell 命令的不同 Agent 使用。
 
 ## 开发者设置
 
