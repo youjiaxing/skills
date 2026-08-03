@@ -34,54 +34,38 @@ import {
 const KNOWN_COMMANDS = new Set(['recommend', 'probe-launch', 'chain']);
 
 function printHelp() {
-  console.log(`Usage:
-  ic <feature>                      # short: open chain in current repo (alias: issue-crusher)
-  ic chain <feature> [options]
-  ic recommend <feature>
-  ic probe-launch --runtime grok|claude [options]
+  console.log(`Issue Crusher — 按看板一张张串行开 Agent 做 issue
 
-Daily path (from product repo root):
-  ic my-feature
-  ic my-feature --runtime claude
+【你最常用】先 cd 到产品仓根目录，再：
+  ic <功能目录名>
 
-Defaults:
-  --cwd / --project-root   process.cwd()
-  --runtime                flag → repo .issue-crusher/config.json "runtime" → grok
-  --mode                   flag → repo config "mode" → review
+  例：.scratch/pay-refactor/issues 对应功能名 pay-refactor
+      ic pay-refactor
 
-Commands:
-  recommend      List auto-relay candidates and recommend next (local-md)
-  probe-launch   Build (and optionally spawn) a real foreground Worker launch
-  chain          Start one orchestrator chain (cwd + feature); dispatch TUI
-                 (default when the first arg is a feature slug, not a command)
+  会打开调度界面，并按规则用 Grok/Claude 前台做 ready 的实现票。
 
-chain / recommend options:
-  --feature SLUG        Or positional: ic <feature> / ic chain <feature>
-  --cwd PATH            Product repo cwd (default: process cwd)
-  --project-root PATH   Tracker root (default: same as --cwd)
-  --runtime grok|claude Worker binary (chain; see Defaults above)
-  --mode review|vibe    Process-only override (default: not set → repo/review)
-  --model ID            Optional model for spawns
-  --effort LEVEL        Optional effort for spawns
-  --fake-launcher       Fake launcher (smoke; no real Worker)
-  --once                Non-interactive tick + print frame
-  --stop                With --once: stop after first tick
+【等价写法】
+  issue-crusher <功能名>          与 ic 相同
+  ic chain <功能名>               同上（显式写 chain）
 
-probe-launch options:
-  --runtime grok|claude Runtime binary (required)
-  --cwd PATH            Working directory (default: cwd)
-  --feature SLUG        Feature slug (default: demo)
-  --issue PATH          Issue path or id (default: synthetic probe)
-  --model ID / --effort LEVEL / --title TITLE
-  --resume SESSION_ID   Resume launch instead of initial
-  --run                 Actually spawn (default: dry-run)
-  --kill-after MS       With --run, kill after MS
+【其它命令】
+  ic recommend <功能名>           只打印「下一张该做谁」，不开会话
+  ic probe-launch --runtime grok  调试：看启动参数（默认不真开窗）
 
-  -h, --help            Show help
+【可选参数】
+  --runtime grok|claude   用哪个 Agent（可省略；仓配置或默认 grok）
+  --mode review|vibe      审码 / 可自动关票（可省略；默认 review）
+  --cwd 路径              产品仓目录（默认：当前目录）
+  --fake-launcher         假启动，不真开 Grok/Claude（冒烟用）
+  --once / --stop         非交互跑一下就退（测试用）
+  -h, --help              显示本说明
 
-One chain process = one product cwd + one feature. Multi-feature = multi process.
-Board/graph is read-only. Workers stay in their own foreground windows.
-Install short names: from skills monorepo run  npm link  (bins: ic, issue-crusher)
+【仓级默认】产品仓可建 .issue-crusher/config.json：
+  { "mode": "vibe", "runtime": "claude" }
+
+【调度界面按键】m review|vibe  f强制推进  r恢复  y/n确认  s停链  t刷新  q退出
+
+只敲 ic、不带功能名时，只会显示本帮助，不会开链。
 `);
 }
 
