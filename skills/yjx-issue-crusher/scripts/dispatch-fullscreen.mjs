@@ -1,18 +1,25 @@
 /**
- * Ink fullscreen dispatch shell (ticket 01).
+ * Ink fullscreen dispatch shell (tickets 01–02).
  *
  * Interactive TTY path: alternate-screen layout with regions
  * 顶栏 / 中部 / 当前槽 / 底栏. `q` stops the chain and exits cleanly.
- * Real snapshot content lands in later tickets; this shell may show placeholders.
+ * Regions render a live Dispatch Surface snapshot (graph, slot, HITL).
+ * Orchestration contract is unchanged: board is read-only, single slot,
+ * dual-condition handoff still owned by Chain Run / surface.tick.
  */
 
 import { createElement, useEffect, useRef, useState } from 'react';
 import { Box, Text, render, useApp, useInput } from 'ink';
 
-import { statusLabelZh } from './dependency-graph.mjs';
+import {
+  renderDependencyGraph,
+  statusLabelZh,
+} from './dependency-graph.mjs';
 
 const ALT_ENTER = '\u001b[?1049h\u001b[?25l';
 const ALT_LEAVE = '\u001b[?1049l\u001b[?25h';
+
+const GRAPH_LEGEND = '图例: ★可执行  ▶进行中  ·阻塞/未完成  ✓已完成  ··· 上游──►下游';
 
 /**
  * Whether the interactive path should mount the Ink fullscreen shell.
@@ -36,42 +43,129 @@ export function shouldUseFullscreenDispatch({
 
 function statusLine(snap) {
   if (!snap) return '状态: （启动中）';
-  const stopped = snap.stopped ? ' [已停链]' : '';
   const label = snap.status ? statusLabelZh(snap.status) : '—';
-  return `状态: ${label}${stopped}`;
+  // Avoid "已停链 [已停链]" when status is already the stopped label.
+  const stoppedMark = snap.stopped && snap.status !== 'stopped' ? ' [已停链]' : '';
+  return `状态: ${label}${stoppedMark}`;
 }
 
-function topBarText(snap) {
+function modeHint(mode) {
+  if (mode === 'review') return '（审码）';
+  if (mode === 'vibe') return '（可自动关票）';
+  return '';
+}
+
+/**
+ * Top bar: feature / runtime / subsequent mode / chain status.
+ * Pure — safe for unit tests without a terminal.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string}
+ */
+export function renderTopBar(snap) {
   if (!snap) {
     return '[顶栏] Issue Crusher · 调度（启动中…）';
   }
+  const mode = snap.subsequentMode ?? '—';
   return [
     '[顶栏] Issue Crusher · 调度',
     `功能: ${snap.feature ?? '—'}`,
     `runtime: ${snap.runtime ?? '—'}`,
-    `后续 mode: ${snap.subsequentMode ?? '—'}`,
+    `后续 mode: ${mode}${modeHint(mode)}`,
     statusLine(snap),
   ].join('  ·  ');
 }
 
-function middleText(snap) {
-  // Ticket 02 fills real dependency graph; keep an explicit region marker.
-  void snap;
-  return '[中部] 依赖图与可执行清单（占位）';
+/**
+ * Middle panel: Chinese dependency graph legend + graph + 「现在可执行」.
+ * Board remains read-only display; no graph dispatch.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string}
+ */
+export function renderMiddlePanel(snap) {
+  const lines = ['[中部] 依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`];
+
+  if (!snap) {
+    lines.push('  （启动中…）');
+    lines.push('');
+    lines.push('现在可执行:');
+    lines.push('  （无）');
+    return lines.join('\n');
+  }
+
+  const issues = snap.board?.issues ?? [];
+  const graph = renderDependencyGraph({
+    issues,
+    slotIssueId: snap.slot?.issueId ?? null,
+  });
+
+  for (const line of graph.lines) lines.push(line);
+  if (graph.warnings.length) {
+    lines.push('警告:');
+    for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
+  }
+
+  lines.push('');
+  lines.push('现在可执行:');
+  if (graph.executable.length === 0) {
+    lines.push('  （无）');
+  } else {
+    for (const item of graph.executable) {
+      const active = snap.slot?.issueId === item.id ? '  ◀当前槽' : '';
+      lines.push(`  ★ ${item.id}${active}`);
+    }
+  }
+
+  return lines.join('\n');
 }
 
-function slotText(snap) {
+/**
+ * Lower panel: current slot (empty or ticket/pid/closed/mode) + pending HITL.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string}
+ */
+export function renderSlotPanel(snap) {
+  const lines = [];
+
   if (!snap || !snap.slot) {
-    return '[当前槽] （空）';
+    lines.push('[当前槽] （空）');
+  } else {
+    const slot = snap.slot;
+    lines.push(
+      [
+        '[当前槽]',
+        `票: ${slot.issueId ?? '—'}`,
+        slot.title ? `标题: ${slot.title}` : null,
+        `pid: ${slot.pid ?? '-'}`,
+        `mode: ${slot.mode ?? '—'}`,
+        `已关票: ${slot.closed ? '是' : '否'}`,
+      ].filter(Boolean).join('  '),
+    );
+    if (slot.sessionId) {
+      lines.push(`  session: ${slot.sessionId}`);
+    }
   }
-  const slot = snap.slot;
-  return [
-    '[当前槽]',
-    `票: ${slot.issueId ?? '—'}`,
-    `pid: ${slot.pid ?? '-'}`,
-    `mode: ${slot.mode ?? '—'}`,
-    `已关票: ${slot.closed ? '是' : '否'}`,
-  ].join('  ');
+
+  if (snap?.pendingHitl) {
+    const hitl = snap.pendingHitl;
+    lines.push('[HITL] 需人工确认后才开票:');
+    lines.push(
+      `  票: ${hitl.issueId ?? '—'}  类型: ${hitl.entryClass ?? '—'}`,
+    );
+    if (hitl.title) lines.push(`  标题: ${hitl.title}`);
+    lines.push(
+      [
+        `  runtime: ${hitl.runtime ?? '—'}`,
+        `mode: ${hitl.mode ?? '—'}`,
+        `model: ${hitl.model ?? '运行时默认'}`,
+        `effort: ${hitl.effort ?? '运行时默认'}`,
+      ].join('  '),
+    );
+  }
+
+  return lines.join('\n');
 }
 
 function footerText() {
@@ -84,6 +178,9 @@ function footerText() {
  * @param {{ snap?: object | null }} props
  */
 export function DispatchShell({ snap = null } = {}) {
+  const middleLines = renderMiddlePanel(snap).split('\n');
+  const slotLines = renderSlotPanel(snap).split('\n');
+
   return createElement(
     Box,
     {
@@ -98,7 +195,7 @@ export function DispatchShell({ snap = null } = {}) {
         paddingX: 1,
         width: '100%',
       },
-      createElement(Text, null, topBarText(snap)),
+      createElement(Text, null, renderTopBar(snap)),
     ),
     createElement(
       Box,
@@ -109,16 +206,17 @@ export function DispatchShell({ snap = null } = {}) {
         flexDirection: 'column',
         width: '100%',
       },
-      createElement(Text, null, middleText(snap)),
+      ...middleLines.map((line, index) => createElement(Text, { key: `m${index}` }, line || ' ')),
     ),
     createElement(
       Box,
       {
         borderStyle: 'single',
         paddingX: 1,
+        flexDirection: 'column',
         width: '100%',
       },
-      createElement(Text, null, slotText(snap)),
+      ...slotLines.map((line, index) => createElement(Text, { key: `s${index}` }, line || ' ')),
     ),
     createElement(
       Box,
