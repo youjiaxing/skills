@@ -22,6 +22,7 @@ npx skills add youjiaxing/skills --skill yjx-discuss
 - `yjx-local-tracker-setup`：在 Matt Pocock Local Markdown tracker 上增量启用 `Closed` 完成真源和机器配置，默认只预览。
 - `yjx-local-kanban`：只读输出 Local Markdown implementation issues 的人类看板、完整 JSON 依赖图和 Mermaid。
 - `yjx-local-ralph`：从 Local Markdown frontier 手动确认并启动单张 issue，完成后停止；依赖 `yjx-local-kanban`。
+- `yjx-issue-crusher`：issue 串行接力编排器（Chain Run）；一期含假端口测试缝与 local-md 候选适配；local-md 读图软依赖同根的 `yjx-local-kanban`。
 
 ### Local Markdown tracker 组合
 

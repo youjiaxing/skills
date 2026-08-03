@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "protocol": "matt-local-markdown+closed-v1",
+  "trackerRoot": ".scratch",
+  "completionField": "Closed",
+  "statusRoles": {
+    "needs-triage": "needs-triage",
+    "needs-info": "needs-info",
+    "ready-for-agent": "ready-for-agent",
+    "ready-for-human": "ready-for-human",
+    "wontfix": "wontfix"
+  }
+}
