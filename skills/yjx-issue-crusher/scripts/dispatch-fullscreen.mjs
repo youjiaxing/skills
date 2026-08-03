@@ -86,7 +86,7 @@ export function renderTopBar(snap) {
 /**
  * Middle panel: Chinese dependency graph legend + graph + 「现在可执行」.
  * Board remains read-only display; no graph dispatch.
- * Optional selectedIndex highlights an executable list row (keyboard j/k/digits).
+ * Optional selectedIndex highlights an executable list row (keyboard ↑↓/j/k/digits).
  *
  * @param {object | null | undefined} snap
  * @param {{ selectedIndex?: number | null }} [opts]
@@ -198,7 +198,8 @@ export function renderFooter(snap) {
   // s is the auto-open-next dial (not chain stop). Show current state plainly.
   const autoLabel = snap?.autoAdvance === false ? '关' : '开';
   keys.push(`[s] 自动开下一张(${autoLabel})`);
-  keys.push('[t] 刷新', '[j/k|数字] 选择', '[Enter] 开始', '[q] 退出');
+  // Navigation moves highlight only; Enter starts. Arrows ≡ j/k.
+  keys.push('[t] 刷新', '[↑↓/j/k|数字] 导航', '[Enter] 开始', '[q] 退出');
   return `[底栏]  ${keys.join('  ')}`;
 }
 
@@ -225,9 +226,13 @@ export function renderNotice(snap, notice = null) {
  * Map one fullscreen keypress to a dispatch command or list-selection intent.
  * Mode dial: bare `m` toggles subsequent review ↔ vibe (no readline args).
  * Enter / return → start (highlighted id resolved by handleFullscreenKey).
+ * Arrow ↓ ≡ j (selectNext); arrow ↑ ≡ k (selectPrev) — highlight only.
  *
  * @param {string | null | undefined} input
- * @param {{ subsequentMode?: string | null, key?: { return?: boolean } | null }} [ctx]
+ * @param {{
+ *   subsequentMode?: string | null,
+ *   key?: { return?: boolean, upArrow?: boolean, downArrow?: boolean } | null,
+ * }} [ctx]
  * @returns {{ type: string, arg?: string | number } | null}
  */
 export function mapFullscreenKey(input, { subsequentMode = null, key = null } = {}) {
@@ -236,6 +241,10 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
   if (key?.return || input === '\r' || input === '\n') {
     return { type: 'start' };
   }
+  // Ink arrow keys: empty input + key.upArrow / key.downArrow.
+  // Same direction as j/k: ↓/j → next, ↑/k → prev.
+  if (key?.downArrow) return { type: 'selectNext' };
+  if (key?.upArrow) return { type: 'selectPrev' };
   if (input == null || input === '') return null;
   // Ignore multi-char pastes / control sequences.
   if (String(input).length !== 1) return null;
@@ -260,7 +269,7 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
 }
 
 /**
- * Pure list-selection update for executable rows. Display-only — never dispatches.
+ * Pure list-selection update for executable rows. Highlight only — never spawns.
  *
  * @param {{ type: string, arg?: number } | null} command
  * @param {number | null} current
@@ -292,7 +301,7 @@ export function nextListSelection(command, current, count) {
  *   selectedIndex?: number | null,
  *   executableCount?: number,
  *   selectedIssueId?: string | null,
- *   key?: { return?: boolean } | null,
+ *   key?: { return?: boolean, upArrow?: boolean, downArrow?: boolean } | null,
  * }} [ctx]
  * @returns {Promise<{
  *   quit?: boolean,

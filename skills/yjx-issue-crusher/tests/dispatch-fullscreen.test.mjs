@@ -12,7 +12,8 @@
  * 6. poll tick — successive snapshots refresh fullscreen content without retyping
  * 7. mapFullscreenKey — single key → same command types as surface
  * 8. handleFullscreenKey / key sequences — mode/force/resume/HITL/stop/tick/q
- * 9. list selection j/k/digits — highlight only; no graph dispatch / no worker embed
+ * 9. list selection j/k/↑↓/digits — highlight only; no graph dispatch / no worker embed
+ * 10. ticket 04 — arrow keys ≡ j/k; footer labels Enter / arrows / s auto
  */
 
 import assert from 'node:assert/strict';
@@ -564,6 +565,61 @@ test('mapFullscreenKey maps m/f/r/y/n/s/t/q and list nav to surface command type
   assert.equal(mapFullscreenKey('d'), null);
 });
 
+// --- dispatch-tui-start-and-polish / 04: arrow keys + footer labels ---
+
+test('mapFullscreenKey: ↓ 与 j 同向 selectNext；↑ 与 k 同向 selectPrev', () => {
+  // Ink passes empty input + key.upArrow / key.downArrow for arrow keys.
+  assert.deepEqual(
+    mapFullscreenKey('', { key: { downArrow: true } }),
+    { type: 'selectNext' },
+  );
+  assert.deepEqual(
+    mapFullscreenKey(null, { key: { downArrow: true } }),
+    { type: 'selectNext' },
+  );
+  assert.deepEqual(
+    mapFullscreenKey('', { key: { upArrow: true } }),
+    { type: 'selectPrev' },
+  );
+  assert.deepEqual(
+    mapFullscreenKey(null, { key: { upArrow: true } }),
+    { type: 'selectPrev' },
+  );
+  // Same direction lock: j ≡ ↓, k ≡ ↑
+  assert.deepEqual(mapFullscreenKey('j'), mapFullscreenKey('', { key: { downArrow: true } }));
+  assert.deepEqual(mapFullscreenKey('k'), mapFullscreenKey('', { key: { upArrow: true } }));
+});
+
+test('handleFullscreenKey arrow keys only move highlight — never spawn', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+  const launchesBefore = launcher.launches.length;
+
+  const down = await handleFullscreenKey(surface, '', {
+    key: { downArrow: true },
+    selectedIndex: 0,
+    executableCount: 2,
+  });
+  assert.equal(down.selectionOnly, true);
+  assert.equal(down.selectedIndex, 1);
+
+  const up = await handleFullscreenKey(surface, '', {
+    key: { upArrow: true },
+    selectedIndex: 1,
+    executableCount: 2,
+  });
+  assert.equal(up.selectionOnly, true);
+  assert.equal(up.selectedIndex, 0);
+
+  assert.equal(launcher.launches.length, launchesBefore);
+  assert.equal(surface.snapshot().slot, null);
+});
+
 test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
@@ -811,7 +867,14 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
   assert.match(footer, /\[t\]/);
   assert.match(footer, /\[q\].*退出/);
   assert.doesNotMatch(footer, /\[q\] 退出并停链/);
-  assert.match(footer, /\[j\/k\]|j\/k|数字/);
+  // Navigation + start labels: j/k + arrows + digits, Enter start, s auto dial.
+  assert.match(footer, /j\/k/);
+  assert.match(footer, /↑|↓|方向键/);
+  assert.match(footer, /数字/);
+  assert.match(footer, /\[Enter\].*开始|Enter.*开始/);
+  assert.match(footer, /\[s\].*自动/);
+  // Must not claim selection never starts / is display-only forever.
+  assert.doesNotMatch(footer, /只影响显示|永不派票|永不开票|不派票/);
 
   const text = renderToString(createElement(DispatchShell, {
     snap: snapWithBoard(),
