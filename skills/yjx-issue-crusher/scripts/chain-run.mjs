@@ -1,18 +1,25 @@
 /**
  * Chain Run — primary product test seam for the issue-chain orchestrator.
  *
- * Inject TrackerPort + WorkerLauncher (and later mode/config/human events).
+ * Inject TrackerPort + WorkerLauncher + optional ModeConfig + human events.
  * Ticket 07: empty frontier → idle + zero spawns; unique candidate → identify + spawn once.
  * Ticket 08: full impl launch contract; dual-condition handoff before next spawn.
  * Ticket 09: edge states (soft-stuck / awaiting-worker-exit / needs-resume),
  *            force-advance no-kill default, resume launch, single slot.
+ * Ticket 10: review/vibe selection — hard default review; repo config; startup
+ *            process override (no write); TUI setMode writes repo + subsequent only;
+ *            pin mode on spawn; vibe consequence event.
  */
 
 import {
   buildLaunchContract,
   buildResumeContract,
-  resolveMode,
 } from './build-launch-contract.mjs';
+import {
+  normalizeMode,
+  resolveSubsequentMode,
+  VIBE_CONSEQUENCE_MESSAGE,
+} from './mode-config.mjs';
 
 export function createChainRun({
   tracker,
@@ -21,6 +28,11 @@ export function createChainRun({
   cwd,
   runtime,
   mode,
+  modeConfig = null,
+  // Intentionally accepted and ignored: no user-level or feature-level mode layer.
+  userHome: _userHome,
+  userMode: _userMode,
+  featureMode: _featureMode,
 } = {}) {
   if (!tracker) throw new Error('tracker is required');
   if (!launcher) throw new Error('launcher is required');
@@ -28,7 +40,15 @@ export function createChainRun({
   if (!cwd) throw new Error('cwd is required');
   if (!runtime) throw new Error('runtime is required');
 
-  const effectiveMode = resolveMode(mode);
+  /** @type {'review'|'vibe'|null} */
+  const startupMode = normalizeMode(mode);
+  /** Once TUI/scheduler chooses mode, startup --mode no longer wins. */
+  let startupSupersededByTui = false;
+  /** Fallback when setMode runs without a modeConfig port. */
+  let tuiChosenMode = null;
+  /** @type {Array<{ type: string, message: string, mode?: string }>} */
+  const events = [];
+
   let status = 'idle';
   let nextIssue = null;
   /**
@@ -44,6 +64,21 @@ export function createChainRun({
    * }}
    */
   let slot = null;
+
+  function readRepoMode() {
+    if (!modeConfig || typeof modeConfig.readMode !== 'function') return null;
+    return normalizeMode(modeConfig.readMode());
+  }
+
+  /** Effective mode for *subsequent* spawns (not the live worker pin). */
+  function effectiveSubsequentMode() {
+    return resolveSubsequentMode({
+      startupMode,
+      startupSupersededByTui,
+      repoMode: readRepoMode(),
+      tuiMode: tuiChosenMode,
+    });
+  }
 
   function workerAlive() {
     if (!slot) return false;
@@ -92,8 +127,43 @@ export function createChainRun({
     get slot() {
       return slot;
     },
+    /** Subsequent-ticket effective mode (live worker pin is slot.mode). */
     get mode() {
-      return effectiveMode;
+      return effectiveSubsequentMode();
+    },
+    get events() {
+      return events;
+    },
+    /**
+     * Scheduler / TUI mode dial.
+     * Writes repo immediately (when modeConfig is present), supersedes startup
+     * --mode for subsequent spawns, and never mutates the live worker pin.
+     * Switching to vibe emits a one-line consequence event.
+     */
+    async setMode(nextMode) {
+      const normalized = normalizeMode(nextMode);
+      if (!normalized) {
+        return { ok: false, reason: 'invalid-mode' };
+      }
+      // Spec: scheduler dial must write repo immediately — require a write port.
+      if (!modeConfig || typeof modeConfig.writeMode !== 'function') {
+        return { ok: false, reason: 'no-mode-config' };
+      }
+
+      await modeConfig.writeMode(normalized);
+
+      tuiChosenMode = normalized;
+      startupSupersededByTui = true;
+
+      if (normalized === 'vibe') {
+        events.push({
+          type: 'mode-consequence',
+          mode: 'vibe',
+          message: VIBE_CONSEQUENCE_MESSAGE,
+        });
+      }
+
+      return { ok: true, mode: normalized };
     },
     /**
      * Human force-advance: skip waiting for worker exit.
@@ -117,6 +187,7 @@ export function createChainRun({
     /**
      * One-shot resume of the recorded session after needs-resume.
      * Same logical slot; does not open the next ticket; does not re-inject skill entry.
+     * Resume keeps the spawn-pinned mode (no hot switch).
      */
     async resume() {
       if (!slot) {
@@ -156,6 +227,7 @@ export function createChainRun({
      * One evaluation cycle:
      * - If a slot is held, release it only when dual conditions are met.
      * - Then spawn at most one auto candidate into an empty slot (single slot).
+     * - Spawn pins the then-effective mode onto the worker slot.
      */
     async step() {
       if (slot) {
@@ -187,12 +259,14 @@ export function createChainRun({
         };
       }
 
+      // Pin at spawn time — later setMode / repo rewrite must not change this slot.
+      const spawnMode = effectiveSubsequentMode();
       const contract = buildLaunchContract({
         runtime,
         feature,
         cwd,
         issue: next,
-        mode: effectiveMode,
+        mode: spawnMode,
       });
       const result = await launcher.launch(contract);
 
@@ -202,7 +276,7 @@ export function createChainRun({
         sessionId: result.sessionId ?? null,
         runtime,
         cwd,
-        mode: effectiveMode,
+        mode: spawnMode,
         title: contract.title,
         forceAdvanceRequested: false,
       };

@@ -4,6 +4,7 @@ import test from 'node:test';
 import { createChainRun } from '../scripts/chain-run.mjs';
 import { createFakeLauncher } from '../scripts/fake-launcher.mjs';
 import { createFakeTracker } from '../scripts/fake-tracker.mjs';
+import { createMemoryModeConfig } from '../scripts/mode-config.mjs';
 
 function candidate(id, overrides = {}) {
   const number = id.split('-')[0];
@@ -416,4 +417,194 @@ test('single slot: second automatic spawn is rejected while the slot is occupied
     secondStep.reason === 'soft-stuck' || secondStep.reason === 'slot-occupied',
     `expected soft-stuck or slot-occupied, got ${secondStep.reason}`,
   );
+});
+
+// --- Ticket 10: review/vibe mode selection, pin-on-spawn, repo config ---
+
+function makeModeConfig(initialMode = null) {
+  return createMemoryModeConfig({ mode: initialMode });
+}
+
+test('no repo config and no startup override: effective mode is review with review-safe launch', async () => {
+  const only = candidate('01-default-review.md');
+  const config = makeModeConfig(null);
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    modeConfig: config,
+  });
+
+  assert.equal(chain.mode, 'review');
+  await chain.step();
+
+  const launch = launcher.launches[0];
+  assert.equal(launch.mode, 'review');
+  assert.match(launch.initialPrompt, /do not auto-commit|禁止自动 commit|禁自动 commit/i);
+  assert.equal(config.readMode(), null, 'default path must not invent a repo mode write');
+});
+
+test('repo config mode=vibe: subsequent spawn carries vibe constraints', async () => {
+  const only = candidate('02-from-repo.md');
+  const config = makeModeConfig('vibe');
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    modeConfig: config,
+  });
+
+  assert.equal(chain.mode, 'vibe');
+  await chain.step();
+
+  const launch = launcher.launches[0];
+  assert.equal(launch.mode, 'vibe');
+  assert.match(launch.initialPrompt, /vibe/i);
+  assert.match(launch.initialPrompt, /commit/i);
+  assert.match(launch.initialPrompt, /Closed:\s*true/i);
+});
+
+test('startup process mode overrides repo config and does not write that override to repo', async () => {
+  const only = candidate('03-startup-override.md');
+  const config = makeModeConfig('vibe');
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    mode: 'review',
+    modeConfig: config,
+  });
+
+  assert.equal(chain.mode, 'review', 'startup --mode wins over repo vibe');
+  await chain.step();
+
+  assert.equal(launcher.launches[0].mode, 'review');
+  assert.equal(config.readMode(), 'vibe', 'startup override must not persist into repo config');
+  assert.equal(config.writeCount, 0);
+});
+
+test('scheduler setMode writes repo and only changes subsequent spawns, not pinned current worker', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const config = makeModeConfig(null);
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    mode: 'review',
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches[0].mode, 'review');
+  assert.equal(chain.slot.mode, 'review');
+
+  const switched = await chain.setMode('vibe');
+  assert.equal(switched.ok, true);
+  assert.equal(config.readMode(), 'vibe', 'TUI mode change must write repo immediately');
+  assert.equal(chain.mode, 'vibe', 'subsequent effective mode follows TUI write');
+  assert.equal(chain.slot.mode, 'review', 'live worker stays pinned to spawn-time mode');
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+
+  const next = await chain.step();
+  assert.equal(next.spawned, true);
+  assert.equal(launcher.launches[1].mode, 'vibe');
+  assert.match(launcher.launches[1].initialPrompt, /vibe/i);
+  assert.equal(chain.slot.mode, 'vibe');
+});
+
+test('live worker cannot hot-switch contract mode via setMode or repo rewrite', async () => {
+  const only = candidate('01-pinned.md');
+  const config = makeModeConfig('review');
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    modeConfig: config,
+  });
+
+  await chain.step();
+  const pinned = chain.slot.mode;
+  assert.equal(pinned, 'review');
+
+  await chain.setMode('vibe');
+  config.writeMode('vibe');
+
+  // Soft-stuck step must keep the same pinned contract; no re-launch with new mode.
+  const again = await chain.step();
+  assert.equal(again.spawned, false);
+  assert.equal(chain.slot.mode, 'review');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].mode, 'review');
+});
+
+test('switching to vibe emits a one-line consequence message/event', async () => {
+  const only = candidate('01-warn.md');
+  const config = makeModeConfig('review');
+  const { chain } = makeChain({
+    candidates: [only],
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal((chain.events || []).length, 0);
+
+  const switched = await chain.setMode('vibe');
+  assert.equal(switched.ok, true);
+
+  const events = chain.events;
+  assert.ok(Array.isArray(events) && events.length >= 1);
+  const tip = events.find((e) => e.type === 'mode-consequence' || e.kind === 'mode-consequence');
+  assert.ok(tip, 'must emit a mode-consequence event when switching to vibe');
+  assert.match(String(tip.message || tip.text || ''), /auto[- ]?commit|自动 commit|Closed|关票/i);
+});
+
+test('TUI setMode supersedes startup --mode for subsequent spawns', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const config = makeModeConfig('review');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    mode: 'review',
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches[0].mode, 'review');
+
+  await chain.setMode('vibe');
+  assert.equal(chain.mode, 'vibe');
+  // Startup was review; after TUI choose, subsequent must follow TUI/repo not leftover startup.
+  assert.equal(config.readMode(), 'vibe');
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.step();
+  assert.equal(launcher.launches[1].mode, 'vibe');
+});
+
+test('mode resolution has no user-level or feature-level layer', async () => {
+  // Contract: only startup process override, repo config, and hard default review.
+  // Feature slug and userHome must not change the resolved mode.
+  const only = candidate('01-layers.md');
+  const config = makeModeConfig(null);
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    feature: 'some-feature-that-must-not-imply-vibe',
+    modeConfig: config,
+    userHome: '/home/someone-with-vibe-default',
+    userMode: 'vibe',
+    featureMode: 'vibe',
+  });
+
+  assert.equal(chain.mode, 'review');
+  await chain.step();
+  assert.equal(launcher.launches[0].mode, 'review');
+});
+
+test('setMode without modeConfig is rejected (must write repo)', async () => {
+  const only = candidate('01-need-config.md');
+  const { chain } = makeChain({
+    candidates: [only],
+    // no modeConfig
+  });
+
+  await chain.step();
+  const switched = await chain.setMode('vibe');
+  assert.equal(switched.ok, false);
+  assert.equal(switched.reason, 'no-mode-config');
+  assert.equal(chain.mode, 'review');
+  assert.equal((chain.events || []).length, 0);
 });

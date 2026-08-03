@@ -9,11 +9,11 @@ disable-model-invocation: true
 
 `yjx-issue-crusher` 是 **issue 串行接力编排器** 的独立 skill 包。实现与测试在本目录；试点仓（如 `issue-crusher`）只消费本 skill，**不内嵌**编排器源码。
 
-## 现状（ticket 07–09）
+## 现状（ticket 07–10）
 
 已具备：
 
-- **Chain Run** 测试缝：可注入假 `TrackerPort` + 假 `WorkerLauncher`
+- **Chain Run** 测试缝：可注入假 `TrackerPort` + 假 `WorkerLauncher` + 假/真 `ModeConfig`
 - **local-markdown** Tracker 适配：读 fixture/真实 `.scratch/<feature>/issues`，自动候选与 ralph 合同对齐
 - 最小 CLI：`recommend`（只读下一张，不 spawn 真 agent）
 - **impl launch 合同**（假 Launcher）：必填 runtime/cwd/feature/issue；标题 `<feature>/<NN>-<slug>`；`initialPrompt` 含 `/implement <相对路径>`（不贴全文）；Grok 首行 `/rename`，Claude 用结构化 `title` 供 `-n`；mode 硬默认 **review**（禁自动 commit/关票），链上解析为 vibe 时换文案
@@ -24,8 +24,14 @@ disable-model-invocation: true
   - `forceAdvance`：仅 Closed 可用；默认不强杀旧进程；`killWorker: true` 为显式 opt-in
   - `needs-resume`：死进程 + 未 Closed → 禁止下一张；`resume()` 按已记 session id + 原 runtime/cwd 续聊，**不**重塞 `/implement` / `/wayfinder`
   - **逻辑单槽**：槽占用期间第二次自动 spawn 被拒绝
+- **review/vibe 选定（ticket 10）**：
+  - 硬默认 `review`；仓级配置持久真源（`ModeConfig` / 默认 `.issue-crusher/config.json` 的 `mode` 键）
+  - 启动 `mode`（CLI 日后 `--mode`）仅本进程，默认**不**写仓
+  - `setMode`（调度拨杆）立即写仓，只影响**后续** spawn；当前活 Worker 在 spawn 时钉死 mode，禁止热切合同
+  - 切到 vibe 时发出一行后果事件 `mode-consequence`
+  - **无**用户级本机总默认、**无** feature 级 mode 层
 
-尚未具备（后续票）：仓级 mode 选定、非 ready HITL、真 Worker 启动、调度 TUI。
+尚未具备（后续票）：非 ready HITL、真 Worker 启动、调度 TUI 完整 UI。
 
 ## 依赖与可移植脚本
 
