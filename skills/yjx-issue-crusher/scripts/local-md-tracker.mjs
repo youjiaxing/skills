@@ -33,18 +33,19 @@ export function createLocalMarkdownTracker({
   if (!feature && !featureDir) throw new Error('feature or featureDir is required');
 
   const resolvedRoot = path.resolve(projectRoot);
-  let cachedPayload = null;
 
+  /**
+   * Always re-read markdown. Dual-condition handoff needs to observe
+   * Closed flips written by a Worker between Chain Run steps.
+   */
   async function loadPayload() {
-    if (cachedPayload) return cachedPayload;
     const kanban = await loadKanban();
     const config = await kanban.loadConfig(resolvedRoot);
     const dir = featureDir
       ? path.resolve(featureDir)
       : path.resolve(resolvedRoot, config.trackerRoot, feature);
     const graph = await kanban.loadGraph(dir, config);
-    cachedPayload = kanban.graphPayload(dir, graph, resolvedRoot);
-    return cachedPayload;
+    return kanban.graphPayload(dir, graph, resolvedRoot);
   }
 
   return {
@@ -64,9 +65,7 @@ export function createLocalMarkdownTracker({
       }
       return { closed: Boolean(issue.closed) };
     },
-    /** Test/debug: drop cached graph so the next call re-reads markdown. */
-    invalidate() {
-      cachedPayload = null;
-    },
+    /** @deprecated no-op kept for callers; payload is always fresh. */
+    invalidate() {},
   };
 }

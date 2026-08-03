@@ -9,15 +9,17 @@ disable-model-invocation: true
 
 `yjx-issue-crusher` 是 **issue 串行接力编排器** 的独立 skill 包。实现与测试在本目录；试点仓（如 `issue-crusher`）只消费本 skill，**不内嵌**编排器源码。
 
-## 现状（ticket 07 骨架）
+## 现状（ticket 07–08）
 
 已具备：
 
 - **Chain Run** 测试缝：可注入假 `TrackerPort` + 假 `WorkerLauncher`
 - **local-markdown** Tracker 适配：读 fixture/真实 `.scratch/<feature>/issues`，自动候选与 ralph 合同对齐
 - 最小 CLI：`recommend`（只读下一张，不 spawn 真 agent）
+- **impl launch 合同**（假 Launcher）：必填 runtime/cwd/feature/issue；标题 `<feature>/<NN>-<slug>`；`initialPrompt` 含 `/implement <相对路径>`（不贴全文）；Grok 首行 `/rename`，Claude 用结构化 `title` 供 `-n`；mode 硬默认 **review**（禁自动 commit/关票），链上解析为 vibe 时换文案
+- **双条件接力**：可开下一张 = `Closed` ∧（进程退出 ∨ 已 Closed 下 `forceAdvance`）；只退未关 / 只关未退均不 spawn 下一张
 
-尚未具备（后续票）：完整 launch 合同、双条件接力、边沿态、mode、真 Worker 启动、调度 TUI。
+尚未具备（后续票）：边沿全集（软卡住 / needs-resume 细化）、仓级 mode 选定、真 Worker 启动、调度 TUI。
 
 ## 依赖与可移植脚本
 
@@ -66,4 +68,4 @@ closed == false
 - 编排策略只依赖 **Tracker 端口**，不解析人类看板文案
 - Worker 为独立前台会话；本包一期不内嵌终端
 - 业务完成闸门：普通 impl 认 issue 头 `Closed: true`（读侧）
-- 失败或未关票时的整链停、双条件接力等见后续实现票
+- 失败或未关票时停开下一张（双条件已落地）；软卡住 / needs-resume / 单槽细化见后续票
