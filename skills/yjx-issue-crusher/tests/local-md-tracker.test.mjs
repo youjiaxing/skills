@@ -39,6 +39,20 @@ test('local-md single-ready fixture: recommends the only ready impl', async () =
   assert.equal(open.closed, false);
 });
 
+test('local-md getBoard is read-only projection with dependency fields', async () => {
+  const tracker = trackerFor('mixed-board');
+  const board = await tracker.getBoard();
+
+  assert.equal(board.readOnly, true);
+  assert.equal(board.feature, 'demo');
+  assert.ok(board.issues.length >= 3);
+  const ready = board.issues.find((item) => item.id === '03-ready-impl.md');
+  assert.ok(ready, 'mixed board should include ready impl');
+  assert.equal(typeof ready.closed, 'boolean');
+  assert.ok(Array.isArray(ready.blockedBy));
+  assert.ok(Array.isArray(ready.unlocks));
+});
+
 test('local-md mixed board: Wayfinder, blocked, and closed are not auto-next', async () => {
   const tracker = trackerFor('mixed-board');
   const candidates = await tracker.listAutoCandidates();

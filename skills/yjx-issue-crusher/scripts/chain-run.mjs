@@ -11,6 +11,7 @@
  *            pin mode on spawn; vibe consequence event.
  * Ticket 11: non-ready / Wayfinder HITL — auto path only ready impl; otherwise
  *            emit needs-confirmation, spawn only after confirmHitl (entry by class).
+ * Ticket 13: stop() freezes auto spawn / force-advance; dispatch TUI consumes this.
  */
 
 import {
@@ -59,6 +60,7 @@ export function createChainRun({
   const events = [];
 
   let status = 'idle';
+  let stopped = false;
   let nextIssue = null;
   /**
    * Pending HITL ask (empty slot). Not a worker occupation.
@@ -233,6 +235,9 @@ export function createChainRun({
     get status() {
       return status;
     },
+    get stopped() {
+      return stopped;
+    },
     get nextIssue() {
       return nextIssue;
     },
@@ -248,6 +253,24 @@ export function createChainRun({
     },
     get events() {
       return events;
+    },
+    get feature() {
+      return feature;
+    },
+    get cwd() {
+      return cwd;
+    },
+    get runtime() {
+      return runtime;
+    },
+    /**
+     * Freeze the chain: no further auto spawn and no force-advance to next.
+     * Resume of the current needs-resume slot remains allowed.
+     */
+    async stop() {
+      stopped = true;
+      status = 'stopped';
+      return { ok: true };
     },
     /**
      * Scheduler / TUI mode dial.
@@ -286,6 +309,9 @@ export function createChainRun({
      * Default: do not kill the old worker (orphan). Opt-in killWorker: true.
      */
     async forceAdvance({ killWorker = false } = {}) {
+      if (stopped) {
+        return { ok: false, reason: 'stopped' };
+      }
       if (!slot) {
         return { ok: false, reason: 'no-slot' };
       }
@@ -304,6 +330,9 @@ export function createChainRun({
      * Mode is pinned at confirm/spawn time (same as auto path / ticket 10).
      */
     async confirmHitl() {
+      if (stopped) {
+        return { ok: false, reason: 'stopped', spawned: false };
+      }
       if (slot) {
         return { ok: false, reason: 'slot-occupied', spawned: false };
       }
@@ -321,7 +350,7 @@ export function createChainRun({
         return { ok: false, reason: 'no-pending-hitl' };
       }
       pendingHitl = null;
-      status = 'idle';
+      status = stopped ? 'stopped' : 'idle';
       return { ok: true, spawned: false };
     },
     /**
@@ -335,11 +364,11 @@ export function createChainRun({
       }
       const gate = await classifyOccupiedSlot();
       if (gate.reason !== 'needs-resume') {
-        status = gate.status;
+        if (!stopped) status = gate.status;
         return { ok: false, reason: gate.reason };
       }
       if (!slot.sessionId) {
-        status = 'needs-resume';
+        if (!stopped) status = 'needs-resume';
         return { ok: false, reason: 'no-session-id' };
       }
 
@@ -362,11 +391,32 @@ export function createChainRun({
         sessionId: result.sessionId ?? slot.sessionId,
         forceAdvanceRequested: false,
       };
-      status = 'soft-stuck';
+      status = stopped ? 'stopped' : 'soft-stuck';
       return { ok: true, pid: result.pid, sessionId: slot.sessionId };
     },
     /**
+     * Reclassify occupied-slot status without spawning (for TUI refresh).
+     */
+    async refreshStatus() {
+      if (stopped) {
+        status = 'stopped';
+        return { status, reason: 'stopped' };
+      }
+      if (!slot) {
+        if (pendingHitl) {
+          status = 'needs-confirmation';
+          return { status, reason: 'needs-confirmation' };
+        }
+        status = 'idle';
+        return { status, reason: 'empty-slot' };
+      }
+      const gate = await classifyOccupiedSlot();
+      status = gate.status;
+      return { status: gate.status, reason: gate.reason };
+    },
+    /**
      * One evaluation cycle:
+     * - If stopped, never auto-spawn or open HITL offers.
      * - If a slot is held, release it only when dual conditions are met.
      * - Then spawn at most one auto candidate into an empty slot (single slot).
      * - If no auto candidate but a HITL candidate exists, emit needs-confirmation
@@ -374,6 +424,17 @@ export function createChainRun({
      * - Spawn pins the then-effective mode onto the worker slot.
      */
     async step() {
+      if (stopped) {
+        status = 'stopped';
+        return {
+          spawned: false,
+          advanced: false,
+          reason: 'stopped',
+          next: nextIssue,
+          status,
+        };
+      }
+
       if (slot) {
         const gate = await classifyOccupiedSlot();
         if (!gate.ok) {

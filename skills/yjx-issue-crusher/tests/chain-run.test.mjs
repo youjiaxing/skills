@@ -809,3 +809,62 @@ test('HITL approve unknown class: neutral open path, no concrete skill slash', a
   assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
   assert.match(launcher.launches[0].initialPrompt, /\.scratch\/demo\/issues\/06-unparseable\.md/);
 });
+
+// --- Ticket 13: stop chain — no further auto spawn ---
+
+test('stop: subsequent step does not auto-spawn even with ready candidates', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches.length, 1);
+
+  const stopped = await chain.stop();
+  assert.equal(stopped.ok, true);
+  assert.equal(chain.status, 'stopped');
+  assert.equal(chain.stopped, true);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, false);
+  assert.equal(result.reason, 'stopped');
+  assert.equal(launcher.launches.length, 1, 'stop must freeze auto relay');
+  assert.equal(chain.status, 'stopped');
+});
+
+test('stop on empty frontier: step stays stopped with zero spawns', async () => {
+  const { launcher, chain } = makeChain({ candidates: [] });
+
+  await chain.stop();
+  const result = await chain.step();
+
+  assert.equal(result.spawned, false);
+  assert.equal(result.reason, 'stopped');
+  assert.deepEqual(launcher.launches, []);
+  assert.equal(chain.status, 'stopped');
+});
+
+test('stop blocks force-advance path that would open the next ticket', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  tracker.setCompletion('01-first.md', true);
+
+  await chain.stop();
+  const forced = await chain.forceAdvance();
+  assert.equal(forced.ok, false);
+  assert.equal(forced.reason, 'stopped');
+
+  const result = await chain.step();
+  assert.equal(result.spawned, false);
+  assert.equal(launcher.launches.length, 1);
+});

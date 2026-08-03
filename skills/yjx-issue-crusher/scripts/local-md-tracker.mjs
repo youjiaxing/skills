@@ -78,6 +78,26 @@ export function createLocalMarkdownTracker({
       }
       return { closed: Boolean(issue.closed) };
     },
+    /**
+     * Read-only board/graph projection for the dispatch TUI.
+     * Never used to claim or reorder tickets.
+     */
+    async getBoard() {
+      const payload = await loadPayload();
+      return {
+        feature: payload.feature ?? feature,
+        readOnly: true,
+        issues: (payload.issues || []).map((issue) => ({
+          id: issue.id,
+          title: issue.title,
+          closed: Boolean(issue.closed),
+          blockedBy: Array.isArray(issue.blockedBy) ? issue.blockedBy : [],
+          unlocks: Array.isArray(issue.unlocks) ? issue.unlocks : [],
+          status: issue.statusRole ?? issue.status ?? issue.type ?? null,
+          path: issue.path,
+        })),
+      };
+    },
     /** @deprecated no-op kept for callers; payload is always fresh. */
     invalidate() {},
   };
