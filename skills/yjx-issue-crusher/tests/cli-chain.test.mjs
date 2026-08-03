@@ -57,5 +57,33 @@ test('cli chain --once on single-ready fixture spawns fake slot then can stop', 
 test('cli chain requires feature', () => {
   const result = runCli(['chain', '--fake-launcher', '--once']);
   assert.notEqual(result.status, 0);
-  assert.match(`${result.stderr}${result.stdout}`, /--feature/);
+  assert.match(`${result.stderr}${result.stdout}`, /feature is required/);
+});
+
+test('cli short form: positional feature defaults to chain', () => {
+  const result = runCli([
+    'demo',
+    '--cwd', emptyFixture,
+    '--project-root', emptyFixture,
+    '--fake-launcher',
+    '--once',
+    '--stop',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /"feature": "demo"/);
+  assert.match(result.stdout, /"stopped": true/);
+});
+
+test('cli short form: chain <feature> positional', () => {
+  const result = runCli([
+    'chain',
+    'demo',
+    '--cwd', singleFixture,
+    '--project-root', singleFixture,
+    '--fake-launcher',
+    '--once',
+    '--stop',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /soft-stuck|02-do-work/);
 });

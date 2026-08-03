@@ -60,7 +60,9 @@ Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门�
 2. 否则仓级配置  
 3. 否则 **`review`**
 
-- 仓级路径：产品仓根 **`.issue-crusher/config.json`**，键 **`mode`**：`"review"` \| `"vibe"`  
+- 仓级路径：产品仓根 **`.issue-crusher/config.json`**  
+  - 键 **`mode`**：`"review"` \| `"vibe"`  
+  - 键 **`runtime`**（可选）：`"grok"` \| `"claude"`，供 CLI 省略 `--runtime` 时使用
 - 调度 TUI 拨杆：立即写仓，只影响**后续** spawn；当前 Worker 在 spawn 时**钉死** mode  
 - 切到 vibe：一行后果提示（将自动 commit/关票）  
 - **无**用户级本机总默认、**无** feature 级 mode
@@ -148,46 +150,77 @@ npx skills add youjiaxing/skills --skill yjx-local-kanban
 
 产品仓需具备 local-md tracker 约定（如 `docs/agents/local-tracker.json` + `.scratch/<feature>/issues`）。
 
+### 日常短命令（推荐）
+
+在 **skills monorepo** 根执行一次：
+
 ```bash
-# 交互调度 TUI + 真前台 Worker（一链一进程）
-node <skill-dir>/scripts/cli.mjs chain \
-  --cwd <product-repo> \
-  --feature <feature-slug> \
-  --runtime grok
-# 或 --runtime claude
+npm link
 ```
+
+之后任意产品仓根目录：
+
+```bash
+ic my-feature
+# 等价
+issue-crusher my-feature
+```
+
+含义：在当前目录开链（`--cwd` / `--project-root` 默认 `pwd`），命令默认 `chain`。
+
+| 还想指定 | 写法 |
+|----------|------|
+| Claude | `ic my-feature --runtime claude` |
+| 本进程 mode | `ic my-feature --mode vibe` |
+| 只推荐下一张 | `ic recommend my-feature` |
+
+**仓级默认 runtime / mode**（可进 git）：产品仓 `.issue-crusher/config.json`
+
+```json
+{
+  "mode": "vibe",
+  "runtime": "claude"
+}
+```
+
+解析：`--runtime` 旗标 → 仓 `runtime` → 默认 **`grok`**。  
+`--mode` 旗标 → 仓 `mode` → 默认 **`review`**（拨杆仍会写回仓 `mode`）。
+
+未 `npm link` 时仍可用长路径：
+
+```bash
+node <skill-dir>/scripts/cli.mjs my-feature
+```
+
+### 选项一览
 
 | 选项 | 含义 |
 |------|------|
-| `--cwd` | 产品仓工作目录（Worker 启动 cwd） |
-| `--project-root` | Tracker 根（默认与 cwd 相同） |
-| `--feature` | feature slug（必填） |
-| `--runtime` | `grok` \| `claude`（真启动必填） |
+| 位置参数 feature | `ic <feature>` 或 `ic chain <feature>` |
+| `--cwd` | 产品仓工作目录（默认：当前目录） |
+| `--project-root` | Tracker 根（默认：与 cwd 相同） |
+| `--runtime` | `grok` \| `claude`（见上默认） |
 | `--mode` | 仅本进程 `review`\|`vibe`，默认不写仓 |
 | `--fake-launcher` | 假启动器（冒烟，不开真窗） |
 | `--once` | 非交互：tick 后打印帧并退出 |
 | `--stop` | 与 `--once` 联用：tick 后停链 |
 
-空链 / 停链冒烟（不依赖本机 Grok/Claude）：
+空链 / 停链冒烟：
 
 ```bash
-node <skill-dir>/scripts/cli.mjs chain \
-  --cwd <product-repo> \
-  --feature <feature-slug> \
-  --fake-launcher --once --stop
+ic my-feature --fake-launcher --once --stop
 ```
 
-包内 fixture 冒烟（有一张 ready impl）：
+包内 fixture 冒烟：
 
 ```bash
-node <skill-dir>/scripts/cli.mjs chain \
+ic demo \
   --cwd <skill-dir>/fixtures/single-ready \
   --project-root <skill-dir>/fixtures/single-ready \
-  --feature demo \
   --fake-launcher --once
 ```
 
-多 feature / 多仓 = **多开** `chain` 进程。
+多 feature / 多仓 = **多开** `ic` 进程。
 
 ### 调度 TUI 键位
 

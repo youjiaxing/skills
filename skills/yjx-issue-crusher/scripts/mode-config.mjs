@@ -14,6 +14,9 @@ import path from 'node:path';
 
 export const DEFAULT_MODE = 'review';
 
+/** CLI chain default when neither flag nor repo config sets runtime. */
+export const DEFAULT_RUNTIME = 'grok';
+
 export const VIBE_CONSEQUENCE_MESSAGE =
   'Mode is now vibe: subsequent workers may auto-commit and set Closed: true.';
 
@@ -25,6 +28,16 @@ export const VIBE_CONSEQUENCE_MESSAGE =
 export function normalizeMode(raw) {
   if (raw === 'vibe') return 'vibe';
   if (raw === 'review') return 'review';
+  return null;
+}
+
+/**
+ * Normalize Worker runtime. Unknown/empty → null.
+ * @param {unknown} raw
+ * @returns {'grok'|'claude'|null}
+ */
+export function normalizeRuntime(raw) {
+  if (raw === 'grok' || raw === 'claude') return raw;
   return null;
 }
 
@@ -88,8 +101,9 @@ export function createMemoryModeConfig({ mode = null } = {}) {
 }
 
 /**
- * File-backed repo mode config.
- * Default path: <projectRoot>/.issue-crusher/config.json with key `mode`.
+ * File-backed repo config.
+ * Default path: <projectRoot>/.issue-crusher/config.json
+ * Keys: `mode` (review|vibe), optional `runtime` (grok|claude) for CLI defaults.
  * Startup --mode must not call writeMode.
  *
  * @param {{ projectRoot: string, configPath?: string }} options
@@ -115,6 +129,11 @@ export function createFileModeConfig({ projectRoot, configPath } = {}) {
     readMode() {
       const data = readFile();
       return normalizeMode(data?.mode);
+    },
+    /** Optional default Worker runtime for CLI when --runtime omitted. */
+    readRuntime() {
+      const data = readFile();
+      return normalizeRuntime(data?.runtime);
     },
     writeMode(next) {
       const normalized = normalizeMode(next);

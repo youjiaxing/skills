@@ -7,6 +7,10 @@
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "issue-crusher": "./skills/yjx-issue-crusher/scripts/cli.mjs",
+    "ic": "./skills/yjx-issue-crusher/scripts/cli.mjs"
+  },
   "scripts": {
     "init": "node scripts/link-skills.mjs init",
     "link": "node scripts/link-skills.mjs link",

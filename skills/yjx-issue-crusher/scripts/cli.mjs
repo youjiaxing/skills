@@ -21,52 +21,67 @@ import { createDispatchSurface } from './dispatch-surface.mjs';
 import { runDispatchOnce, runDispatchTui } from './dispatch-tui.mjs';
 import { createFakeLauncher } from './fake-launcher.mjs';
 import { createLocalMarkdownTracker } from './local-md-tracker.mjs';
-import { createFileModeConfig } from './mode-config.mjs';
+import {
+  createFileModeConfig,
+  DEFAULT_RUNTIME,
+  normalizeRuntime,
+} from './mode-config.mjs';
 import {
   buildWorkerInvocation,
   createRealLauncher,
 } from './real-launcher.mjs';
 
+const KNOWN_COMMANDS = new Set(['recommend', 'probe-launch', 'chain']);
+
 function printHelp() {
-  console.log(`Usage: node cli.mjs <command> [options]
+  console.log(`Usage:
+  ic <feature>                      # short: open chain in current repo (alias: issue-crusher)
+  ic chain <feature> [options]
+  ic recommend <feature>
+  ic probe-launch --runtime grok|claude [options]
+
+Daily path (from product repo root):
+  ic my-feature
+  ic my-feature --runtime claude
+
+Defaults:
+  --cwd / --project-root   process.cwd()
+  --runtime                flag → repo .issue-crusher/config.json "runtime" → grok
+  --mode                   flag → repo config "mode" → review
 
 Commands:
   recommend      List auto-relay candidates and recommend next (local-md)
   probe-launch   Build (and optionally spawn) a real foreground Worker launch
   chain          Start one orchestrator chain (cwd + feature); dispatch TUI
+                 (default when the first arg is a feature slug, not a command)
 
-recommend options:
-  --project-root PATH   Project root with docs/agents/local-tracker.json
-  --feature SLUG        Feature slug under trackerRoot (required)
+chain / recommend options:
+  --feature SLUG        Or positional: ic <feature> / ic chain <feature>
+  --cwd PATH            Product repo cwd (default: process cwd)
+  --project-root PATH   Tracker root (default: same as --cwd)
+  --runtime grok|claude Worker binary (chain; see Defaults above)
+  --mode review|vibe    Process-only override (default: not set → repo/review)
+  --model ID            Optional model for spawns
+  --effort LEVEL        Optional effort for spawns
+  --fake-launcher       Fake launcher (smoke; no real Worker)
+  --once                Non-interactive tick + print frame
+  --stop                With --once: stop after first tick
 
 probe-launch options:
   --runtime grok|claude Runtime binary (required)
   --cwd PATH            Working directory (default: cwd)
   --feature SLUG        Feature slug (default: demo)
-  --issue PATH          Issue relative path or id (default: synthetic probe issue)
-  --model ID            Optional model flag
-  --effort LEVEL        Optional effort flag
-  --title TITLE         Override session title (claude -n / grok rename)
-  --resume SESSION_ID   Build a resume launch instead of initial
-  --run                 Actually spawn detached foreground process (default: dry-run)
-  --kill-after MS       With --run, kill the worker after MS milliseconds (probe)
+  --issue PATH          Issue path or id (default: synthetic probe)
+  --model ID / --effort LEVEL / --title TITLE
+  --resume SESSION_ID   Resume launch instead of initial
+  --run                 Actually spawn (default: dry-run)
+  --kill-after MS       With --run, kill after MS
 
-chain options:
-  --feature SLUG        Feature slug (required) — one chain = one process
-  --cwd PATH            Product repo cwd (default: process cwd)
-  --project-root PATH   Tracker project root (default: same as --cwd)
-  --runtime grok|claude Required unless --fake-launcher
-  --mode review|vibe    Process-only startup override (default: not set → repo/review)
-  --model ID            Optional model for spawns
-  --effort LEVEL        Optional effort for spawns
-  --fake-launcher       Use in-memory fake launcher (smoke / empty chain; no real Worker)
-  --once                Non-interactive: tick once (or until idle), print frame, exit
-  --stop                With --once, stop the chain after the first tick (acceptance path)
   -h, --help            Show help
 
-One chain process binds one product cwd + one feature slug. Multi-feature = multi process.
-Dispatch TUI is read-only for the board/graph (no drag-dispatch). Workers stay in their
-own foreground windows; the orchestrator does not embed a terminal.
+One chain process = one product cwd + one feature. Multi-feature = multi process.
+Board/graph is read-only. Workers stay in their own foreground windows.
+Install short names: from skills monorepo run  npm link  (bins: ic, issue-crusher)
 `);
 }
 
@@ -90,6 +105,7 @@ function parseArgs(argv) {
     once: false,
     stop: false,
   };
+  const positionals = [];
   const args = [...argv];
   while (args.length > 0) {
     const argument = args.shift();
@@ -144,12 +160,35 @@ function parseArgs(argv) {
       options.help = true;
     } else if (argument?.startsWith('-')) {
       throw new Error(`unknown option: ${argument}`);
-    } else if (!options.command) {
-      options.command = argument;
     } else {
-      throw new Error(`unexpected argument: ${argument}`);
+      positionals.push(argument);
     }
   }
+
+  // Short forms:
+  //   ic <feature> [...]              → chain + feature
+  //   ic chain <feature> [...]
+  //   ic recommend <feature> [...]
+  //   ic probe-launch [...]
+  if (positionals.length > 0) {
+    const first = positionals[0];
+    if (KNOWN_COMMANDS.has(first)) {
+      options.command = first;
+      if (positionals[1] && options.feature == null) {
+        options.feature = positionals[1];
+      }
+      if (positionals.length > 2) {
+        throw new Error(`unexpected argument: ${positionals[2]}`);
+      }
+    } else {
+      options.command = 'chain';
+      if (options.feature == null) options.feature = first;
+      if (positionals.length > 1) {
+        throw new Error(`unexpected argument: ${positionals[1]}`);
+      }
+    }
+  }
+
   if (options.projectRoot == null) {
     options.projectRoot = options.cwd || process.cwd();
   }
@@ -300,24 +339,44 @@ async function runProbeLaunch(options) {
  * Start one chain process: product cwd + feature slug + dispatch surface.
  * Default launcher is real foreground Worker; --fake-launcher for smoke.
  */
+/**
+ * Resolve chain runtime: CLI flag → repo config → DEFAULT_RUNTIME (grok).
+ * Fake launcher still accepts missing runtime (falls back to grok for bookkeeping).
+ */
+export function resolveChainRuntime({
+  flagRuntime = null,
+  repoRuntime = null,
+  fakeLauncher = false,
+} = {}) {
+  const fromFlag = normalizeRuntime(flagRuntime);
+  if (fromFlag) return fromFlag;
+  const fromRepo = normalizeRuntime(repoRuntime);
+  if (fromRepo) return fromRepo;
+  if (fakeLauncher) return DEFAULT_RUNTIME;
+  return DEFAULT_RUNTIME;
+}
+
 export async function runChain(options) {
-  if (!options.feature) throw new Error('--feature is required for chain');
-  if (!options.fakeLauncher) {
-    if (!options.runtime) throw new Error('--runtime is required for chain (or pass --fake-launcher)');
-    if (options.runtime !== 'grok' && options.runtime !== 'claude') {
-      throw new Error("--runtime must be 'grok' or 'claude'");
-    }
+  if (!options.feature) {
+    throw new Error('feature is required (ic <feature> or --feature SLUG)');
   }
 
   const cwd = path.resolve(options.cwd || process.cwd());
   const projectRoot = path.resolve(options.projectRoot || cwd);
-  const runtime = options.runtime || 'grok';
+  const modeConfig = createFileModeConfig({ projectRoot });
+  const runtime = resolveChainRuntime({
+    flagRuntime: options.runtime,
+    repoRuntime: typeof modeConfig.readRuntime === 'function' ? modeConfig.readRuntime() : null,
+    fakeLauncher: options.fakeLauncher,
+  });
+  if (runtime !== 'grok' && runtime !== 'claude') {
+    throw new Error("--runtime must be 'grok' or 'claude'");
+  }
 
   const tracker = createLocalMarkdownTracker({
     projectRoot,
     feature: options.feature,
   });
-  const modeConfig = createFileModeConfig({ projectRoot });
   const launcher = options.fakeLauncher
     ? createFakeLauncher({ pid: 9000, sessionId: 'fake-chain-session' })
     : createRealLauncher();
