@@ -51,3 +51,30 @@ test('local-md mixed board: Wayfinder, blocked, and closed are not auto-next', a
   assert.ok(!ids.includes('02-closed-impl.md'));
   assert.ok(!ids.includes('04-blocked-impl.md'));
 });
+
+test('local-md mixed board: Wayfinder is HITL candidate while ready remains auto', async () => {
+  const tracker = trackerFor('mixed-board');
+  const hitl = await tracker.listHitlCandidates();
+  const hitlIds = hitl.map((c) => c.id);
+
+  assert.ok(hitlIds.includes('01-wayfinder-research.md'));
+  assert.ok(!hitlIds.includes('03-ready-impl.md'), 'ready auto must not appear in HITL list');
+  assert.ok(!hitlIds.includes('04-blocked-impl.md'), 'blocked ready is not HITL');
+  assert.ok(!hitlIds.includes('02-closed-impl.md'));
+  assert.equal(hitl.find((c) => c.id === '01-wayfinder-research.md')?.entryClass, 'wayfinder');
+});
+
+test('local-md hitl-only board: no auto candidates; HITL recommends wayfinder first', async () => {
+  const tracker = trackerFor('hitl-only');
+  const auto = await tracker.listAutoCandidates();
+  const nextAuto = await tracker.recommendNext();
+  const hitl = await tracker.listHitlCandidates();
+  const nextHitl = await tracker.recommendHitlNext();
+
+  assert.deepEqual(auto.map((c) => c.id), []);
+  assert.equal(nextAuto, null);
+  assert.deepEqual(hitl.map((c) => c.id), ['01-wayfinder-research.md', '02-human-triage.md']);
+  assert.equal(nextHitl?.id, '01-wayfinder-research.md');
+  assert.equal(nextHitl?.entryClass, 'wayfinder');
+  assert.equal(hitl.find((c) => c.id === '02-human-triage.md')?.entryClass, 'human');
+});

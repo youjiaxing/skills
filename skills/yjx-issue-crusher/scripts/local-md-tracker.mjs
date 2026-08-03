@@ -3,11 +3,16 @@
  *
  * Soft-depends on sibling yjx-local-kanban for graph parsing (no hard package dep).
  * Candidate filter is owned here and matches ralph auto-relay contract.
+ * HITL candidates (ticket 11): wayfinder / non-ready / unknown — not auto-spawned.
  */
 
 import path from 'node:path';
 
-import { selectAutoCandidates, toCandidate } from './select-candidates.mjs';
+import {
+  selectAutoCandidates,
+  selectHitlCandidates,
+  toCandidate,
+} from './select-candidates.mjs';
 
 const kanbanModuleUrl = new URL('../../yjx-local-kanban/scripts/issue-board.mjs', import.meta.url);
 
@@ -55,6 +60,14 @@ export function createLocalMarkdownTracker({
     },
     async recommendNext() {
       const candidates = await this.listAutoCandidates();
+      return candidates[0] ?? null;
+    },
+    async listHitlCandidates() {
+      const payload = await loadPayload();
+      return selectHitlCandidates(payload).map(toCandidate);
+    },
+    async recommendHitlNext() {
+      const candidates = await this.listHitlCandidates();
       return candidates[0] ?? null;
     },
     async getCompletion(issueId) {

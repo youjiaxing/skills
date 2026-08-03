@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 `yjx-issue-crusher` 是 **issue 串行接力编排器** 的独立 skill 包。实现与测试在本目录；试点仓（如 `issue-crusher`）只消费本 skill，**不内嵌**编排器源码。
 
-## 现状（ticket 07–10）
+## 现状（ticket 07–11）
 
 已具备：
 
@@ -30,8 +30,14 @@ disable-model-invocation: true
   - `setMode`（调度拨杆）立即写仓，只影响**后续** spawn；当前活 Worker 在 spawn 时钉死 mode，禁止热切合同
   - 切到 vibe 时发出一行后果事件 `mode-consequence`
   - **无**用户级本机总默认、**无** feature 级 mode 层
+- **非 ready / Wayfinder HITL（ticket 11）**：
+  - 自动区间**仅** `ready-for-agent` 普通 impl；Wayfinder（有 `Type`）/ human triage / 未知类不自动 spawn
+  - 仅 HITL 候选时：`step` → `needs-confirmation` 事件 + `pendingHitl`（runtime、model/effort 或 runtime-default、title、入口类）；**不占** Worker 槽
+  - `confirmHitl()`：按类预填入口（wayfinder → `/wayfinder` 路径；human/unknown → 中性打开路径、无具体 skill slash）；mode 与票 10 解析一致、spawn 钉死
+  - `rejectHitl()`：零 spawn，槽保持空闲
+  - ready auto 与 HITL 互不误判：有 ready 时仍直接 spawn `/implement`
 
-尚未具备（后续票）：非 ready HITL、真 Worker 启动、调度 TUI 完整 UI。
+尚未具备（后续票）：真 Worker 启动、调度 TUI 完整 UI。
 
 ## 依赖与可移植脚本
 
@@ -45,13 +51,13 @@ disable-model-invocation: true
 在 **skills monorepo 根**：
 
 ```bash
-node --test skills/yjx-issue-crusher/tests/chain-run.test.mjs skills/yjx-issue-crusher/tests/local-md-tracker.test.mjs
+node --test skills/yjx-issue-crusher/tests/*.test.mjs
 # 或：
 npm test
 ```
 
-主 seam：**Chain Run**（`tests/chain-run.test.mjs`）。  
-local-md fixture 覆盖空 frontier / 唯一 ready / 排除 Wayfinder·closed·blocked（`tests/local-md-tracker.test.mjs`）。
+主 seam：**Chain Run**（`tests/chain-run.test.mjs`），含 HITL 未同意 / 同意 wayfinder / 拒绝 / ready 不误判。  
+local-md fixture 覆盖空 frontier / 唯一 ready / mixed 排除 Wayfinder·closed·blocked / hitl-only（`tests/local-md-tracker.test.mjs`）。
 
 ## 最小 CLI
 

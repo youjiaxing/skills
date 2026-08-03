@@ -9,17 +9,24 @@
  * Ticket 10: review/vibe selection — hard default review; repo config; startup
  *            process override (no write); TUI setMode writes repo + subsequent only;
  *            pin mode on spawn; vibe consequence event.
+ * Ticket 11: non-ready / Wayfinder HITL — auto path only ready impl; otherwise
+ *            emit needs-confirmation, spawn only after confirmHitl (entry by class).
  */
 
 import {
   buildLaunchContract,
   buildResumeContract,
+  buildSessionTitle,
+  resolveEntryClass,
 } from './build-launch-contract.mjs';
 import {
   normalizeMode,
   resolveSubsequentMode,
   VIBE_CONSEQUENCE_MESSAGE,
 } from './mode-config.mjs';
+
+/** model/effort omitted → "runtime default" marker for HITL display. */
+const RUNTIME_DEFAULT = 'runtime-default';
 
 export function createChainRun({
   tracker,
@@ -29,6 +36,8 @@ export function createChainRun({
   runtime,
   mode,
   modeConfig = null,
+  model = null,
+  effort = null,
   // Intentionally accepted and ignored: no user-level or feature-level mode layer.
   userHome: _userHome,
   userMode: _userMode,
@@ -46,11 +55,24 @@ export function createChainRun({
   let startupSupersededByTui = false;
   /** Fallback when setMode runs without a modeConfig port. */
   let tuiChosenMode = null;
-  /** @type {Array<{ type: string, message: string, mode?: string }>} */
+  /** @type {Array<object>} */
   const events = [];
 
   let status = 'idle';
   let nextIssue = null;
+  /**
+   * Pending HITL ask (empty slot). Not a worker occupation.
+   * @type {null | {
+   *   issue: object,
+   *   entryClass: string,
+   *   title: string,
+   *   runtime: string,
+   *   model: string|null,
+   *   effort: string|null,
+   *   mode: string,
+   * }}
+   */
+  let pendingHitl = null;
   /**
    * @type {null | {
    *   issue: object,
@@ -64,6 +86,14 @@ export function createChainRun({
    * }}
    */
   let slot = null;
+
+  function displayModel() {
+    return model == null || model === '' ? RUNTIME_DEFAULT : model;
+  }
+
+  function displayEffort() {
+    return effort == null || effort === '' ? RUNTIME_DEFAULT : effort;
+  }
 
   function readRepoMode() {
     if (!modeConfig || typeof modeConfig.readMode !== 'function') return null;
@@ -117,6 +147,84 @@ export function createChainRun({
     };
   }
 
+  async function recommendHitl() {
+    if (typeof tracker.recommendHitlNext === 'function') {
+      return tracker.recommendHitlNext();
+    }
+    if (typeof tracker.listHitlCandidates === 'function') {
+      const list = await tracker.listHitlCandidates();
+      return Array.isArray(list) && list.length > 0 ? list[0] : null;
+    }
+    return null;
+  }
+
+  function buildHitlOffer(issue) {
+    const entryClass = resolveEntryClass(issue.entryClass, issue);
+    const title = buildSessionTitle(feature, issue);
+    const spawnMode = effectiveSubsequentMode();
+    return {
+      issue,
+      entryClass,
+      title,
+      runtime,
+      model: displayModel(),
+      effort: displayEffort(),
+      mode: spawnMode,
+    };
+  }
+
+  function emitNeedsConfirmation(offer) {
+    events.push({
+      type: 'needs-confirmation',
+      issue: offer.issue,
+      entryClass: offer.entryClass,
+      title: offer.title,
+      runtime: offer.runtime,
+      model: offer.model === RUNTIME_DEFAULT ? null : offer.model,
+      effort: offer.effort === RUNTIME_DEFAULT ? null : offer.effort,
+      // Also expose runtime-default markers for UIs that prefer explicit strings.
+      modelDisplay: offer.model,
+      effortDisplay: offer.effort,
+      mode: offer.mode,
+      message: `Needs human confirmation before spawning ${offer.entryClass} ticket ${offer.issue.id}`,
+    });
+  }
+
+  async function spawnFromIssue(issue, entryClass) {
+    const spawnMode = effectiveSubsequentMode();
+    const contract = buildLaunchContract({
+      runtime,
+      feature,
+      cwd,
+      issue,
+      mode: spawnMode,
+      entryClass,
+    });
+    const result = await launcher.launch(contract);
+
+    slot = {
+      issue,
+      pid: result.pid,
+      sessionId: result.sessionId ?? null,
+      runtime,
+      cwd,
+      mode: spawnMode,
+      title: contract.title,
+      forceAdvanceRequested: false,
+    };
+    status = 'soft-stuck';
+    pendingHitl = null;
+    nextIssue = issue;
+
+    return {
+      spawned: true,
+      advanced: true,
+      next: issue,
+      status,
+      ok: true,
+    };
+  }
+
   return {
     get status() {
       return status;
@@ -126,6 +234,9 @@ export function createChainRun({
     },
     get slot() {
       return slot;
+    },
+    get pendingHitl() {
+      return pendingHitl;
     },
     /** Subsequent-ticket effective mode (live worker pin is slot.mode). */
     get mode() {
@@ -185,6 +296,31 @@ export function createChainRun({
       return { ok: true };
     },
     /**
+     * Approve a pending HITL ask and spawn with class-appropriate entry.
+     * Mode is pinned at confirm/spawn time (same as auto path / ticket 10).
+     */
+    async confirmHitl() {
+      if (slot) {
+        return { ok: false, reason: 'slot-occupied', spawned: false };
+      }
+      if (!pendingHitl) {
+        return { ok: false, reason: 'no-pending-hitl', spawned: false };
+      }
+      const { issue, entryClass } = pendingHitl;
+      return spawnFromIssue(issue, entryClass);
+    },
+    /**
+     * Reject a pending HITL ask: zero spawn, slot stays empty.
+     */
+    async rejectHitl() {
+      if (!pendingHitl) {
+        return { ok: false, reason: 'no-pending-hitl' };
+      }
+      pendingHitl = null;
+      status = 'idle';
+      return { ok: true, spawned: false };
+    },
+    /**
      * One-shot resume of the recorded session after needs-resume.
      * Same logical slot; does not open the next ticket; does not re-inject skill entry.
      * Resume keeps the spawn-pinned mode (no hot switch).
@@ -227,6 +363,8 @@ export function createChainRun({
      * One evaluation cycle:
      * - If a slot is held, release it only when dual conditions are met.
      * - Then spawn at most one auto candidate into an empty slot (single slot).
+     * - If no auto candidate but a HITL candidate exists, emit needs-confirmation
+     *   and do not spawn until confirmHitl.
      * - Spawn pins the then-effective mode onto the worker slot.
      */
     async step() {
@@ -246,47 +384,49 @@ export function createChainRun({
         status = 'idle';
       }
 
+      // Auto ready-impl path wins over HITL — never misclassify ready as ask-first.
       const next = await tracker.recommendNext();
       nextIssue = next;
 
-      if (!next) {
-        status = 'idle';
+      if (next) {
+        // Clear any stale HITL offer when auto work is available.
+        pendingHitl = null;
+        return spawnFromIssue(next, resolveEntryClass(next.entryClass, next));
+      }
+
+      // Already waiting on the same HITL offer: re-signal without double-pending.
+      if (pendingHitl) {
+        status = 'needs-confirmation';
         return {
           spawned: false,
-          advanced: true,
-          next: null,
+          advanced: false,
+          reason: 'needs-confirmation',
+          next: pendingHitl.issue,
           status,
         };
       }
 
-      // Pin at spawn time — later setMode / repo rewrite must not change this slot.
-      const spawnMode = effectiveSubsequentMode();
-      const contract = buildLaunchContract({
-        runtime,
-        feature,
-        cwd,
-        issue: next,
-        mode: spawnMode,
-      });
-      const result = await launcher.launch(contract);
+      const hitl = await recommendHitl();
+      if (hitl) {
+        const offer = buildHitlOffer(hitl);
+        pendingHitl = offer;
+        nextIssue = hitl;
+        status = 'needs-confirmation';
+        emitNeedsConfirmation(offer);
+        return {
+          spawned: false,
+          advanced: true,
+          reason: 'needs-confirmation',
+          next: hitl,
+          status,
+        };
+      }
 
-      slot = {
-        issue: next,
-        pid: result.pid,
-        sessionId: result.sessionId ?? null,
-        runtime,
-        cwd,
-        mode: spawnMode,
-        title: contract.title,
-        forceAdvanceRequested: false,
-      };
-      // Occupied + not closed + alive → soft-stuck is the outward edge name.
-      status = 'soft-stuck';
-
+      status = 'idle';
       return {
-        spawned: true,
+        spawned: false,
         advanced: true,
-        next,
+        next: null,
         status,
       };
     },

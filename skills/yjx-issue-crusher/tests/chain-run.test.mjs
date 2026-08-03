@@ -608,3 +608,204 @@ test('setMode without modeConfig is rejected (must write repo)', async () => {
   assert.equal(chain.mode, 'review');
   assert.equal((chain.events || []).length, 0);
 });
+
+// --- Ticket 11: non-ready / Wayfinder HITL (ask before spawn) ---
+
+function hitlCandidate(id, overrides = {}) {
+  return candidate(id, {
+    entryClass: overrides.entryClass ?? 'wayfinder',
+    type: overrides.type,
+    statusRole: overrides.statusRole,
+    ...overrides,
+  });
+}
+
+function makeHitlChain(overrides = {}) {
+  const {
+    candidates = [],
+    hitlCandidates = [],
+    completions = {},
+    launcherOptions = {},
+    ...chainOptions
+  } = overrides;
+  const tracker = createFakeTracker({ candidates, hitlCandidates, completions });
+  const launcher = createFakeLauncher(launcherOptions);
+  const chain = createChainRun({
+    tracker,
+    launcher,
+    feature: 'demo',
+    cwd: '/tmp/project',
+    runtime: 'grok',
+    ...chainOptions,
+  });
+  return { tracker, launcher, chain };
+}
+
+test('HITL only wayfinder frontier: step does not spawn and emits needs-confirmation', async () => {
+  const wayfinder = hitlCandidate('01-wayfinder-research.md', {
+    entryClass: 'wayfinder',
+    type: 'research',
+    title: 'wayfinder research',
+  });
+  const { launcher, chain } = makeHitlChain({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+  });
+
+  const result = await chain.step();
+
+  assert.equal(result.spawned, false);
+  assert.equal(result.reason, 'needs-confirmation');
+  assert.equal(chain.status, 'needs-confirmation');
+  assert.deepEqual(launcher.launches, []);
+  assert.equal(chain.slot, null);
+
+  const events = chain.events;
+  const signal = events.find((e) => e.type === 'needs-confirmation');
+  assert.ok(signal, 'must emit observable needs-confirmation signal');
+  assert.equal(signal.issue?.id, '01-wayfinder-research.md');
+  assert.equal(signal.entryClass, 'wayfinder');
+  assert.equal(signal.runtime, 'grok');
+  assert.equal(signal.title, 'demo/01-wayfinder-research');
+  // model/effort omitted → show runtime default (null or explicit marker).
+  assert.ok(signal.model === null || signal.model === 'runtime-default');
+  assert.ok(signal.effort === null || signal.effort === 'runtime-default');
+  assert.equal(chain.pendingHitl?.issue?.id, '01-wayfinder-research.md');
+});
+
+test('HITL approve wayfinder: launch uses /wayfinder path, not /implement, review-safe mode', async () => {
+  const wayfinder = hitlCandidate('01-wayfinder-research.md', {
+    entryClass: 'wayfinder',
+    type: 'research',
+  });
+  const { launcher, chain } = makeHitlChain({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+  });
+
+  await chain.step();
+  assert.equal(chain.status, 'needs-confirmation');
+
+  const approved = await chain.confirmHitl();
+  assert.equal(approved.ok, true);
+  assert.equal(approved.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+
+  const launch = launcher.launches[0];
+  assert.equal(launch.issue.id, '01-wayfinder-research.md');
+  assert.equal(launch.title, 'demo/01-wayfinder-research');
+  assert.equal(launch.mode, 'review');
+  assert.match(launch.initialPrompt, /\/wayfinder\s+\.scratch\/demo\/issues\/01-wayfinder-research\.md/);
+  assert.doesNotMatch(launch.initialPrompt, /\/implement\b/);
+  assert.match(launch.initialPrompt, /do not auto-commit|禁止自动 commit|禁自动 commit/i);
+  assert.ok(chain.slot, 'approved spawn occupies the logical slot');
+  assert.equal(chain.pendingHitl, null);
+});
+
+test('HITL reject: zero spawn and logical slot stays empty', async () => {
+  const wayfinder = hitlCandidate('01-wayfinder-research.md', {
+    entryClass: 'wayfinder',
+    type: 'research',
+  });
+  const { launcher, chain } = makeHitlChain({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+  });
+
+  await chain.step();
+  const rejected = await chain.rejectHitl();
+
+  assert.equal(rejected.ok, true);
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(chain.slot, null);
+  assert.equal(chain.pendingHitl, null);
+  assert.equal(chain.status, 'idle');
+});
+
+test('ready impl auto path still spawns without HITL misclassification', async () => {
+  const ready = candidate('03-ready-impl.md');
+  const wayfinder = hitlCandidate('01-wayfinder-research.md', {
+    entryClass: 'wayfinder',
+    type: 'research',
+  });
+  const { launcher, chain } = makeHitlChain({
+    candidates: [ready],
+    hitlCandidates: [wayfinder],
+  });
+
+  const result = await chain.step();
+
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '03-ready-impl.md');
+  assert.match(launcher.launches[0].initialPrompt, /\/implement\b/);
+  assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
+  assert.equal(chain.pendingHitl, null);
+  assert.ok(!(chain.events || []).some((e) => e.type === 'needs-confirmation'));
+});
+
+test('HITL approve human/unknown: launch has no concrete skill slash', async () => {
+  const human = hitlCandidate('05-human-ready.md', {
+    entryClass: 'human',
+    statusRole: 'ready-for-human',
+    title: 'needs a human',
+  });
+  const { launcher, chain } = makeHitlChain({
+    candidates: [],
+    hitlCandidates: [human],
+    runtime: 'claude',
+  });
+
+  await chain.step();
+  assert.equal(chain.status, 'needs-confirmation');
+  assert.equal(chain.pendingHitl?.entryClass, 'human');
+
+  const approved = await chain.confirmHitl();
+  assert.equal(approved.ok, true);
+  assert.equal(launcher.launches.length, 1);
+
+  const launch = launcher.launches[0];
+  assert.equal(launch.issue.id, '05-human-ready.md');
+  assert.doesNotMatch(launch.initialPrompt, /\/implement\b/);
+  assert.doesNotMatch(launch.initialPrompt, /\/wayfinder\b/);
+  // Neutral open-path convention is fine; no concrete skill slash.
+  assert.match(launch.initialPrompt, /\.scratch\/demo\/issues\/05-human-ready\.md/);
+  assert.equal(launch.mode, 'review');
+});
+
+test('HITL approve respects process mode pin (vibe when resolved at confirm time)', async () => {
+  const wayfinder = hitlCandidate('01-wayfinder-research.md', {
+    entryClass: 'wayfinder',
+    type: 'research',
+  });
+  const { launcher, chain } = makeHitlChain({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+    mode: 'vibe',
+  });
+
+  await chain.step();
+  const approved = await chain.confirmHitl();
+  assert.equal(approved.ok, true);
+  assert.equal(launcher.launches[0].mode, 'vibe');
+  assert.match(launcher.launches[0].initialPrompt, /vibe/i);
+});
+
+test('HITL approve unknown class: neutral open path, no concrete skill slash', async () => {
+  const unknown = hitlCandidate('06-unparseable.md', {
+    entryClass: 'unknown',
+    title: 'cannot classify',
+  });
+  const { launcher, chain } = makeHitlChain({
+    candidates: [],
+    hitlCandidates: [unknown],
+  });
+
+  await chain.step();
+  assert.equal(chain.pendingHitl?.entryClass, 'unknown');
+  const approved = await chain.confirmHitl();
+  assert.equal(approved.ok, true);
+  assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/implement\b/);
+  assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
+  assert.match(launcher.launches[0].initialPrompt, /\.scratch\/demo\/issues\/06-unparseable\.md/);
+});
