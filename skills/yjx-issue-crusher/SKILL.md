@@ -112,6 +112,7 @@ closed == false
 - **mode** 解析与仓文件写回  
 - **HITL** confirm/reject（Wayfinder / human / 未知）  
 - **CLI：** `recommend` · `probe-launch` · **`chain`**（调度 TUI + 可选假启动器）  
+- 交互 TTY：**Ink 全屏调度壳**（顶栏 / 中部 / 当前槽 / 底栏；`q` 退出）；`--once` / 非 TTY 仍打印帧并退出  
 - 交互 TUI **后台 poll**（默认 2s）自动 tick，支持 AFK 接力  
 
 ---
@@ -255,7 +256,8 @@ node <skill-dir>/scripts/cli.mjs probe-launch \
 
 ## 依赖与测试
 
-- Node.js 20+；仅 Node 标准库  
+- Node.js 20+  
+- 运行时依赖（skills monorepo 根 `package.json`）：**Ink** + **React**（交互 TTY 全屏调度壳）；其余编排逻辑以 Node 标准库为主  
 - local-md 适配软依赖同 skills 根下的 **`yjx-local-kanban`**  
 - **不**运行时硬依赖 `yjx-local-ralph`（候选在本包 `select-candidates.mjs`）
 
@@ -267,7 +269,7 @@ npm test
 ```
 
 主 seam：`tests/chain-run.test.mjs`。  
-调度面：`tests/dispatch-surface.test.mjs` · `tests/cli-chain.test.mjs`。  
+调度面：`tests/dispatch-surface.test.mjs` · `tests/dispatch-fullscreen.test.mjs` · `tests/cli-chain.test.mjs`。  
 local-md fixture：`empty-frontier` / `single-ready` / `mixed-board` / `hitl-only`。
 
 ---

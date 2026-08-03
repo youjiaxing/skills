@@ -11,6 +11,12 @@ import {
   renderDependencyGraph,
   statusLabelZh,
 } from './dependency-graph.mjs';
+import {
+  runFullscreenDispatch,
+  shouldUseFullscreenDispatch,
+} from './dispatch-fullscreen.mjs';
+
+export { shouldUseFullscreenDispatch } from './dispatch-fullscreen.mjs';
 
 /**
  * Render one full frame from a surface snapshot (pure; testable).
@@ -237,8 +243,29 @@ export async function runDispatchTui({
   autoTick = true,
   pollIntervalMs = 2000,
   maxTicks = Infinity,
+  once = false,
+  fullscreen = undefined,
+  alternateScreen = undefined,
 } = {}) {
   if (!surface) throw new Error('surface is required');
+
+  const useFullscreen = fullscreen ?? shouldUseFullscreenDispatch({
+    input,
+    output,
+    once,
+  });
+
+  // Interactive dual-TTY: Ink fullscreen shell (ticket 01). --once / non-TTY stay printable.
+  if (useFullscreen && maxTicks === Infinity) {
+    return runFullscreenDispatch({
+      surface,
+      input,
+      output,
+      autoTick,
+      pollIntervalMs,
+      alternateScreen: alternateScreen ?? Boolean(output?.isTTY),
+    });
+  }
 
   let ticks = 0;
   if (autoTick) {

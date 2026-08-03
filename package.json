@@ -20,6 +20,8 @@
     "test": "node --test"
   },
   "dependencies": {
+    "ink": "^6.8.0",
+    "react": "^19.2.8",
     "yaml": "^2.8.1"
   }
 }

@@ -419,7 +419,8 @@ export async function runChain(options) {
     });
     const surface = createDispatchSurface({ chain, tracker });
 
-    if (options.once) {
+    // --once / non-TTY: printable frames then exit — never mount Ink fullscreen.
+    if (options.once || nonInteractive) {
       await runDispatchOnce({
         surface,
         output: process.stdout,
@@ -448,7 +449,7 @@ export async function runChain(options) {
       promptSession.close();
       promptSession = null;
     }
-    await runDispatchTui({ surface });
+    await runDispatchTui({ surface, once: false });
     return 0;
   } finally {
     if (promptSession) promptSession.close();
