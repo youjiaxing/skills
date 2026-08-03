@@ -13,6 +13,7 @@
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 import { buildLaunchContract, buildResumeContract } from './build-launch-contract.mjs';
@@ -20,6 +21,10 @@ import { createChainRun } from './chain-run.mjs';
 import { createDispatchSurface } from './dispatch-surface.mjs';
 import { runDispatchOnce, runDispatchTui } from './dispatch-tui.mjs';
 import { createFakeLauncher } from './fake-launcher.mjs';
+import {
+  resolveFeatureOrPrompt,
+  resolveRuntimeOrPrompt,
+} from './interactive-prompts.mjs';
 import { createLocalMarkdownTracker } from './local-md-tracker.mjs';
 import {
   createFileModeConfig,
@@ -53,7 +58,7 @@ function printHelp() {
   ic probe-launch --runtime grok  调试：看启动参数（默认不真开窗）
 
 【可选参数】
-  --runtime grok|claude   用哪个 Agent（可省略；仓配置或默认 grok）
+  --runtime grok|claude   用哪个 Agent（可省略；仓配置或交互询问）
   --mode review|vibe      审码 / 可自动关票（可省略；默认 review）
   --cwd 路径              产品仓目录（默认：当前目录）
   --fake-launcher         假启动，不真开 Grok/Claude（冒烟用）
@@ -65,8 +70,23 @@ function printHelp() {
 
 【调度界面按键】m review|vibe  f强制推进  r恢复  y/n确认  s停链  t刷新  q退出
 
-只敲 ic、不带功能名时，只会显示本帮助，不会开链。
+只敲 ic（不带功能名）：扫描本仓 feature，提示你选取后再开链。
+未指定 runtime 且仓里也没有：会先问 Grok 还是 Claude，再开第一张票。
 `);
+}
+
+function createStdinAsk(input = process.stdin, output = process.stdout) {
+  const rl = readline.createInterface({ input, output, terminal: Boolean(input.isTTY) });
+  return {
+    ask(question) {
+      return new Promise((resolve) => {
+        rl.question(question, (answer) => resolve(answer));
+      });
+    },
+    close() {
+      rl.close();
+    },
+  };
 }
 
 function parseArgs(argv) {
@@ -324,8 +344,7 @@ async function runProbeLaunch(options) {
  * Default launcher is real foreground Worker; --fake-launcher for smoke.
  */
 /**
- * Resolve chain runtime: CLI flag → repo config → DEFAULT_RUNTIME (grok).
- * Fake launcher still accepts missing runtime (falls back to grok for bookkeeping).
+ * Sync resolve for tests: flag → repo → fake default → null (needs prompt).
  */
 export function resolveChainRuntime({
   flagRuntime = null,
@@ -337,73 +356,103 @@ export function resolveChainRuntime({
   const fromRepo = normalizeRuntime(repoRuntime);
   if (fromRepo) return fromRepo;
   if (fakeLauncher) return DEFAULT_RUNTIME;
-  return DEFAULT_RUNTIME;
+  return null;
 }
 
 export async function runChain(options) {
-  if (!options.feature) {
-    throw new Error('feature is required (ic <feature> or --feature SLUG)');
-  }
-
   const cwd = path.resolve(options.cwd || process.cwd());
   const projectRoot = path.resolve(options.projectRoot || cwd);
-  const modeConfig = createFileModeConfig({ projectRoot });
-  const runtime = resolveChainRuntime({
-    flagRuntime: options.runtime,
-    repoRuntime: typeof modeConfig.readRuntime === 'function' ? modeConfig.readRuntime() : null,
-    fakeLauncher: options.fakeLauncher,
-  });
-  if (runtime !== 'grok' && runtime !== 'claude') {
-    throw new Error("--runtime must be 'grok' or 'claude'");
-  }
+  const nonInteractive = Boolean(
+    options.once
+    || options.nonInteractive
+    || !process.stdin.isTTY,
+  );
 
-  const tracker = createLocalMarkdownTracker({
-    projectRoot,
-    feature: options.feature,
-  });
-  const launcher = options.fakeLauncher
-    ? createFakeLauncher({ pid: 9000, sessionId: 'fake-chain-session' })
-    : createRealLauncher();
+  let promptSession = null;
+  const ensureAsk = () => {
+    if (typeof options.ask === 'function') return options.ask;
+    if (!promptSession) promptSession = createStdinAsk();
+    return (q) => promptSession.ask(q);
+  };
 
-  const chain = createChainRun({
-    tracker,
-    launcher,
-    feature: options.feature,
-    cwd,
-    runtime,
-    mode: options.mode ?? undefined,
-    modeConfig,
-    model: options.model,
-    effort: options.effort,
-  });
-  const surface = createDispatchSurface({ chain, tracker });
-
-  if (options.once) {
-    const result = await runDispatchOnce({
-      surface,
-      output: process.stdout,
-      maxSteps: 2,
-      stopWhenIdle: true,
+  try {
+    const feature = await resolveFeatureOrPrompt({
+      feature: options.feature,
+      projectRoot,
+      ask: nonInteractive ? null : ensureAsk(),
+      nonInteractive,
+      listFeatures: options.listFeatures,
+      output: options.output || process.stdout,
     });
-    if (options.stop) {
-      await surface.stop();
-      process.stdout.write(`${renderStoppedNote(surface)}\n`);
-    }
-    const snap = surface.snapshot();
-    process.stdout.write(`${JSON.stringify({
-      feature: snap.feature,
-      status: snap.status,
-      stopped: snap.stopped,
-      subsequentMode: snap.subsequentMode,
-      slot: snap.slot,
-      pendingHitl: snap.pendingHitl,
-      boardIssueCount: snap.board?.issues?.length ?? 0,
-    }, null, 2)}\n`);
-    return 0;
-  }
 
-  await runDispatchTui({ surface });
-  return 0;
+    const modeConfig = createFileModeConfig({ projectRoot });
+    const runtime = await resolveRuntimeOrPrompt({
+      flagRuntime: options.runtime,
+      repoRuntime: typeof modeConfig.readRuntime === 'function' ? modeConfig.readRuntime() : null,
+      fakeLauncher: options.fakeLauncher,
+      ask: nonInteractive ? null : ensureAsk(),
+      nonInteractive,
+      output: options.output || process.stdout,
+    });
+    if (runtime !== 'grok' && runtime !== 'claude') {
+      throw new Error("--runtime must be 'grok' or 'claude'");
+    }
+
+    const tracker = createLocalMarkdownTracker({
+      projectRoot,
+      feature,
+    });
+    const launcher = options.fakeLauncher
+      ? createFakeLauncher({ pid: 9000, sessionId: 'fake-chain-session' })
+      : createRealLauncher();
+
+    const chain = createChainRun({
+      tracker,
+      launcher,
+      feature,
+      cwd,
+      runtime,
+      mode: options.mode ?? undefined,
+      modeConfig,
+      model: options.model,
+      effort: options.effort,
+    });
+    const surface = createDispatchSurface({ chain, tracker });
+
+    if (options.once) {
+      await runDispatchOnce({
+        surface,
+        output: process.stdout,
+        maxSteps: 2,
+        stopWhenIdle: true,
+      });
+      if (options.stop) {
+        await surface.stop();
+        process.stdout.write(`${renderStoppedNote(surface)}\n`);
+      }
+      const snap = surface.snapshot();
+      process.stdout.write(`${JSON.stringify({
+        feature: snap.feature,
+        status: snap.status,
+        stopped: snap.stopped,
+        subsequentMode: snap.subsequentMode,
+        slot: snap.slot,
+        pendingHitl: snap.pendingHitl,
+        boardIssueCount: snap.board?.issues?.length ?? 0,
+      }, null, 2)}\n`);
+      return 0;
+    }
+
+    // Close selection prompts before long-lived TUI takes stdin.
+    if (promptSession) {
+      promptSession.close();
+      promptSession = null;
+    }
+    await runDispatchTui({ surface });
+    return 0;
+  } finally {
+    if (promptSession) promptSession.close();
+  }
 }
 
 function renderStoppedNote(surface) {
@@ -413,9 +462,13 @@ function renderStoppedNote(surface) {
 
 export async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
-  if (options.help || !options.command) {
+  if (options.help) {
     printHelp();
-    return options.help || !options.command ? 0 : 1;
+    return 0;
+  }
+  // Bare `ic` → chain + interactive feature pick (not just help).
+  if (!options.command) {
+    options.command = 'chain';
   }
   if (options.command === 'recommend') return runRecommend(options);
   if (options.command === 'probe-launch') return runProbeLaunch(options);

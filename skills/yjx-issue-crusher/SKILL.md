@@ -164,9 +164,12 @@ npm link
 ic my-feature
 # 等价
 issue-crusher my-feature
+# 不写 feature：扫描本仓 .scratch 下的 feature，提示选取
+ic
 ```
 
-含义：在当前目录开链（`--cwd` / `--project-root` 默认 `pwd`），命令默认 `chain`。
+含义：在当前目录开链（`--cwd` / `--project-root` 默认 `pwd`），命令默认 `chain`。  
+调度界面默认**中文**，含 **ASCII 依赖图**（★可执行 ▶进行中 ·阻塞 ✓完成）与「现在可执行」清单。
 
 | 还想指定 | 写法 |
 |----------|------|
@@ -183,8 +186,9 @@ issue-crusher my-feature
 }
 ```
 
-解析：`--runtime` 旗标 → 仓 `runtime` → 默认 **`grok`**。  
-`--mode` 旗标 → 仓 `mode` → 默认 **`review`**（拨杆仍会写回仓 `mode`）。
+解析：  
+- **runtime**：`--runtime` → 仓 `runtime` → **交互询问**（非交互/脚本须显式指定；`--fake-launcher` 冒烟默认 grok）  
+- **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（拨杆仍会写回仓 `mode`）
 
 未 `npm link` 时仍可用长路径：
 

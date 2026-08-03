@@ -19,10 +19,13 @@ function runCli(args, cwd = skillDir) {
   });
 }
 
-test("cli chain requires feature", () => {
+test("cli chain without feature in non-interactive fails helpfully", () => {
   const result = runCli(["chain", "--fake-launcher", "--once"]);
   assert.notEqual(result.status, 0);
-  assert.match(`${result.stderr}${result.stdout}`, /feature is required/);
+  assert.match(
+    `${result.stderr}${result.stdout}`,
+    /未找到 feature|多个 feature|tracker config not found|请指定/,
+  );
 });
 
 test("cli short form: positional feature defaults to chain", () => {
@@ -71,7 +74,7 @@ test("cli chain uses repo config runtime when --runtime omitted", () => {
       "--stop",
     ], root);
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /runtime:\s*claude/i);
+    assert.match(result.stdout, /运行时:\s*claude|runtime:\s*claude/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

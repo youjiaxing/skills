@@ -7,74 +7,90 @@
 
 import readline from 'node:readline';
 
+import {
+  renderDependencyGraph,
+  statusLabelZh,
+} from './dependency-graph.mjs';
+
 /**
  * Render one full frame from a surface snapshot (pure; testable).
+ * Default language: Chinese (shared understanding).
  * @param {object} snap
  * @returns {string}
  */
 export function renderDispatchFrame(snap) {
   const lines = [];
-  lines.push('=== Issue Crusher — dispatch (scheduler) ===');
-  lines.push(`feature: ${snap.feature}    cwd: ${snap.cwd}`);
-  lines.push(`runtime: ${snap.runtime}    mode: ${snap.subsequentMode} (subsequent)`);
+  lines.push('=== Issue Crusher · 调度 ===');
+  lines.push(`功能: ${snap.feature}    目录: ${snap.cwd}`);
+  lines.push(
+    `运行时: ${snap.runtime}    后续 mode: ${snap.subsequentMode}`
+    + (snap.subsequentMode === 'review' ? '（审码）' : snap.subsequentMode === 'vibe' ? '（可自动关票）' : ''),
+  );
   if (snap.workerMode) {
-    lines.push(`worker mode (pinned): ${snap.workerMode}`);
+    lines.push(`当前 Worker mode（已钉死）: ${snap.workerMode}`);
   }
-  lines.push(`status: ${snap.status}${snap.stopped ? ' [stopped]' : ''}`);
+  lines.push(`状态: ${statusLabelZh(snap.status)}${snap.stopped ? ' [已停链]' : ''}`);
   lines.push('');
 
   if (snap.slot) {
-    lines.push('Slot:');
-    lines.push(`  issue: ${snap.slot.issueId}`);
-    lines.push(`  title: ${snap.slot.title}`);
-    lines.push(`  pid: ${snap.slot.pid ?? '-'}    session: ${snap.slot.sessionId ?? '(none)'}`);
-    lines.push(`  closed: ${snap.slot.closed ? 'yes' : 'no'}    mode: ${snap.slot.mode}`);
+    lines.push('当前槽（正在做）:');
+    lines.push(`  票: ${snap.slot.issueId}`);
+    lines.push(`  标题: ${snap.slot.title}`);
+    lines.push(`  pid: ${snap.slot.pid ?? '-'}    session: ${snap.slot.sessionId ?? '（无）'}`);
+    lines.push(`  已关票: ${snap.slot.closed ? '是' : '否'}    mode: ${snap.slot.mode}`);
   } else {
-    lines.push('Slot: (empty)');
+    lines.push('当前槽: （空）');
   }
   lines.push('');
 
   if (snap.pendingHitl) {
-    lines.push('Needs confirmation (HITL):');
-    lines.push(`  issue: ${snap.pendingHitl.issueId}  class: ${snap.pendingHitl.entryClass}`);
-    lines.push(`  title: ${snap.pendingHitl.title}`);
+    lines.push('需人工确认后才开票:');
+    lines.push(`  票: ${snap.pendingHitl.issueId}  类型: ${snap.pendingHitl.entryClass}`);
+    lines.push(`  标题: ${snap.pendingHitl.title}`);
     lines.push(`  runtime: ${snap.pendingHitl.runtime}  mode: ${snap.pendingHitl.mode}`);
-    lines.push(`  model: ${snap.pendingHitl.model ?? 'runtime-default'}  effort: ${snap.pendingHitl.effort ?? 'runtime-default'}`);
+    lines.push(`  model: ${snap.pendingHitl.model ?? '运行时默认'}  effort: ${snap.pendingHitl.effort ?? '运行时默认'}`);
     lines.push('');
   }
 
-  lines.push('Board (read-only — no graph dispatch / 不可图上派票):');
   const issues = snap.board?.issues ?? [];
-  if (issues.length === 0) {
-    lines.push('  (no issues)');
+  const graph = renderDependencyGraph({
+    issues,
+    slotIssueId: snap.slot?.issueId ?? null,
+  });
+
+  lines.push('依赖图（只读 · 不可图上派票）');
+  lines.push('  图例: ★可执行  ▶进行中  ·阻塞/未完成  ✓已完成  ··· 上游──►下游');
+  for (const line of graph.lines) lines.push(line);
+  if (graph.warnings.length) {
+    lines.push('警告:');
+    for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
+  }
+  lines.push('');
+  lines.push('现在可执行:');
+  if (graph.executable.length === 0) {
+    lines.push('  （无）');
   } else {
-    for (const issue of issues) {
-      const mark = issue.closed ? '✓' : '·';
-      const blockers = issue.blockedBy?.length
-        ? ` blockedBy=[${issue.blockedBy.join(', ')}]`
-        : '';
-      const unlocks = issue.unlocks?.length
-        ? ` unlocks=[${issue.unlocks.join(', ')}]`
-        : '';
-      lines.push(`  ${mark} ${issue.id}  ${issue.status ?? ''}${blockers}${unlocks}`);
+    for (const item of graph.executable) {
+      const active = snap.slot?.issueId === item.id ? '  ◀当前槽' : '';
+      lines.push(`  ★ ${item.id}${active}`);
     }
   }
   lines.push('');
 
   const actions = snap.actions || {};
   const available = [];
-  if (actions.setMode?.available) available.push('[m]ode review|vibe');
-  if (actions.forceAdvance?.available) available.push('[f]orce-advance (Closed only)');
-  if (actions.resume?.available) available.push('[r]esume');
-  if (actions.confirmHitl?.available) available.push('[y] confirm HITL');
-  if (actions.rejectHitl?.available) available.push('[n] reject HITL');
-  if (actions.stop?.available) available.push('[s]top chain');
-  available.push('[t]ick', '[q]uit');
-  lines.push(`Actions: ${available.join('  ')}`);
+  if (actions.setMode?.available) available.push('[m] review|vibe 切换模式');
+  if (actions.forceAdvance?.available) available.push('[f] 强制推进（仅已关票）');
+  if (actions.resume?.available) available.push('[r] 恢复会话');
+  if (actions.confirmHitl?.available) available.push('[y] 同意开票');
+  if (actions.rejectHitl?.available) available.push('[n] 拒绝');
+  if (actions.stop?.available) available.push('[s] 停链');
+  available.push('[t] 刷新', '[q] 退出');
+  lines.push(`操作: ${available.join('  ')}`);
 
   if (Array.isArray(snap.messages) && snap.messages.length > 0) {
     lines.push('');
-    lines.push('Messages:');
+    lines.push('消息:');
     for (const message of snap.messages.slice(-5)) {
       lines.push(`  • ${message.text || message.message || message.type}`);
     }
@@ -123,7 +139,7 @@ export async function handleDispatchCommand(surface, command) {
       return { quit: true };
     case 'stop': {
       const result = await surface.stop();
-      return { message: result.ok ? 'Chain stopped.' : `stop failed: ${result.reason}` };
+      return { message: result.ok ? '已停链。' : `停链失败: ${result.reason}` };
     }
     case 'tick':
       await surface.tick();
@@ -132,51 +148,51 @@ export async function handleDispatchCommand(surface, command) {
       const result = await surface.forceAdvance();
       if (result.ok) {
         await surface.tick();
-        return { message: 'Force-advance accepted; advanced chain.' };
+        return { message: '已强制推进，继续接力。' };
       }
-      return { message: `force-advance unavailable: ${result.reason}` };
+      return { message: `无法强制推进: ${result.reason}` };
     }
     case 'resume': {
       const result = await surface.resume();
       return {
         message: result.ok
-          ? `Resumed session (pid ${result.pid}).`
-          : `resume failed: ${result.reason}`,
+          ? `已恢复会话（pid ${result.pid}）。`
+          : `恢复失败: ${result.reason}`,
       };
     }
     case 'confirmHitl': {
       const result = await surface.confirmHitl();
       return {
         message: result.ok
-          ? 'HITL confirmed; worker spawned.'
-          : `confirm failed: ${result.reason}`,
+          ? '已同意，正在开 Worker。'
+          : `确认失败: ${result.reason}`,
       };
     }
     case 'rejectHitl': {
       const result = await surface.rejectHitl();
       return {
         message: result.ok
-          ? 'HITL rejected; slot empty.'
-          : `reject failed: ${result.reason}`,
+          ? '已拒绝；槽位为空。'
+          : `拒绝失败: ${result.reason}`,
       };
     }
     case 'setMode': {
       const result = await surface.setMode(command.arg);
-      if (!result.ok) return { message: `mode failed: ${result.reason}` };
+      if (!result.ok) return { message: `切换 mode 失败: ${result.reason}` };
       const tip = surface.snapshot().messages
         .filter((m) => m.type === 'mode-consequence')
         .map((m) => m.text)
         .pop();
       return {
         message: tip
-          ? `Mode → ${result.mode}. ${tip}`
-          : `Mode → ${result.mode} (writes repo; subsequent tickets only).`,
+          ? `mode → ${result.mode}。${tip}`
+          : `mode → ${result.mode}（已写仓；仅影响后续票）。`,
       };
     }
     case 'setModeHelp':
-      return { message: 'Usage: m review | m vibe' };
+      return { message: '用法: m review  或  m vibe' };
     case 'unknown':
-      return { message: `Unknown command: ${command.arg}` };
+      return { message: `未知命令: ${command.arg}` };
     default:
       return {};
   }

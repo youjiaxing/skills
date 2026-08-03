@@ -273,7 +273,7 @@ test('stop freezes auto spawn; surface reports stopped', async () => {
   assert.equal(snap.actions.stop.available, false);
 });
 
-test('renderDispatchFrame includes mode, slot status, and read-only board lines', async () => {
+test('renderDispatchFrame includes Chinese UI, dependency graph, and executable list', async () => {
   const first = candidate('01-first.md');
   const { surface } = makeSurface({
     candidates: [first],
@@ -283,6 +283,14 @@ test('renderDispatchFrame includes mode, slot status, and read-only board lines'
         title: 'first',
         closed: false,
         blockedBy: [],
+        unlocks: ['02-second.md'],
+        status: 'ready-for-agent',
+      },
+      {
+        id: '02-second.md',
+        title: 'second',
+        closed: false,
+        blockedBy: ['01-first.md'],
         unlocks: [],
         status: 'ready-for-agent',
       },
@@ -291,13 +299,13 @@ test('renderDispatchFrame includes mode, slot status, and read-only board lines'
 
   await surface.tick();
   const text = renderDispatchFrame(surface.snapshot());
-  assert.match(text, /mode:\s*review/i);
-  assert.match(text, /soft-stuck|slot/i);
+  assert.match(text, /后续 mode:\s*review|mode: review/i);
+  assert.match(text, /软卡住|当前槽/);
   assert.match(text, /01-first\.md/);
-  assert.match(text, /read-only|只读/i);
-  // Frame may state the prohibition ("不可图上派票"); must not offer a dispatch verb.
+  assert.match(text, /依赖图|现在可执行/);
+  assert.match(text, /──►|▶01|★01/);
+  assert.match(text, /不可图上派票/);
   assert.doesNotMatch(text, /\bdrag\b|reassign via graph|dispatch via graph/i);
-  assert.match(text, /no graph dispatch|不可图上派票/i);
 });
 
 test('interactive TUI auto-poll advances after Closed + exit without manual tick', async () => {

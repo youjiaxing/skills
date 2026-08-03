@@ -29,8 +29,8 @@ test('cli chain --once on empty frontier: idle, zero worker identity, printable 
   ]);
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout, /mode:\s*review/i);
-  assert.match(result.stdout, /Board \(read-only/i);
+  assert.match(result.stdout, /mode:\s*review|后续 mode:\s*review/i);
+  assert.match(result.stdout, /依赖图|不可图上派票/);
   assert.match(result.stdout, /"status": "stopped"/);
   assert.match(result.stdout, /"stopped": true/);
   assert.match(result.stdout, /"slot": null/);
@@ -49,15 +49,18 @@ test('cli chain --once on single-ready fixture spawns fake slot then can stop', 
   ]);
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout, /soft-stuck|01-/);
+  assert.match(result.stdout, /软卡住|02-do-work/);
   assert.match(result.stdout, /"stopped": true/);
   assert.match(result.stdout, /"subsequentMode": "review"/);
 });
 
-test('cli chain requires feature', () => {
+test('cli chain without feature in non-interactive fails helpfully', () => {
   const result = runCli(['chain', '--fake-launcher', '--once']);
   assert.notEqual(result.status, 0);
-  assert.match(`${result.stderr}${result.stdout}`, /feature is required/);
+  assert.match(
+    `${result.stderr}${result.stdout}`,
+    /未找到 feature|多个 feature|tracker config not found|请指定/,
+  );
 });
 
 test('cli short form: positional feature defaults to chain', () => {
