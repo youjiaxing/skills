@@ -5,7 +5,7 @@
  * 顶栏 / 中部 / 当前槽 / 底栏. Keyboard drives the same Dispatch Surface
  * actions as the printable TUI (`m` mode dial, `f` force, `r` resume,
  * `y`/`n` HITL, `s` stop, `t` tick, `q` quit; `j`/`k`/digits select
- * executable list items for display only).
+ * executable list highlight; **Enter** starts highlighted (or board default).
  * Orchestration contract is unchanged: board is read-only, single slot,
  * dual-condition handoff still owned by Chain Run / surface.tick.
  * No graph dispatch, no embedded Worker terminal.
@@ -193,7 +193,7 @@ export function renderFooter(snap) {
   if (actions.confirmHitl?.available) keys.push('[y] 同意');
   if (actions.rejectHitl?.available) keys.push('[n] 拒绝');
   if (actions.stop?.available !== false) keys.push('[s] 停链');
-  keys.push('[t] 刷新', '[j/k|数字] 选择', '[q] 退出并停链');
+  keys.push('[t] 刷新', '[j/k|数字] 选择', '[Enter] 开始', '[q] 退出并停链');
   return `[底栏]  ${keys.join('  ')}`;
 }
 
@@ -219,12 +219,18 @@ export function renderNotice(snap, notice = null) {
 /**
  * Map one fullscreen keypress to a dispatch command or list-selection intent.
  * Mode dial: bare `m` toggles subsequent review ↔ vibe (no readline args).
+ * Enter / return → start (highlighted id resolved by handleFullscreenKey).
  *
- * @param {string} input
- * @param {{ subsequentMode?: string | null }} [ctx]
+ * @param {string | null | undefined} input
+ * @param {{ subsequentMode?: string | null, key?: { return?: boolean } | null }} [ctx]
  * @returns {{ type: string, arg?: string | number } | null}
  */
-export function mapFullscreenKey(input, { subsequentMode = null } = {}) {
+export function mapFullscreenKey(input, { subsequentMode = null, key = null } = {}) {
+  // Enter starts a ticket (highlight or board default). Ink often sends
+  // empty input + key.return; raw terminals may send \r / \n.
+  if (key?.return || input === '\r' || input === '\n') {
+    return { type: 'start' };
+  }
   if (input == null || input === '') return null;
   // Ignore multi-char pastes / control sequences.
   if (String(input).length !== 1) return null;
@@ -271,19 +277,25 @@ export function nextListSelection(command, current, count) {
 /**
  * Apply one fullscreen key against the surface (same semantics as printable TUI).
  * List-nav keys return selection-only results and do not touch the surface.
+ * Enter (`start`) uses selectedIssueId when set; otherwise board default next.
  *
  * @param {object} surface
- * @param {string} input
+ * @param {string | null | undefined} input
  * @param {{
  *   subsequentMode?: string | null,
  *   selectedIndex?: number | null,
  *   executableCount?: number,
+ *   selectedIssueId?: string | null,
+ *   key?: { return?: boolean } | null,
  * }} [ctx]
  * @returns {Promise<{
  *   quit?: boolean,
  *   message?: string,
  *   selectedIndex?: number | null,
  *   selectionOnly?: boolean,
+ *   ok?: boolean,
+ *   spawned?: boolean,
+ *   reason?: string,
  * }>}
  */
 export async function handleFullscreenKey(surface, input, ctx = {}) {
@@ -296,6 +308,7 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
           return null;
         }
       })(),
+    key: ctx.key ?? null,
   });
   if (!command) return {};
 
@@ -309,6 +322,13 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
       selectionOnly: true,
       selectedIndex: nextListSelection(command, ctx.selectedIndex ?? null, count),
     };
+  }
+
+  if (command.type === 'start') {
+    const issueId = ctx.selectedIssueId != null && ctx.selectedIssueId !== ''
+      ? ctx.selectedIssueId
+      : null;
+    return handleDispatchCommand(surface, { type: 'start', arg: issueId ?? undefined });
   }
 
   return handleDispatchCommand(surface, command);
@@ -384,16 +404,28 @@ export function DispatchShell({
   );
 }
 
-function executableCountFromSnap(snap) {
-  if (!snap?.board?.issues) return 0;
+function executableFromSnap(snap) {
+  if (!snap?.board?.issues) return [];
   try {
     return renderDependencyGraph({
       issues: snap.board.issues,
       slotIssueId: snap.slot?.issueId ?? null,
-    }).executable.length;
+    }).executable;
   } catch {
-    return 0;
+    return [];
   }
+}
+
+function executableCountFromSnap(snap) {
+  return executableFromSnap(snap).length;
+}
+
+function selectedIssueIdFromSnap(snap, selectedIndex) {
+  if (selectedIndex == null) return null;
+  const list = executableFromSnap(snap);
+  const index = Number(selectedIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= list.length) return null;
+  return list[index]?.id ?? null;
 }
 
 /**
@@ -503,6 +535,7 @@ function DispatchFullscreenApp({
       : input;
     const mapped = mapFullscreenKey(effectiveInput, {
       subsequentMode: snapRef.current?.subsequentMode ?? null,
+      key,
     });
     if (!mapped) return;
 
@@ -515,10 +548,13 @@ function DispatchFullscreenApp({
       busyRef.current = true;
       try {
         const currentSnap = snapRef.current;
+        const selectedIndex = selectedRef.current;
         const result = await handleFullscreenKey(surface, effectiveInput, {
           subsequentMode: currentSnap?.subsequentMode ?? null,
-          selectedIndex: selectedRef.current,
+          selectedIndex,
           executableCount: executableCountFromSnap(currentSnap),
+          selectedIssueId: selectedIssueIdFromSnap(currentSnap, selectedIndex),
+          key,
         });
 
         if (result.selectionOnly) {

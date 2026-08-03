@@ -843,3 +843,117 @@ test('mapFullscreenKey commands are accepted by handleDispatchCommand', async ()
   assert.match(result.message || '', /停链/);
   assert.equal(surface.snapshot().stopped, true);
 });
+
+// --- dispatch-tui-start-and-polish / 02: Enter start + auto handoff ---
+
+test('mapFullscreenKey Enter / return maps to start', () => {
+  assert.deepEqual(mapFullscreenKey('\r'), { type: 'start' });
+  assert.deepEqual(mapFullscreenKey('\n'), { type: 'start' });
+  assert.deepEqual(mapFullscreenKey('', { key: { return: true } }), { type: 'start' });
+  assert.deepEqual(mapFullscreenKey(null, { key: { return: true } }), { type: 'start' });
+});
+
+test('handleFullscreenKey Enter with selectedIssueId spawns that ticket', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  const result = await handleFullscreenKey(surface, '\r', {
+    selectedIssueId: '02-second.md',
+  });
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '02-second.md');
+  assert.equal(surface.snapshot().autoAdvance, true);
+});
+
+test('handleFullscreenKey Enter without selection spawns board default next', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  const result = await handleFullscreenKey(surface, '\r', {
+    selectedIssueId: null,
+  });
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches[0].issue.id, '01-first.md');
+});
+
+test('first Enter opens auto; Closed∧exit + tick auto-spawns board next ignoring highlight', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const third = candidate('03-third.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second, third],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  // Enter starts first (no highlight)
+  await handleFullscreenKey(surface, '\r', { selectedIssueId: null });
+  assert.equal(launcher.launches[0].issue.id, '01-first.md');
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+
+  // Highlight deliberately parked on third; auto path must still take board next (02)
+  await surface.tick();
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  assert.notEqual(launcher.launches[1].issue.id, '03-third.md');
+});
+
+test('Enter while slot occupied does not double-spawn', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  await handleFullscreenKey(surface, '\r', { selectedIssueId: '01-first.md' });
+  const blocked = await handleFullscreenKey(surface, '\r', { selectedIssueId: '02-second.md' });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'slot-occupied');
+  assert.equal(launcher.launches.length, 1);
+});
+
+test('slot empty + auto on + highlight + Enter can cut in on highlighted ticket', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const third = candidate('03-third.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second, third],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  // First Enter opens auto and occupies slot with first
+  await handleFullscreenKey(surface, '\r', { selectedIssueId: '01-first.md' });
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  // Release slot without auto-spawning by stepping once with... wait, auto is on so tick would spawn.
+  // Simulate: close+exit then manual Enter on third before poll — need empty slot first.
+  // Force release via tick would auto-spawn 02. Instead: turn auto off temporarily? Spec says
+  // auto on + empty slot + highlight + Enter cuts in. So clear slot without auto fire:
+  await surface.setAutoAdvance(false);
+  await surface.tick(); // release only
+  assert.equal(surface.snapshot().slot, null);
+  await surface.setAutoAdvance(true);
+
+  const cutIn = await handleFullscreenKey(surface, '\r', {
+    selectedIssueId: '03-third.md',
+  });
+  assert.equal(cutIn.spawned, true);
+  assert.equal(launcher.launches[launcher.launches.length - 1].issue.id, '03-third.md');
+});

@@ -424,3 +424,55 @@ test('surface setAutoAdvance(true) restores tick auto-spawn (non-fullscreen / on
   assert.equal(launcher.launches.length, 1);
   assert.equal(surface.snapshot().slot?.issueId, '01-ready.md');
 });
+
+// --- dispatch-tui-start-and-polish / 02: surface start ---
+
+test('surface.start(issueId) spawns that ticket and opens autoAdvance', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await surface.refresh();
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  const result = await surface.start('02-second.md');
+  assert.equal(result.ok, true);
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '02-second.md');
+  assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
+  assert.equal(surface.snapshot().autoAdvance, true);
+});
+
+test('surface.start() without id spawns board default next', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await surface.refresh();
+  const result = await surface.start();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches[0].issue.id, '01-first.md');
+  assert.equal(surface.snapshot().autoAdvance, true);
+});
+
+test('surface.start while slot occupied rejects without second spawn', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await surface.start('01-first.md');
+  const blocked = await surface.start('02-second.md');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'slot-occupied');
+  assert.equal(launcher.launches.length, 1);
+});

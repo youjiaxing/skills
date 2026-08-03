@@ -14,6 +14,8 @@
  * Ticket 13: stop() freezes auto spawn / force-advance; dispatch TUI consumes this.
  * dispatch-tui-start-and-polish/01: autoAdvance gates tick/poll auto spawn
  *   (fullscreen mounts off; --once / default chain stays on).
+ * dispatch-tui-start-and-polish/02: startIssue / startNext for Enter;
+ *   first successful manual start opens autoAdvance for AFK handoff.
  */
 
 import {
@@ -240,6 +242,101 @@ export function createChainRun({
     };
   }
 
+  /**
+   * Try to free a completed slot (Closed ∧ exit/force) so explicit start can proceed.
+   * Live/incomplete slots stay occupied.
+   */
+  async function releaseSlotIfHandoffReady() {
+    if (!slot) return { ok: true, reason: 'empty-slot' };
+    const gate = await classifyOccupiedSlot();
+    if (!gate.ok) {
+      status = gate.status;
+      return { ok: false, reason: gate.reason, status: gate.status };
+    }
+    slot = null;
+    status = 'idle';
+    return { ok: true, reason: gate.reason };
+  }
+
+  /**
+   * Resolve an auto-ready impl by id (or frontier default when id is null/omitted).
+   */
+  async function resolveStartIssue(issueId) {
+    if (issueId == null || issueId === '') {
+      return tracker.recommendNext();
+    }
+    const wanted = String(issueId);
+    if (typeof tracker.listAutoCandidates === 'function') {
+      const list = await tracker.listAutoCandidates();
+      const hit = Array.isArray(list)
+        ? list.find((item) => item && item.id === wanted)
+        : null;
+      if (hit) return hit;
+    }
+    // Fallback: recommendNext only matches when it is the wanted id.
+    const next = await tracker.recommendNext();
+    if (next && next.id === wanted) return next;
+    return null;
+  }
+
+  /**
+   * Explicit operator start (Enter): spawn one ready impl into an empty slot.
+   * Bypasses autoAdvance gate. First successful start opens autoAdvance so
+   * subsequent Closed∧exit handoffs can AFK without another Enter.
+   *
+   * @param {string | null | undefined} issueId
+   *   When set, spawn that auto-ready id; otherwise board default (recommendNext).
+   */
+  async function startIssue(issueId) {
+    if (stopped) {
+      status = 'stopped';
+      return {
+        ok: false,
+        spawned: false,
+        advanced: false,
+        reason: 'stopped',
+        next: nextIssue,
+        status,
+      };
+    }
+
+    const released = await releaseSlotIfHandoffReady();
+    if (!released.ok) {
+      return {
+        ok: false,
+        spawned: false,
+        advanced: false,
+        reason: 'slot-occupied',
+        next: nextIssue,
+        status,
+      };
+    }
+
+    const issue = await resolveStartIssue(issueId);
+    if (!issue) {
+      status = 'idle';
+      return {
+        ok: false,
+        spawned: false,
+        advanced: false,
+        reason: issueId ? 'not-executable' : 'no-candidate',
+        next: null,
+        status,
+      };
+    }
+
+    pendingHitl = null;
+    const result = await spawnFromIssue(issue, resolveEntryClass(issue.entryClass, issue));
+    // Clean first-success path: open auto handoff after a manual start.
+    autoAdvance = true;
+    return {
+      ...result,
+      ok: true,
+      reason: 'started',
+      autoAdvance,
+    };
+  }
+
   return {
     get status() {
       return status;
@@ -295,6 +392,19 @@ export function createChainRun({
     setAutoAdvance(enabled) {
       autoAdvance = Boolean(enabled);
       return { ok: true, autoAdvance };
+    },
+    /**
+     * Explicit start of a ready impl by id (Enter + highlight).
+     * Ignores autoAdvance gate; opens autoAdvance on success.
+     */
+    async startIssue(issueId) {
+      return startIssue(issueId);
+    },
+    /**
+     * Explicit start of the board-default next ready impl (Enter, no highlight).
+     */
+    async startNext() {
+      return startIssue(null);
     },
     /**
      * Scheduler / TUI mode dial.

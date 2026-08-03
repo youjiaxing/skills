@@ -119,6 +119,11 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
         available: !stopped,
         reason: stopped ? 'already-stopped' : null,
       },
+      start: {
+        // Enter may start when the chain is not stopped; slot gate is enforced on apply.
+        available: !stopped,
+        reason: stopped ? 'stopped' : null,
+      },
       // Explicitly absent: graphDispatch — board is read-only projection only.
     };
   }
@@ -237,6 +242,37 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
         return { ok: false, reason: 'no-auto-advance' };
       }
       const result = chain.setAutoAdvance(enabled);
+      await buildSnapshot();
+      return result;
+    },
+    /**
+     * Explicit Enter start: spawn highlighted id, or board default when omitted.
+     * Bypasses autoAdvance gate; first success opens autoAdvance on the chain.
+     *
+     * @param {string | null | undefined} issueId
+     */
+    async start(issueId) {
+      let result;
+      if (issueId != null && issueId !== '') {
+        if (typeof chain.startIssue !== 'function') {
+          return { ok: false, reason: 'no-start', spawned: false };
+        }
+        result = await chain.startIssue(issueId);
+      } else if (typeof chain.startNext === 'function') {
+        result = await chain.startNext();
+      } else if (typeof chain.startIssue === 'function') {
+        result = await chain.startIssue(null);
+      } else {
+        return { ok: false, reason: 'no-start', spawned: false };
+      }
+
+      if (result?.ok && result?.spawned) {
+        pushMessage('info', `已开始 ${result.next?.id ?? issueId ?? '下一张'}`);
+      } else if (result?.reason === 'slot-occupied') {
+        pushMessage('warn', '槽位占用中，不能同时开第二张');
+      } else if (result && !result.ok) {
+        pushMessage('warn', `无法开始: ${result.reason}`);
+      }
       await buildSnapshot();
       return result;
     },

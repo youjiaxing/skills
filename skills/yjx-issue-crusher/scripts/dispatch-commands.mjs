@@ -15,6 +15,12 @@ export function parseDispatchCommand(raw) {
 
   if (lower === 'q' || lower === 'quit' || lower === 'exit') return { type: 'quit' };
   if (lower === 's' || lower === 'stop') return { type: 'stop' };
+  // Printable path: "start" / "go" mirrors fullscreen Enter (optional issue id).
+  if (lower === 'start' || lower === 'go' || lower === 'enter') {
+    return { type: 'start' };
+  }
+  const startMatch = lower.match(/^(?:start|go)\s+(\S+)$/);
+  if (startMatch) return { type: 'start', arg: startMatch[1] };
   if (lower === 't' || lower === 'tick') return { type: 'tick' };
   if (lower === 'f' || lower === 'force' || lower === 'force-advance') return { type: 'forceAdvance' };
   if (lower === 'r' || lower === 'resume') return { type: 'resume' };
@@ -43,6 +49,28 @@ export async function handleDispatchCommand(surface, command) {
     case 'stop': {
       const result = await surface.stop();
       return { message: result.ok ? '已停链。' : `停链失败: ${result.reason}` };
+    }
+    case 'start': {
+      if (typeof surface.start !== 'function') {
+        return { message: '当前表面不支持开始开票。', ok: false, reason: 'no-start' };
+      }
+      const result = await surface.start(command.arg ?? null);
+      if (result?.ok && result?.spawned) {
+        return {
+          message: `已开始 ${result.next?.id ?? command.arg ?? '下一张'}。`,
+          ok: true,
+          spawned: true,
+          reason: result.reason,
+        };
+      }
+      return {
+        message: result?.reason === 'slot-occupied'
+          ? '槽位占用中，不能同时开第二张。'
+          : `无法开始: ${result?.reason ?? 'unknown'}`,
+        ok: false,
+        spawned: false,
+        reason: result?.reason ?? 'unknown',
+      };
     }
     case 'tick':
       await surface.tick();

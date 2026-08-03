@@ -920,3 +920,92 @@ test('setAutoAdvance(true) re-enables auto spawn on subsequent step', async () =
   assert.equal(result.spawned, true);
   assert.equal(launcher.launches.length, 1);
 });
+
+// --- dispatch-tui-start-and-polish / 02: Enter start + auto handoff ---
+
+test('startIssue(id) with autoAdvance off spawns that issue exactly once', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  const result = await chain.startIssue('02-second.md');
+  assert.equal(result.ok, true);
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '02-second.md');
+  assert.equal(chain.slot?.issue?.id, '02-second.md');
+});
+
+test('startNext with autoAdvance off spawns board default next (recommendNext)', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  const result = await chain.startNext();
+  assert.equal(result.ok, true);
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '01-first.md');
+});
+
+test('first successful startIssue opens autoAdvance', async () => {
+  const only = candidate('01-ready.md');
+  const { chain } = makeChain({
+    candidates: [only],
+    autoAdvance: false,
+  });
+
+  assert.equal(chain.autoAdvance, false);
+  const result = await chain.startIssue('01-ready.md');
+  assert.equal(result.spawned, true);
+  assert.equal(chain.autoAdvance, true, 'first successful Enter/start must open autoAdvance');
+});
+
+test('after first start + Closed∧exit, step auto-spawns board next (ignores which id was manual)', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const third = candidate('03-third.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second, third],
+    autoAdvance: false,
+  });
+
+  // Manual start of second (not frontier default)
+  await chain.startIssue('02-second.md');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(chain.autoAdvance, true);
+
+  tracker.setCompletion('02-second.md', true);
+  launcher.markExited(chain.slot.pid);
+
+  const handoff = await chain.step();
+  assert.equal(handoff.spawned, true);
+  assert.equal(launcher.launches.length, 2);
+  // Board default among remaining open: 01 first
+  assert.equal(launcher.launches[1].issue.id, '01-first.md');
+});
+
+test('startIssue while slot occupied does not second-spawn', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await chain.startIssue('01-first.md');
+  assert.equal(launcher.launches.length, 1);
+
+  const blocked = await chain.startIssue('02-second.md');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.spawned, false);
+  assert.equal(blocked.reason, 'slot-occupied');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(chain.slot?.issue?.id, '01-first.md');
+});
