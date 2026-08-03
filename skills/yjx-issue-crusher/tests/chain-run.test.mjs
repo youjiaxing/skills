@@ -63,7 +63,8 @@ test('unique ready candidate: Chain Run identifies next issue and spawns once', 
   assert.equal(result.spawned, true);
   assert.equal(result.next?.id, '03-package-skeleton.md');
   assert.equal(chain.nextIssue?.id, '03-package-skeleton.md');
-  assert.equal(chain.status, 'running');
+  // Occupied slot with live worker + open issue is soft-stuck (ticket 09).
+  assert.equal(chain.status, 'soft-stuck');
   assert.equal(launcher.launches.length, 1);
   assert.equal(launcher.launches[0].issue.id, '03-package-skeleton.md');
   assert.equal(launcher.launches[0].feature, 'demo');
@@ -162,8 +163,10 @@ test('process exit alone is not a success condition for opening the next issue',
   const result = await chain.step();
 
   // Explicit: exited worker + open issue must not count as handoff success.
+  // Ticket 09 names this edge needs-resume (not a success path).
   assert.equal(result.spawned, false);
-  assert.equal(result.reason, 'exit-alone-not-success');
+  assert.equal(result.reason, 'needs-resume');
+  assert.equal(chain.status, 'needs-resume');
   assert.equal(launcher.launches.length, 1);
   assert.equal(launcher.isAlive(firstPid), false);
   assert.equal(chain.slot?.issue.id, '01-alpha.md');
@@ -247,4 +250,170 @@ test('force-advance is rejected when current issue is not Closed', async () => {
   const result = await chain.step();
   assert.equal(result.spawned, false);
   assert.equal(launcher.launches.length, 1);
+});
+
+// --- Ticket 09: edge states, single slot, resume ---
+
+test('soft-stuck: alive and not Closed blocks next spawn and does not kill the worker', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  const pid = chain.slot.pid;
+  assert.equal(launcher.isAlive(pid), true);
+  assert.equal((await tracker.getCompletion('01-first.md')).closed, false);
+
+  const result = await chain.step();
+
+  assert.equal(result.spawned, false);
+  assert.equal(result.reason, 'soft-stuck');
+  assert.equal(chain.status, 'soft-stuck');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.isAlive(pid), true);
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('Closed without exit is observable as awaiting-worker-exit and auto path still blocks next', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  tracker.setCompletion('01-first.md', true);
+
+  const result = await chain.step();
+
+  assert.equal(result.spawned, false);
+  assert.equal(result.reason, 'awaiting-worker-exit');
+  assert.equal(chain.status, 'awaiting-worker-exit');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.isAlive(chain.slot.pid), true);
+});
+
+test('force-advance after Closed spawns next and by default does not kill the old worker', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  const oldPid = chain.slot.pid;
+  tracker.setCompletion('01-first.md', true);
+
+  const forced = await chain.forceAdvance();
+  assert.equal(forced.ok, true);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  // Default: orphan old process stays alive; no kill.
+  assert.equal(launcher.isAlive(oldPid), true);
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('force-advance opt-in killWorker terminates the old fake process', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  const oldPid = chain.slot.pid;
+  tracker.setCompletion('01-first.md', true);
+
+  const forced = await chain.forceAdvance({ killWorker: true });
+  assert.equal(forced.ok, true);
+  assert.equal(launcher.isAlive(oldPid), false);
+  assert.deepEqual(launcher.kills, [oldPid]);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+});
+
+test('dead process + not Closed enters needs-resume and blocks next spawn', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    launcherOptions: { sessionId: 'sess-dead-1' },
+  });
+
+  await chain.step();
+  const deadPid = chain.slot.pid;
+  launcher.markExited(deadPid);
+
+  const result = await chain.step();
+
+  assert.equal(result.spawned, false);
+  assert.equal(result.reason, 'needs-resume');
+  assert.equal(chain.status, 'needs-resume');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(chain.slot?.sessionId, 'sess-dead-1');
+});
+
+test('resume launch carries recorded session id + runtime/cwd and omits implement/wayfinder entry', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    runtime: 'claude',
+    launcherOptions: { sessionId: 'sess-resume-42', pid: 5000 },
+  });
+
+  await chain.step();
+  assert.equal(chain.slot.sessionId, 'sess-resume-42');
+  launcher.markExited(chain.slot.pid);
+  await chain.step();
+  assert.equal(chain.status, 'needs-resume');
+
+  const resumed = await chain.resume();
+  assert.equal(resumed.ok, true);
+  assert.equal(launcher.launches.length, 2);
+
+  const resumeLaunch = launcher.launches[1];
+  assert.equal(resumeLaunch.kind, 'resume');
+  assert.equal(resumeLaunch.sessionId, 'sess-resume-42');
+  assert.equal(resumeLaunch.runtime, 'claude');
+  assert.equal(resumeLaunch.cwd, '/tmp/project');
+  assert.equal(resumeLaunch.feature, 'demo');
+  assert.equal(resumeLaunch.issue.id, '01-first.md');
+  assert.equal(resumeLaunch.title, 'demo/01-first');
+  // Must not re-inject a fresh ticket skill entry.
+  if (resumeLaunch.initialPrompt) {
+    assert.doesNotMatch(resumeLaunch.initialPrompt, /\/implement\b/);
+    assert.doesNotMatch(resumeLaunch.initialPrompt, /\/wayfinder\b/);
+  }
+  assert.equal(chain.status, 'soft-stuck');
+  assert.equal(chain.slot?.pid, 5001);
+  assert.equal(chain.slot?.sessionId, 'sess-resume-42');
+});
+
+test('single slot: second automatic spawn is rejected while the slot is occupied', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  const firstStep = await chain.step();
+  assert.equal(firstStep.spawned, true);
+  assert.equal(launcher.launches.length, 1);
+  assert.ok(chain.slot, 'slot must be occupied');
+
+  const secondStep = await chain.step();
+  assert.equal(secondStep.spawned, false);
+  assert.equal(launcher.launches.length, 1, 'single slot forbids concurrent second spawn');
+  assert.ok(
+    secondStep.reason === 'soft-stuck' || secondStep.reason === 'slot-occupied',
+    `expected soft-stuck or slot-occupied, got ${secondStep.reason}`,
+  );
 });

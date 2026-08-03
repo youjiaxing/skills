@@ -69,6 +69,7 @@ export function buildLaunchContract({
   lines.push(effectiveMode === 'vibe' ? VIBE_CONSTRAINT : REVIEW_CONSTRAINT);
 
   return {
+    kind: 'initial',
     runtime,
     feature,
     cwd,
@@ -76,5 +77,42 @@ export function buildLaunchContract({
     title,
     mode: effectiveMode,
     initialPrompt: lines.join('\n'),
+  };
+}
+
+/**
+ * Resume an existing worker session after needs-resume.
+ * Carries recorded session id + original runtime/cwd; does NOT re-inject
+ * /implement or /wayfinder ticket skill entries.
+ */
+export function buildResumeContract({
+  runtime,
+  feature,
+  cwd,
+  issue,
+  title,
+  sessionId,
+  mode,
+} = {}) {
+  if (!runtime) throw new Error('runtime is required');
+  if (!feature) throw new Error('feature is required');
+  if (!cwd) throw new Error('cwd is required');
+  if (!issue?.id && !issue?.path) throw new Error('issue identity is required');
+  if (!sessionId) throw new Error('sessionId is required for resume');
+
+  const effectiveMode = resolveMode(mode);
+  const resolvedTitle = title || buildSessionTitle(feature, issue);
+
+  return {
+    kind: 'resume',
+    runtime,
+    feature,
+    cwd,
+    issue,
+    title: resolvedTitle,
+    sessionId,
+    mode: effectiveMode,
+    // Empty / neutral prompt: continue the existing session, no fresh skill entry.
+    initialPrompt: '',
   };
 }

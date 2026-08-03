@@ -4,9 +4,15 @@
  * Inject TrackerPort + WorkerLauncher (and later mode/config/human events).
  * Ticket 07: empty frontier → idle + zero spawns; unique candidate → identify + spawn once.
  * Ticket 08: full impl launch contract; dual-condition handoff before next spawn.
+ * Ticket 09: edge states (soft-stuck / awaiting-worker-exit / needs-resume),
+ *            force-advance no-kill default, resume launch, single slot.
  */
 
-import { buildLaunchContract, resolveMode } from './build-launch-contract.mjs';
+import {
+  buildLaunchContract,
+  buildResumeContract,
+  resolveMode,
+} from './build-launch-contract.mjs';
 
 export function createChainRun({
   tracker,
@@ -25,23 +31,55 @@ export function createChainRun({
   const effectiveMode = resolveMode(mode);
   let status = 'idle';
   let nextIssue = null;
-  /** @type {null | { issue: object, pid: number, sessionId: string|null, runtime: string, mode: string, title: string, forceAdvanceRequested: boolean }} */
+  /**
+   * @type {null | {
+   *   issue: object,
+   *   pid: number,
+   *   sessionId: string|null,
+   *   runtime: string,
+   *   cwd: string,
+   *   mode: string,
+   *   title: string,
+   *   forceAdvanceRequested: boolean,
+   * }}
+   */
   let slot = null;
 
-  async function dualConditionsMet() {
-    if (!slot) return { ok: true, reason: 'empty-slot' };
+  function workerAlive() {
+    if (!slot) return false;
+    if (typeof launcher.isAlive !== 'function') return true;
+    return launcher.isAlive(slot.pid);
+  }
+
+  /**
+   * Classify the occupied slot for outward status / step reason.
+   * Dual conditions for opening the next ticket remain Closed ∧ (exit ∨ force-advance).
+   */
+  async function classifyOccupiedSlot() {
+    if (!slot) return { ok: true, reason: 'empty-slot', status: 'idle' };
+
     const completion = await tracker.getCompletion(slot.issue.id);
+    const alive = workerAlive();
+
     if (!completion.closed) {
       // Process exit alone must never open the next issue.
-      return { ok: false, reason: 'exit-alone-not-success' };
+      if (alive) {
+        return { ok: false, reason: 'soft-stuck', status: 'soft-stuck' };
+      }
+      return { ok: false, reason: 'needs-resume', status: 'needs-resume' };
     }
-    const exited = typeof launcher.isAlive === 'function'
-      ? !launcher.isAlive(slot.pid)
-      : false;
-    if (exited || slot.forceAdvanceRequested) {
-      return { ok: true, reason: exited ? 'closed-and-exited' : 'closed-and-force-advance' };
+
+    if (alive && !slot.forceAdvanceRequested) {
+      return { ok: false, reason: 'awaiting-worker-exit', status: 'awaiting-worker-exit' };
     }
-    return { ok: false, reason: 'awaiting-worker-exit' };
+
+    return {
+      ok: true,
+      reason: slot.forceAdvanceRequested && alive
+        ? 'closed-and-force-advance'
+        : 'closed-and-exited',
+      status: 'idle',
+    };
   }
 
   return {
@@ -60,8 +98,9 @@ export function createChainRun({
     /**
      * Human force-advance: skip waiting for worker exit.
      * Only valid when the current issue is already Closed.
+     * Default: do not kill the old worker (orphan). Opt-in killWorker: true.
      */
-    async forceAdvance() {
+    async forceAdvance({ killWorker = false } = {}) {
       if (!slot) {
         return { ok: false, reason: 'no-slot' };
       }
@@ -69,26 +108,60 @@ export function createChainRun({
       if (!completion.closed) {
         return { ok: false, reason: 'not-closed' };
       }
+      if (killWorker && typeof launcher.kill === 'function') {
+        await launcher.kill(slot.pid);
+      }
       slot = { ...slot, forceAdvanceRequested: true };
       return { ok: true };
     },
     /**
+     * One-shot resume of the recorded session after needs-resume.
+     * Same logical slot; does not open the next ticket; does not re-inject skill entry.
+     */
+    async resume() {
+      if (!slot) {
+        return { ok: false, reason: 'no-slot' };
+      }
+      const gate = await classifyOccupiedSlot();
+      if (gate.reason !== 'needs-resume') {
+        status = gate.status;
+        return { ok: false, reason: gate.reason };
+      }
+      if (!slot.sessionId) {
+        status = 'needs-resume';
+        return { ok: false, reason: 'no-session-id' };
+      }
+
+      const contract = buildResumeContract({
+        runtime: slot.runtime,
+        feature,
+        cwd: slot.cwd,
+        issue: slot.issue,
+        title: slot.title,
+        sessionId: slot.sessionId,
+        mode: slot.mode,
+      });
+      const result = await launcher.launch(contract);
+
+      slot = {
+        ...slot,
+        pid: result.pid,
+        sessionId: result.sessionId ?? slot.sessionId,
+        forceAdvanceRequested: false,
+      };
+      status = 'soft-stuck';
+      return { ok: true, pid: result.pid, sessionId: slot.sessionId };
+    },
+    /**
      * One evaluation cycle:
      * - If a slot is held, release it only when dual conditions are met.
-     * - Then spawn at most one auto candidate into an empty slot.
+     * - Then spawn at most one auto candidate into an empty slot (single slot).
      */
     async step() {
       if (slot) {
-        const gate = await dualConditionsMet();
+        const gate = await classifyOccupiedSlot();
         if (!gate.ok) {
-          if (gate.reason === 'awaiting-worker-exit') {
-            status = 'awaiting-worker-exit';
-          } else if (gate.reason === 'exit-alone-not-success') {
-            const alive = typeof launcher.isAlive === 'function'
-              ? launcher.isAlive(slot.pid)
-              : true;
-            status = alive ? 'running' : 'blocked';
-          }
+          status = gate.status;
           return {
             spawned: false,
             advanced: false,
@@ -128,11 +201,13 @@ export function createChainRun({
         pid: result.pid,
         sessionId: result.sessionId ?? null,
         runtime,
+        cwd,
         mode: effectiveMode,
         title: contract.title,
         forceAdvanceRequested: false,
       };
-      status = 'running';
+      // Occupied + not closed + alive → soft-stuck is the outward edge name.
+      status = 'soft-stuck';
 
       return {
         spawned: true,
