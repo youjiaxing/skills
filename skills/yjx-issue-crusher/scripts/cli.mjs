@@ -35,6 +35,10 @@ import {
   buildWorkerInvocation,
   createRealLauncher,
 } from './real-launcher.mjs';
+import {
+  createFullscreenSelectItems,
+  shouldUseFullscreenStartupPrompt,
+} from './startup-select.mjs';
 
 const KNOWN_COMMANDS = new Set(['recommend', 'probe-launch', 'chain']);
 
@@ -362,16 +366,38 @@ export function resolveChainRuntime({
 export async function runChain(options) {
   const cwd = path.resolve(options.cwd || process.cwd());
   const projectRoot = path.resolve(options.projectRoot || cwd);
+  const input = options.input || process.stdin;
+  const output = options.output || process.stdout;
   const nonInteractive = Boolean(
     options.once
     || options.nonInteractive
-    || !process.stdin.isTTY,
+    || !input.isTTY,
   );
+
+  // Interactive dual-TTY: fullscreen Ink menus for missing feature/runtime.
+  // Injected ask/selectItems (tests) win; --once / non-TTY never mount menus.
+  const useFullscreenPrompts = shouldUseFullscreenStartupPrompt({
+    input,
+    output,
+    once: options.once,
+    nonInteractive,
+  });
+  const selectItems = nonInteractive
+    ? null
+    : (typeof options.selectItems === 'function'
+      ? options.selectItems
+      : (useFullscreenPrompts && typeof options.ask !== 'function'
+        ? createFullscreenSelectItems({ input, output })
+        : null));
 
   let promptSession = null;
   const ensureAsk = () => {
     if (typeof options.ask === 'function') return options.ask;
-    if (!promptSession) promptSession = createStdinAsk();
+    // Fullscreen path owns stdin; do not also open readline.
+    if (selectItems) return null;
+    if (!promptSession) {
+      promptSession = createStdinAsk(input, output);
+    }
     return (q) => promptSession.ask(q);
   };
 
@@ -380,9 +406,10 @@ export async function runChain(options) {
       feature: options.feature,
       projectRoot,
       ask: nonInteractive ? null : ensureAsk(),
+      selectItems,
       nonInteractive,
       listFeatures: options.listFeatures,
-      output: options.output || process.stdout,
+      output,
     });
 
     const modeConfig = createFileModeConfig({ projectRoot });
@@ -391,8 +418,9 @@ export async function runChain(options) {
       repoRuntime: typeof modeConfig.readRuntime === 'function' ? modeConfig.readRuntime() : null,
       fakeLauncher: options.fakeLauncher,
       ask: nonInteractive ? null : ensureAsk(),
+      selectItems,
       nonInteractive,
-      output: options.output || process.stdout,
+      output,
     });
     if (runtime !== 'grok' && runtime !== 'claude') {
       throw new Error("--runtime must be 'grok' or 'claude'");
@@ -423,16 +451,16 @@ export async function runChain(options) {
     if (options.once || nonInteractive) {
       await runDispatchOnce({
         surface,
-        output: process.stdout,
+        output,
         maxSteps: 2,
         stopWhenIdle: true,
       });
       if (options.stop) {
         await surface.stop();
-        process.stdout.write(`${renderStoppedNote(surface)}\n`);
+        output.write(`${renderStoppedNote(surface)}\n`);
       }
       const snap = surface.snapshot();
-      process.stdout.write(`${JSON.stringify({
+      output.write(`${JSON.stringify({
         feature: snap.feature,
         status: snap.status,
         stopped: snap.stopped,
@@ -449,7 +477,7 @@ export async function runChain(options) {
       promptSession.close();
       promptSession = null;
     }
-    await runDispatchTui({ surface, once: false });
+    await runDispatchTui({ surface, input, output, once: false });
     return 0;
   } finally {
     if (promptSession) promptSession.close();
