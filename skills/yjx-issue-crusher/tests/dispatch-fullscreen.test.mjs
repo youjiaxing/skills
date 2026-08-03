@@ -1,6 +1,7 @@
 /**
  * Ticket 01 — Ink fullscreen dispatch shell seams.
  * Ticket 02 — live Dispatch Surface snapshot in regions.
+ * Ticket 03 — fullscreen keyboard drives existing dispatch actions.
  *
  * Seams under test:
  * 1. shouldUseFullscreenDispatch — TTY interactive vs --once / non-TTY routing
@@ -9,6 +10,9 @@
  * 4. runDispatchTui non-TTY — never enters fullscreen / still returns
  * 5. pure region text / DispatchShell — given snapshot → 中文分区内容
  * 6. poll tick — successive snapshots refresh fullscreen content without retyping
+ * 7. mapFullscreenKey — single key → same command types as surface
+ * 8. handleFullscreenKey / key sequences — mode/force/resume/HITL/stop/tick/q
+ * 9. list selection j/k/digits — highlight only; no graph dispatch / no worker embed
  */
 
 import assert from 'node:assert/strict';
@@ -16,9 +20,14 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { createChainRun } from '../scripts/chain-run.mjs';
+import { handleDispatchCommand } from '../scripts/dispatch-commands.mjs';
 import { createDispatchSurface } from '../scripts/dispatch-surface.mjs';
 import {
   DispatchShell,
+  handleFullscreenKey,
+  mapFullscreenKey,
+  nextListSelection,
+  renderFooter,
   renderMiddlePanel,
   renderSlotPanel,
   renderTopBar,
@@ -32,21 +41,51 @@ import { createMemoryModeConfig } from '../scripts/mode-config.mjs';
 import { createElement } from 'react';
 import { renderToString } from 'ink';
 
+function candidate(id, overrides = {}) {
+  const number = id.split('-')[0];
+  return {
+    id,
+    number,
+    title: overrides.title ?? id.replace(/\.md$/, ''),
+    path: overrides.path ?? `.scratch/demo/issues/${id}`,
+    ...overrides,
+  };
+}
+
 function makeSurface(overrides = {}) {
+  const {
+    candidates = [],
+    hitlCandidates = [],
+    completions = {},
+    boardIssues = null,
+    launcherOptions = {},
+    modeConfig = createMemoryModeConfig({ mode: null }),
+    ...chainOptions
+  } = overrides;
+
   const tracker = createFakeTracker({
-    candidates: overrides.candidates ?? [],
-    feature: 'demo',
+    candidates,
+    hitlCandidates,
+    completions,
+    boardIssues,
+    feature: chainOptions.feature ?? 'demo',
   });
-  const launcher = createFakeLauncher();
+  const launcher = createFakeLauncher(launcherOptions);
   const chain = createChainRun({
     tracker,
     launcher,
     feature: 'demo',
     cwd: '/tmp/project',
     runtime: 'grok',
-    modeConfig: createMemoryModeConfig({ mode: null }),
+    modeConfig,
+    ...chainOptions,
   });
-  return createDispatchSurface({ chain, tracker });
+  const surface = createDispatchSurface({ chain, tracker });
+  return { tracker, launcher, chain, surface, modeConfig };
+}
+
+function makeSurfaceOnly(overrides = {}) {
+  return makeSurface(overrides).surface;
 }
 
 function fakeTtyStream() {
@@ -102,7 +141,7 @@ test('DispatchShell skeleton exposes 顶栏 / 中部 / 当前槽 / 底栏 region
 });
 
 test('runFullscreenDispatch starts shell and quits cleanly on q', async () => {
-  const surface = makeSurface();
+  const surface = makeSurfaceOnly();
   const stdin = fakeStdin();
   const stdout = fakeTtyStream();
   let out = '';
@@ -137,7 +176,7 @@ test('runFullscreenDispatch starts shell and quits cleanly on q', async () => {
 });
 
 test('runDispatchTui on non-TTY never hangs on Ink and still supports q', async () => {
-  const surface = makeSurface();
+  const surface = makeSurfaceOnly();
   const input = new PassThrough();
   const output = new PassThrough();
   output.setEncoding('utf8');
@@ -431,4 +470,326 @@ test('runFullscreenDispatch poll tick refreshes shell from successive snapshots'
 
   assert.ok(result.ticks >= 2, `expected >=2 ticks, got ${result.ticks}`);
   assert.match(out, /pid:\s*55|02-ready\.md|软卡住/);
+});
+
+// --- Ticket 03: fullscreen keyboard → existing dispatch actions ---
+
+test('mapFullscreenKey maps m/f/r/y/n/s/t/q and list nav to surface command types', () => {
+  assert.deepEqual(mapFullscreenKey('q'), { type: 'quit' });
+  assert.deepEqual(mapFullscreenKey('Q'), { type: 'quit' });
+  assert.deepEqual(mapFullscreenKey('s'), { type: 'stop' });
+  assert.deepEqual(mapFullscreenKey('t'), { type: 'tick' });
+  assert.deepEqual(mapFullscreenKey('f'), { type: 'forceAdvance' });
+  assert.deepEqual(mapFullscreenKey('r'), { type: 'resume' });
+  assert.deepEqual(mapFullscreenKey('y'), { type: 'confirmHitl' });
+  assert.deepEqual(mapFullscreenKey('n'), { type: 'rejectHitl' });
+
+  // Mode dial: single `m` toggles subsequent mode (fullscreen has no readline arg).
+  assert.deepEqual(
+    mapFullscreenKey('m', { subsequentMode: 'review' }),
+    { type: 'setMode', arg: 'vibe' },
+  );
+  assert.deepEqual(
+    mapFullscreenKey('m', { subsequentMode: 'vibe' }),
+    { type: 'setMode', arg: 'review' },
+  );
+
+  assert.deepEqual(mapFullscreenKey('j'), { type: 'selectNext' });
+  assert.deepEqual(mapFullscreenKey('k'), { type: 'selectPrev' });
+  assert.deepEqual(mapFullscreenKey('1'), { type: 'selectIndex', arg: 0 });
+  assert.deepEqual(mapFullscreenKey('3'), { type: 'selectIndex', arg: 2 });
+  assert.equal(mapFullscreenKey('x'), null);
+  // No graph-dispatch key exists.
+  assert.equal(mapFullscreenKey('d'), null);
+});
+
+test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface, modeConfig } = makeSurface({
+    candidates: [first, second],
+    mode: 'review',
+  });
+
+  await surface.tick();
+  assert.equal(surface.snapshot().slot.mode, 'review');
+
+  const result = await handleFullscreenKey(surface, 'm', {
+    subsequentMode: surface.snapshot().subsequentMode,
+  });
+  assert.equal(result.quit, undefined);
+  assert.match(result.message || '', /vibe|关票|Closed|auto/i);
+  assert.equal(modeConfig.readMode(), 'vibe');
+  assert.equal(surface.snapshot().subsequentMode, 'vibe');
+  assert.equal(surface.snapshot().slot.mode, 'review', 'live worker stays pinned');
+
+  // Dial back to review, then complete first so next spawn takes subsequent mode.
+  await handleFullscreenKey(surface, 'm', {
+    subsequentMode: surface.snapshot().subsequentMode,
+  });
+  assert.equal(surface.snapshot().subsequentMode, 'review');
+  await handleFullscreenKey(surface, 'm', {
+    subsequentMode: surface.snapshot().subsequentMode,
+  });
+  assert.equal(surface.snapshot().subsequentMode, 'vibe');
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(surface.snapshot().slot.mode, 'vibe');
+});
+
+test('handleFullscreenKey f rejects when not Closed; advances when Closed', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, surface } = makeSurface({ candidates: [first, second] });
+
+  await surface.tick();
+  const denied = await handleFullscreenKey(surface, 'f');
+  assert.match(denied.message || '', /无法强制推进|not-closed|Closed/i);
+  assert.equal(surface.snapshot().actions.forceAdvance.available, false);
+
+  tracker.setCompletion('01-first.md', true);
+  await surface.refresh();
+  assert.equal(surface.snapshot().actions.forceAdvance.available, true);
+
+  const forced = await handleFullscreenKey(surface, 'f');
+  assert.match(forced.message || '', /强制推进|接力/);
+  assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
+});
+
+test('handleFullscreenKey r resumes needs-resume with recorded session id', async () => {
+  const first = candidate('01-first.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first],
+    launcherOptions: { sessionId: 'sess-fs-resume' },
+  });
+
+  await surface.tick();
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(surface.snapshot().status, 'needs-resume');
+
+  const resumed = await handleFullscreenKey(surface, 'r');
+  assert.match(resumed.message || '', /恢复|pid/);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].kind, 'resume');
+  assert.equal(launcher.launches[1].sessionId, 'sess-fs-resume');
+});
+
+test('handleFullscreenKey y/n match HITL confirm/reject surface semantics', async () => {
+  const wayfinder = candidate('01-wayfinder.md', {
+    entryClass: 'wayfinder',
+    type: 'research',
+  });
+  const { launcher, surface } = makeSurface({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+  });
+
+  await surface.tick();
+  assert.equal(surface.snapshot().status, 'needs-confirmation');
+
+  const rejected = await handleFullscreenKey(surface, 'n');
+  assert.match(rejected.message || '', /拒绝|空/);
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(surface.snapshot().slot, null);
+
+  await surface.tick();
+  const confirmed = await handleFullscreenKey(surface, 'y');
+  assert.match(confirmed.message || '', /同意|Worker|开/);
+  assert.equal(launcher.launches.length, 1);
+  assert.match(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
+});
+
+test('handleFullscreenKey s stops auto-spawn; q stops and signals quit', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second],
+  });
+
+  await surface.tick();
+  const stopped = await handleFullscreenKey(surface, 's');
+  assert.match(stopped.message || '', /停链/);
+  assert.equal(surface.snapshot().stopped, true);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(launcher.launches.length, 1, 'stopped chain must not auto-spawn next');
+
+  const quit = await handleFullscreenKey(surface, 'q');
+  assert.equal(quit.quit, true);
+  assert.equal(surface.snapshot().stopped, true);
+});
+
+test('handleFullscreenKey t runs a manual surface tick', async () => {
+  const first = candidate('01-first.md');
+  const { surface } = makeSurface({ candidates: [first] });
+  // No auto bootstrap — tick only via key.
+  const before = (() => {
+    try {
+      return surface.snapshot();
+    } catch {
+      return null;
+    }
+  })();
+  assert.equal(before, null);
+
+  await handleFullscreenKey(surface, 't');
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+});
+
+test('nextListSelection + renderMiddlePanel highlight executable via j/k/digits', () => {
+  assert.equal(nextListSelection({ type: 'selectNext' }, 0, 3), 1);
+  assert.equal(nextListSelection({ type: 'selectNext' }, 2, 3), 0);
+  assert.equal(nextListSelection({ type: 'selectPrev' }, 0, 3), 2);
+  assert.equal(nextListSelection({ type: 'selectIndex', arg: 1 }, 0, 3), 1);
+  assert.equal(nextListSelection({ type: 'selectIndex', arg: 9 }, 0, 3), null);
+  assert.equal(nextListSelection({ type: 'selectNext' }, null, 0), null);
+
+  const middle = renderMiddlePanel(snapWithBoard({
+    board: {
+      feature: 'demo',
+      readOnly: true,
+      issues: [
+        {
+          id: '01-a.md',
+          title: 'a',
+          closed: false,
+          blockedBy: [],
+          unlocks: [],
+          status: 'ready-for-agent',
+        },
+        {
+          id: '02-b.md',
+          title: 'b',
+          closed: false,
+          blockedBy: [],
+          unlocks: [],
+          status: 'ready-for-agent',
+        },
+      ],
+    },
+  }), { selectedIndex: 1 });
+
+  assert.match(middle, /02-b\.md/);
+  assert.match(middle, /◀选中|选中|▶选/);
+  // Selection is display-only: still declares read-only / no graph dispatch.
+  assert.match(middle, /只读|不可图上派票/);
+});
+
+test('list selection keys never spawn or claim — display-only, no graph dispatch', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+  });
+  await surface.tick();
+  const launchesBefore = launcher.launches.length;
+  const slotBefore = surface.snapshot().slot?.issueId;
+
+  const j = await handleFullscreenKey(surface, 'j', {
+    selectedIndex: 0,
+    executableCount: 2,
+  });
+  assert.equal(j.selectionOnly, true);
+  assert.equal(j.selectedIndex, 1);
+
+  const digit = await handleFullscreenKey(surface, '1', {
+    selectedIndex: 1,
+    executableCount: 2,
+  });
+  assert.equal(digit.selectionOnly, true);
+  assert.equal(digit.selectedIndex, 0);
+
+  assert.equal(launcher.launches.length, launchesBefore);
+  assert.equal(surface.snapshot().slot?.issueId, slotBefore);
+  assert.equal(typeof surface.dispatchFromGraph, 'undefined');
+  assert.equal(typeof surface.claimViaGraph, 'undefined');
+});
+
+test('renderFooter lists surface keys; shell has no mouse / worker embed / graph dispatch', () => {
+  const footer = renderFooter(snapWithBoard({
+    status: 'needs-confirmation',
+    actions: {
+      setMode: { available: true },
+      forceAdvance: { available: false },
+      resume: { available: false },
+      confirmHitl: { available: true },
+      rejectHitl: { available: true },
+      stop: { available: true },
+    },
+    pendingHitl: {
+      issueId: '01-wayfinder.md',
+      entryClass: 'wayfinder',
+    },
+  }));
+
+  assert.match(footer, /\[m\]/);
+  assert.match(footer, /\[y\]/);
+  assert.match(footer, /\[n\]/);
+  assert.match(footer, /\[s\]/);
+  assert.match(footer, /\[t\]/);
+  assert.match(footer, /\[q\]/);
+  assert.match(footer, /\[j\/k\]|j\/k|数字/);
+
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard(),
+    notice: 'mode → vibe。后果提示',
+    selectedIndex: 0,
+  }));
+  assert.match(text, /mode → vibe|后果提示|\[提示\]/);
+  assert.doesNotMatch(text, /鼠标|mouse|embed worker|内嵌 Worker|graph dispatch|图上派票\s*开/i);
+  assert.match(text, /不可图上派票|只读/);
+});
+
+test('runFullscreenDispatch m then q: mode dial + stop-and-exit via keys', async () => {
+  const { surface, modeConfig } = makeSurface({
+    candidates: [candidate('01-first.md')],
+    mode: 'review',
+  });
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  let out = '';
+  stdout.setEncoding('utf8');
+  stdout.on('data', (chunk) => {
+    out += chunk;
+  });
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 5000,
+    alternateScreen: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 100));
+  stdin.write('m');
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(modeConfig.readMode(), 'vibe');
+  stdin.write('q');
+
+  const result = await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('fullscreen key integration did not exit')), 3000);
+    }),
+  ]);
+
+  assert.equal(result.stopped, true);
+  assert.match(out, /vibe|关票|mode|提示/i);
+});
+
+// Shared handleDispatchCommand still the single apply path for surface commands.
+test('mapFullscreenKey commands are accepted by handleDispatchCommand', async () => {
+  const { surface } = makeSurface({ candidates: [] });
+  await surface.tick();
+  const cmd = mapFullscreenKey('s');
+  const result = await handleDispatchCommand(surface, cmd);
+  assert.match(result.message || '', /停链/);
+  assert.equal(surface.snapshot().stopped, true);
 });

@@ -1,16 +1,20 @@
 /**
- * Ink fullscreen dispatch shell (tickets 01–02).
+ * Ink fullscreen dispatch shell (tickets 01–03).
  *
  * Interactive TTY path: alternate-screen layout with regions
- * 顶栏 / 中部 / 当前槽 / 底栏. `q` stops the chain and exits cleanly.
- * Regions render a live Dispatch Surface snapshot (graph, slot, HITL).
+ * 顶栏 / 中部 / 当前槽 / 底栏. Keyboard drives the same Dispatch Surface
+ * actions as the printable TUI (`m` mode dial, `f` force, `r` resume,
+ * `y`/`n` HITL, `s` stop, `t` tick, `q` quit; `j`/`k`/digits select
+ * executable list items for display only).
  * Orchestration contract is unchanged: board is read-only, single slot,
  * dual-condition handoff still owned by Chain Run / surface.tick.
+ * No graph dispatch, no embedded Worker terminal.
  */
 
 import { createElement, useEffect, useRef, useState } from 'react';
 import { Box, Text, render, useApp, useInput } from 'ink';
 
+import { handleDispatchCommand } from './dispatch-commands.mjs';
 import {
   renderDependencyGraph,
   statusLabelZh,
@@ -79,11 +83,13 @@ export function renderTopBar(snap) {
 /**
  * Middle panel: Chinese dependency graph legend + graph + 「现在可执行」.
  * Board remains read-only display; no graph dispatch.
+ * Optional selectedIndex highlights an executable list row (keyboard j/k/digits).
  *
  * @param {object | null | undefined} snap
+ * @param {{ selectedIndex?: number | null }} [opts]
  * @returns {string}
  */
-export function renderMiddlePanel(snap) {
+export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
   const lines = ['[中部] 依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`];
 
   if (!snap) {
@@ -111,9 +117,13 @@ export function renderMiddlePanel(snap) {
   if (graph.executable.length === 0) {
     lines.push('  （无）');
   } else {
-    for (const item of graph.executable) {
-      const active = snap.slot?.issueId === item.id ? '  ◀当前槽' : '';
-      lines.push(`  ★ ${item.id}${active}`);
+    for (let i = 0; i < graph.executable.length; i += 1) {
+      const item = graph.executable[i];
+      const marks = [];
+      if (snap.slot?.issueId === item.id) marks.push('◀当前槽');
+      if (selectedIndex === i) marks.push('◀选中');
+      const suffix = marks.length ? `  ${marks.join(' ')}` : '';
+      lines.push(`  ★ ${item.id}${suffix}`);
     }
   }
 
@@ -168,18 +178,159 @@ export function renderSlotPanel(snap) {
   return lines.join('\n');
 }
 
-function footerText() {
-  return '[底栏]  [q] 退出全屏并停链';
+/**
+ * Bottom bar: available keys from snapshot.actions (+ always t/q and list nav).
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string}
+ */
+export function renderFooter(snap) {
+  const actions = snap?.actions || {};
+  const keys = [];
+  if (actions.setMode?.available !== false) keys.push('[m] mode 拨杆');
+  if (actions.forceAdvance?.available) keys.push('[f] 强制推进');
+  if (actions.resume?.available) keys.push('[r] 恢复');
+  if (actions.confirmHitl?.available) keys.push('[y] 同意');
+  if (actions.rejectHitl?.available) keys.push('[n] 拒绝');
+  if (actions.stop?.available !== false) keys.push('[s] 停链');
+  keys.push('[t] 刷新', '[j/k|数字] 选择', '[q] 退出并停链');
+  return `[底栏]  ${keys.join('  ')}`;
+}
+
+/**
+ * One-line operator notice (last action tip or surface message).
+ *
+ * @param {object | null | undefined} snap
+ * @param {string | null | undefined} notice
+ * @returns {string}
+ */
+export function renderNotice(snap, notice = null) {
+  if (notice) return `[提示] ${notice}`;
+  const last = Array.isArray(snap?.messages) && snap.messages.length > 0
+    ? snap.messages[snap.messages.length - 1]
+    : null;
+  if (last) {
+    const text = last.text || last.message || last.type;
+    if (text) return `[提示] ${text}`;
+  }
+  return '';
+}
+
+/**
+ * Map one fullscreen keypress to a dispatch command or list-selection intent.
+ * Mode dial: bare `m` toggles subsequent review ↔ vibe (no readline args).
+ *
+ * @param {string} input
+ * @param {{ subsequentMode?: string | null }} [ctx]
+ * @returns {{ type: string, arg?: string | number } | null}
+ */
+export function mapFullscreenKey(input, { subsequentMode = null } = {}) {
+  if (input == null || input === '') return null;
+  // Ignore multi-char pastes / control sequences.
+  if (String(input).length !== 1) return null;
+  const lower = String(input).toLowerCase();
+
+  if (lower === 'q') return { type: 'quit' };
+  if (lower === 's') return { type: 'stop' };
+  if (lower === 't') return { type: 'tick' };
+  if (lower === 'f') return { type: 'forceAdvance' };
+  if (lower === 'r') return { type: 'resume' };
+  if (lower === 'y') return { type: 'confirmHitl' };
+  if (lower === 'n') return { type: 'rejectHitl' };
+  if (lower === 'm') {
+    const next = subsequentMode === 'vibe' ? 'review' : 'vibe';
+    return { type: 'setMode', arg: next };
+  }
+  if (lower === 'j') return { type: 'selectNext' };
+  if (lower === 'k') return { type: 'selectPrev' };
+  if (/^[1-9]$/.test(lower)) return { type: 'selectIndex', arg: Number(lower) - 1 };
+  return null;
+}
+
+/**
+ * Pure list-selection update for executable rows. Display-only — never dispatches.
+ *
+ * @param {{ type: string, arg?: number } | null} command
+ * @param {number | null} current
+ * @param {number} count
+ * @returns {number | null}
+ */
+export function nextListSelection(command, current, count) {
+  if (!command || count <= 0) return null;
+  if (command.type === 'selectIndex') {
+    const index = Number(command.arg);
+    if (!Number.isInteger(index) || index < 0 || index >= count) return null;
+    return index;
+  }
+  const base = current == null ? 0 : current;
+  if (command.type === 'selectNext') return (base + 1) % count;
+  if (command.type === 'selectPrev') return (base - 1 + count) % count;
+  return current;
+}
+
+/**
+ * Apply one fullscreen key against the surface (same semantics as printable TUI).
+ * List-nav keys return selection-only results and do not touch the surface.
+ *
+ * @param {object} surface
+ * @param {string} input
+ * @param {{
+ *   subsequentMode?: string | null,
+ *   selectedIndex?: number | null,
+ *   executableCount?: number,
+ * }} [ctx]
+ * @returns {Promise<{
+ *   quit?: boolean,
+ *   message?: string,
+ *   selectedIndex?: number | null,
+ *   selectionOnly?: boolean,
+ * }>}
+ */
+export async function handleFullscreenKey(surface, input, ctx = {}) {
+  const command = mapFullscreenKey(input, {
+    subsequentMode: ctx.subsequentMode
+      ?? (() => {
+        try {
+          return surface.snapshot().subsequentMode;
+        } catch {
+          return null;
+        }
+      })(),
+  });
+  if (!command) return {};
+
+  if (
+    command.type === 'selectNext'
+    || command.type === 'selectPrev'
+    || command.type === 'selectIndex'
+  ) {
+    const count = Number(ctx.executableCount) || 0;
+    return {
+      selectionOnly: true,
+      selectedIndex: nextListSelection(command, ctx.selectedIndex ?? null, count),
+    };
+  }
+
+  return handleDispatchCommand(surface, command);
 }
 
 /**
  * Presentational shell: four fixed regions. Safe for renderToString tests.
  *
- * @param {{ snap?: object | null }} props
+ * @param {{
+ *   snap?: object | null,
+ *   notice?: string | null,
+ *   selectedIndex?: number | null,
+ * }} props
  */
-export function DispatchShell({ snap = null } = {}) {
-  const middleLines = renderMiddlePanel(snap).split('\n');
+export function DispatchShell({
+  snap = null,
+  notice = null,
+  selectedIndex = null,
+} = {}) {
+  const middleLines = renderMiddlePanel(snap, { selectedIndex }).split('\n');
   const slotLines = renderSlotPanel(snap).split('\n');
+  const noticeLine = renderNotice(snap, notice);
 
   return createElement(
     Box,
@@ -217,6 +368,9 @@ export function DispatchShell({ snap = null } = {}) {
         width: '100%',
       },
       ...slotLines.map((line, index) => createElement(Text, { key: `s${index}` }, line || ' ')),
+      noticeLine
+        ? createElement(Text, { key: 'notice', color: 'yellow' }, noticeLine)
+        : null,
     ),
     createElement(
       Box,
@@ -225,13 +379,25 @@ export function DispatchShell({ snap = null } = {}) {
         paddingX: 1,
         width: '100%',
       },
-      createElement(Text, { dimColor: true }, footerText()),
+      createElement(Text, { dimColor: true }, renderFooter(snap)),
     ),
   );
 }
 
+function executableCountFromSnap(snap) {
+  if (!snap?.board?.issues) return 0;
+  try {
+    return renderDependencyGraph({
+      issues: snap.board.issues,
+      slotIssueId: snap.slot?.issueId ?? null,
+    }).executable.length;
+  } catch {
+    return 0;
+  }
+}
+
 /**
- * Live fullscreen app: poll surface, redraw shell, quit on `q`.
+ * Live fullscreen app: poll surface, redraw shell, keyboard → surface actions.
  *
  * @param {{
  *   surface: object,
@@ -248,8 +414,19 @@ function DispatchFullscreenApp({
 } = {}) {
   const { exit } = useApp();
   const [snap, setSnap] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [selectedIndex, setSelectedIndex] = useState(null);
   const busyRef = useRef(false);
   const quittingRef = useRef(false);
+  const snapRef = useRef(null);
+  const selectedRef = useRef(null);
+
+  useEffect(() => {
+    snapRef.current = snap;
+  }, [snap]);
+  useEffect(() => {
+    selectedRef.current = selectedIndex;
+  }, [selectedIndex]);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,38 +495,57 @@ function DispatchFullscreenApp({
     };
   }, [surface, autoTick, pollIntervalMs, ticksRef]);
 
-  useInput((input) => {
-    if (input !== 'q' && input !== 'Q') return;
+  useInput((input, key) => {
     if (quittingRef.current) return;
-    quittingRef.current = true;
+    // Ctrl+C matches q: stop chain then leave fullscreen (do not bare-exit).
+    const effectiveInput = key?.ctrl && String(input).toLowerCase() === 'c'
+      ? 'q'
+      : input;
+    const mapped = mapFullscreenKey(effectiveInput, {
+      subsequentMode: snapRef.current?.subsequentMode ?? null,
+    });
+    if (!mapped) return;
 
     void (async () => {
+      // Serialize with in-flight poll / other keys.
+      while (busyRef.current) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (quittingRef.current) return;
+      busyRef.current = true;
       try {
-        // Serialize with in-flight poll.
-        while (busyRef.current) {
-          await new Promise((resolve) => setTimeout(resolve, 10));
+        const currentSnap = snapRef.current;
+        const result = await handleFullscreenKey(surface, effectiveInput, {
+          subsequentMode: currentSnap?.subsequentMode ?? null,
+          selectedIndex: selectedRef.current,
+          executableCount: executableCountFromSnap(currentSnap),
+        });
+
+        if (result.selectionOnly) {
+          setSelectedIndex(result.selectedIndex ?? null);
+          return;
         }
-        busyRef.current = true;
+
+        if (result.message) setNotice(result.message);
+
         try {
-          let stopped = false;
-          try {
-            stopped = Boolean(surface.snapshot().stopped);
-          } catch {
-            stopped = false;
-          }
-          if (!stopped && typeof surface.stop === 'function') {
-            await surface.stop();
-          }
-        } finally {
-          busyRef.current = false;
+          const next = surface.snapshot();
+          setSnap(next);
+        } catch {
+          // keep last frame
+        }
+
+        if (result.quit) {
+          quittingRef.current = true;
+          exit();
         }
       } finally {
-        exit();
+        busyRef.current = false;
       }
     })();
   });
 
-  return createElement(DispatchShell, { snap });
+  return createElement(DispatchShell, { snap, notice, selectedIndex });
 }
 
 /**
@@ -392,7 +588,8 @@ export async function runFullscreenDispatch({
     {
       stdin: input,
       stdout: output,
-      exitOnCtrlC: true,
+      // Handled in useInput as quit (stop + exit); avoid bare process leave.
+      exitOnCtrlC: false,
       patchConsole: false,
     },
   );
