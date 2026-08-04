@@ -1,5 +1,5 @@
 /**
- * Ink fullscreen dispatch shell (tickets 01–03).
+ * Ink fullscreen dispatch shell (tickets 01–05).
  *
  * Interactive TTY path: alternate-screen layout with regions
  * 顶栏 / 中部 / 当前槽 / 底栏. Keyboard drives the same Dispatch Surface
@@ -9,6 +9,10 @@
  * highlighted (or board default). Orchestration contract is unchanged:
  * board is read-only, single slot, dual-condition handoff still owned by
  * Chain Run / surface.tick. No graph dispatch, no embedded Worker terminal.
+ *
+ * Ticket 05 polish: full-height column layout (middle flexGrow), product
+ * copy without debug bracket labels, primary/secondary field hierarchy,
+ * long-field truncation, alternate-screen enter/leave cleanup.
  */
 
 import { createElement, useEffect, useRef, useState } from 'react';
@@ -20,10 +24,41 @@ import {
   statusLabelZh,
 } from './dependency-graph.mjs';
 
-const ALT_ENTER = '\u001b[?1049h\u001b[?25l';
-const ALT_LEAVE = '\u001b[?1049l\u001b[?25h';
+/** Alternate-screen enter (hide cursor). Exported for cleanup contract tests. */
+export const ALT_ENTER = '\u001b[?1049h\u001b[?25l';
+/** Alternate-screen leave (show cursor). Exported for cleanup contract tests. */
+export const ALT_LEAVE = '\u001b[?1049l\u001b[?25h';
+/** Clear screen + home cursor — used on enter/refresh/leave to drop residual glyphs. */
+export const CLEAR_SCREEN = '\u001b[2J\u001b[H';
 
 const GRAPH_LEGEND = '图例: ★可执行  ▶进行中  ·阻塞/未完成  ✓已完成  ··· 上游──►下游';
+
+/** Default max display width for secondary/long slot fields (chars). */
+const DEFAULT_FIELD_MAX = 48;
+/** Top-bar secondary field budget (feature / long status fragments). */
+const TOP_FIELD_MAX = 40;
+
+/**
+ * Write alternate-screen enter + clear (drops prior frame / residual bare text).
+ * @param {{ write?: (s: string) => void } | null | undefined} output
+ * @returns {boolean} true if enter sequence was written
+ */
+export function enterAlternateScreen(output) {
+  if (!output || typeof output.write !== 'function') return false;
+  output.write(ALT_ENTER + CLEAR_SCREEN);
+  return true;
+}
+
+/**
+ * Clear then leave alternate-screen (exit cleanup contract).
+ * @param {{ write?: (s: string) => void } | null | undefined} output
+ * @returns {boolean} true if leave sequence was written
+ */
+export function leaveAlternateScreen(output) {
+  if (!output || typeof output.write !== 'function') return false;
+  output.write(CLEAR_SCREEN + ALT_LEAVE);
+  return true;
+}
 
 /**
  * Whether the interactive path should mount the Ink fullscreen shell.
@@ -60,22 +95,73 @@ function modeHint(mode) {
 }
 
 /**
+ * Truncate a display field for TUI layout safety.
+ * Keeps head content and appends an ellipsis when over budget.
+ * Pure — independent of terminal size; callers pass max chars.
+ *
+ * @param {string | null | undefined} value
+ * @param {number} [max]
+ * @returns {string}
+ */
+export function truncateDisplayField(value, max = DEFAULT_FIELD_MAX) {
+  const text = String(value ?? '');
+  const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : DEFAULT_FIELD_MAX;
+  const chars = Array.from(text);
+  if (chars.length <= limit) return text;
+  if (limit <= 1) return '…';
+  return `${chars.slice(0, limit - 1).join('')}…`;
+}
+
+/**
+ * Structural layout contract for the fullscreen shell (CI-assertable).
+ * Middle is the stretch main region; other bands stay content-sized.
+ * No animation — static four-region column only.
+ *
+ * @returns {{
+ *   regions: string[],
+ *   root: { height: string, width: string, flexDirection: string },
+ *   top: { flexGrow: number },
+ *   middle: { flexGrow: number, stretch: boolean },
+ *   slot: { flexGrow: number },
+ *   footer: { flexGrow: number },
+ *   animation: boolean,
+ * }}
+ */
+export function describeShellLayout() {
+  return {
+    regions: ['top', 'middle', 'slot', 'footer'],
+    root: {
+      height: '100%',
+      width: '100%',
+      flexDirection: 'column',
+    },
+    top: { flexGrow: 0 },
+    middle: { flexGrow: 1, stretch: true },
+    slot: { flexGrow: 0 },
+    footer: { flexGrow: 0 },
+    animation: false,
+  };
+}
+
+/**
  * Top bar: feature / runtime / subsequent mode / auto-open-next / chain status.
  * Pure — safe for unit tests without a terminal.
+ * Product copy only (no `[顶栏]` debug prefix).
  *
  * @param {object | null | undefined} snap
  * @returns {string}
  */
 export function renderTopBar(snap) {
   if (!snap) {
-    return '[顶栏] Issue Crusher · 调度（启动中…）';
+    return 'Issue Crusher · 调度（启动中…）';
   }
   const mode = snap.subsequentMode ?? '—';
   // Default true when field omitted (older fakes / once path projection).
   const autoLabel = snap.autoAdvance === false ? '关' : '开';
+  const feature = truncateDisplayField(snap.feature ?? '—', TOP_FIELD_MAX);
   return [
-    '[顶栏] Issue Crusher · 调度',
-    `功能: ${snap.feature ?? '—'}`,
+    'Issue Crusher · 调度',
+    `功能: ${feature}`,
     `runtime: ${snap.runtime ?? '—'}`,
     `后续 mode: ${mode}${modeHint(mode)}`,
     `自动开下一张: ${autoLabel}`,
@@ -87,13 +173,14 @@ export function renderTopBar(snap) {
  * Middle panel: Chinese dependency graph legend + graph + 「现在可执行」.
  * Board remains read-only display; no graph dispatch.
  * Optional selectedIndex highlights an executable list row (keyboard ↑↓/j/k/digits).
+ * Selected vs current-slot use distinct marks.
  *
  * @param {object | null | undefined} snap
  * @param {{ selectedIndex?: number | null }} [opts]
  * @returns {string}
  */
 export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
-  const lines = ['[中部] 依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`];
+  const lines = ['依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`];
 
   if (!snap) {
     lines.push('  （启动中…）');
@@ -135,39 +222,48 @@ export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
 
 /**
  * Lower panel: current slot (empty or ticket/pid/closed/mode) + pending HITL.
+ * Primary fields on the first line; session is a secondary indented line.
+ * Long title/session values are truncated so the band does not collapse layout.
  *
  * @param {object | null | undefined} snap
+ * @param {{ maxFieldWidth?: number }} [opts]
  * @returns {string}
  */
-export function renderSlotPanel(snap) {
+export function renderSlotPanel(snap, { maxFieldWidth = DEFAULT_FIELD_MAX } = {}) {
   const lines = [];
+  const max = maxFieldWidth;
 
   if (!snap || !snap.slot) {
-    lines.push('[当前槽] （空）');
+    lines.push('当前槽 （空）');
   } else {
     const slot = snap.slot;
+    const title = slot.title
+      ? `标题: ${truncateDisplayField(slot.title, max)}`
+      : null;
     lines.push(
       [
-        '[当前槽]',
+        '当前槽',
         `票: ${slot.issueId ?? '—'}`,
-        slot.title ? `标题: ${slot.title}` : null,
+        title,
         `pid: ${slot.pid ?? '-'}`,
         `mode: ${slot.mode ?? '—'}`,
         `已关票: ${slot.closed ? '是' : '否'}`,
       ].filter(Boolean).join('  '),
     );
     if (slot.sessionId) {
-      lines.push(`  session: ${slot.sessionId}`);
+      lines.push(`  session: ${truncateDisplayField(slot.sessionId, max)}`);
     }
   }
 
   if (snap?.pendingHitl) {
     const hitl = snap.pendingHitl;
-    lines.push('[HITL] 需人工确认后才开票:');
+    lines.push('需人工确认后才开票:');
     lines.push(
       `  票: ${hitl.issueId ?? '—'}  类型: ${hitl.entryClass ?? '—'}`,
     );
-    if (hitl.title) lines.push(`  标题: ${hitl.title}`);
+    if (hitl.title) {
+      lines.push(`  标题: ${truncateDisplayField(hitl.title, max)}`);
+    }
     lines.push(
       [
         `  runtime: ${hitl.runtime ?? '—'}`,
@@ -183,6 +279,7 @@ export function renderSlotPanel(snap) {
 
 /**
  * Bottom bar: available keys from snapshot.actions (+ always t/q and list nav).
+ * Product key help only (no `[底栏]` debug prefix). Dimmed in the shell.
  *
  * @param {object | null | undefined} snap
  * @returns {string}
@@ -200,24 +297,25 @@ export function renderFooter(snap) {
   keys.push(`[s] 自动开下一张(${autoLabel})`);
   // Navigation moves highlight only; Enter starts. Arrows ≡ j/k.
   keys.push('[t] 刷新', '[↑↓/j/k|数字] 导航', '[Enter] 开始', '[q] 退出');
-  return `[底栏]  ${keys.join('  ')}`;
+  return keys.join('  ');
 }
 
 /**
  * One-line operator notice (last action tip or surface message).
+ * Short feedback only — no heavy animation.
  *
  * @param {object | null | undefined} snap
  * @param {string | null | undefined} notice
  * @returns {string}
  */
 export function renderNotice(snap, notice = null) {
-  if (notice) return `[提示] ${notice}`;
+  if (notice) return String(notice);
   const last = Array.isArray(snap?.messages) && snap.messages.length > 0
     ? snap.messages[snap.messages.length - 1]
     : null;
   if (last) {
     const text = last.text || last.message || last.type;
-    if (text) return `[提示] ${text}`;
+    if (text) return String(text);
   }
   return '';
 }
@@ -350,7 +448,10 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
 }
 
 /**
- * Presentational shell: four fixed regions. Safe for renderToString tests.
+ * Presentational shell: four fixed regions filling terminal height.
+ * Middle flexGrow=1 eats remaining vertical space. Safe for renderToString.
+ * Hierarchy: top/status primary; middle content; footer dim; session secondary
+ * (already dimmed in pure text via indent); selection bold; current-slot green.
  *
  * @param {{
  *   snap?: object | null,
@@ -363,46 +464,74 @@ export function DispatchShell({
   notice = null,
   selectedIndex = null,
 } = {}) {
+  const layout = describeShellLayout();
   const middleLines = renderMiddlePanel(snap, { selectedIndex }).split('\n');
   const slotLines = renderSlotPanel(snap).split('\n');
   const noticeLine = renderNotice(snap, notice);
+  const topBar = renderTopBar(snap);
+  const footer = renderFooter(snap);
 
   return createElement(
     Box,
     {
-      flexDirection: 'column',
-      width: '100%',
-      height: '100%',
+      flexDirection: layout.root.flexDirection,
+      width: layout.root.width,
+      height: layout.root.height,
     },
     createElement(
       Box,
       {
+        flexGrow: layout.top.flexGrow,
         borderStyle: 'single',
         paddingX: 1,
         width: '100%',
       },
-      createElement(Text, null, renderTopBar(snap)),
+      // Primary band: product title + status fields (bold).
+      createElement(Text, { bold: true }, topBar),
     ),
     createElement(
       Box,
       {
-        flexGrow: 1,
+        flexGrow: layout.middle.flexGrow,
         borderStyle: 'single',
         paddingX: 1,
         flexDirection: 'column',
         width: '100%',
       },
-      ...middleLines.map((line, index) => createElement(Text, { key: `m${index}` }, line || ' ')),
+      ...middleLines.map((line, index) => {
+        const isSelected = /◀选中/.test(line);
+        const isCurrentSlot = /◀当前槽/.test(line) && !isSelected;
+        const isBoth = /◀当前槽/.test(line) && isSelected;
+        // Selected row: bold + cyan; current-slot-only: green; both: cyan bold.
+        if (isSelected || isBoth) {
+          return createElement(Text, { key: `m${index}`, bold: true, color: 'cyan' }, line || ' ');
+        }
+        if (isCurrentSlot) {
+          return createElement(Text, { key: `m${index}`, color: 'green' }, line || ' ');
+        }
+        // Legend / secondary graph chrome stays dim.
+        if (index === 1 || line.startsWith('  图例')) {
+          return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
+        }
+        return createElement(Text, { key: `m${index}` }, line || ' ');
+      }),
     ),
     createElement(
       Box,
       {
+        flexGrow: layout.slot.flexGrow,
         borderStyle: 'single',
         paddingX: 1,
         flexDirection: 'column',
         width: '100%',
       },
-      ...slotLines.map((line, index) => createElement(Text, { key: `s${index}` }, line || ' ')),
+      ...slotLines.map((line, index) => {
+        // Secondary: session line is indented + dim.
+        if (/^\s+session:/.test(line)) {
+          return createElement(Text, { key: `s${index}`, dimColor: true }, line || ' ');
+        }
+        return createElement(Text, { key: `s${index}` }, line || ' ');
+      }),
       noticeLine
         ? createElement(Text, { key: 'notice', color: 'yellow' }, noticeLine)
         : null,
@@ -410,11 +539,13 @@ export function DispatchShell({
     createElement(
       Box,
       {
+        flexGrow: layout.footer.flexGrow,
         borderStyle: 'single',
         paddingX: 1,
         width: '100%',
       },
-      createElement(Text, { dimColor: true }, renderFooter(snap)),
+      // Weak band: key help.
+      createElement(Text, { dimColor: true }, footer),
     ),
   );
 }
@@ -630,9 +761,8 @@ export async function runFullscreenDispatch({
   const ticksRef = { current: 0 };
   let enteredAlt = false;
 
-  if (alternateScreen && typeof output.write === 'function') {
-    output.write(ALT_ENTER);
-    enteredAlt = true;
+  if (alternateScreen) {
+    enteredAlt = enterAlternateScreen(output);
   }
 
   const instance = render(
@@ -659,8 +789,9 @@ export async function runFullscreenDispatch({
     } catch {
       // already unmounted on clean exit
     }
-    if (enteredAlt && typeof output.write === 'function') {
-      output.write(ALT_LEAVE);
+    // Clear residual framed/bare glyphs, then leave alt-screen buffer.
+    if (enteredAlt) {
+      leaveAlternateScreen(output);
     }
   }
 

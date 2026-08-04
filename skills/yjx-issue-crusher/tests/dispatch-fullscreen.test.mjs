@@ -14,6 +14,7 @@
  * 8. handleFullscreenKey / key sequences — mode/force/resume/HITL/stop/tick/q
  * 9. list selection j/k/↑↓/digits — highlight only; no graph dispatch / no worker embed
  * 10. ticket 04 — arrow keys ≡ j/k; footer labels Enter / arrows / s auto
+ * 11. ticket 05 — fullscreen layout polish: stretch middle, hierarchy, no ghost labels
  */
 
 import assert from 'node:assert/strict';
@@ -24,16 +25,24 @@ import { createChainRun } from '../scripts/chain-run.mjs';
 import { handleDispatchCommand } from '../scripts/dispatch-commands.mjs';
 import { createDispatchSurface } from '../scripts/dispatch-surface.mjs';
 import {
+  ALT_ENTER,
+  ALT_LEAVE,
+  CLEAR_SCREEN,
   DispatchShell,
+  describeShellLayout,
+  enterAlternateScreen,
   handleFullscreenKey,
+  leaveAlternateScreen,
   mapFullscreenKey,
   nextListSelection,
   renderFooter,
   renderMiddlePanel,
+  renderNotice,
   renderSlotPanel,
   renderTopBar,
   runFullscreenDispatch,
   shouldUseFullscreenDispatch,
+  truncateDisplayField,
 } from '../scripts/dispatch-fullscreen.mjs';
 import { runDispatchTui } from '../scripts/dispatch-tui.mjs';
 import { createFakeLauncher } from '../scripts/fake-launcher.mjs';
@@ -132,11 +141,12 @@ test('DispatchShell skeleton exposes 顶栏 / 中部 / 当前槽 / 底栏 region
     },
   }));
 
-  assert.match(text, /\[顶栏\]/);
-  assert.match(text, /\[中部\]/);
-  assert.match(text, /\[当前槽\]/);
-  assert.match(text, /\[底栏\]/);
+  // Four regions by content, without debug bracket labels.
+  assert.match(text, /Issue Crusher|调度/);
+  assert.match(text, /依赖图|现在可执行/);
+  assert.match(text, /当前槽/);
   assert.match(text, /\[q\].*退出|退出/);
+  assert.doesNotMatch(text, /\[顶栏\]|\[中部\]|\[底栏\]/);
   // Must not look like the old one-page + readline prompt surface.
   assert.doesNotMatch(text, /^>\s*$/m);
 });
@@ -173,7 +183,7 @@ test('runFullscreenDispatch starts shell and quits cleanly on q', async () => {
 
   assert.equal(result.stopped, true);
   assert.ok(result.ticks >= 1);
-  assert.match(out, /\[顶栏\]|\[底栏\]|Issue Crusher/);
+  assert.match(out, /Issue Crusher|调度|\[q\]|退出/);
 });
 
 // --- dispatch-tui-start-and-polish / 01: fullscreen default no auto-spawn ---
@@ -414,7 +424,7 @@ test('DispatchShell given snapshot shows top / middle / slot live content (not p
   }));
 
   // Ink may wrap long top-bar lines; match fields independently.
-  assert.match(text, /\[顶栏\]/);
+  assert.match(text, /Issue Crusher|调度/);
   assert.match(text, /功能:\s*demo/);
   assert.match(text, /runtime:\s*grok|运行时:\s*grok/);
   assert.match(text, /后续 mode:/);
@@ -427,6 +437,7 @@ test('DispatchShell given snapshot shows top / middle / slot live content (not p
   assert.match(text, /人工确认|需确认|HITL/);
   assert.match(text, /01-wayfinder\.md/);
   assert.doesNotMatch(text, /占位/);
+  assert.doesNotMatch(text, /\[顶栏\]|\[中部\]|\[底栏\]/);
 });
 
 test('region text updates when snapshot migrates (poll equivalence)', () => {
@@ -881,7 +892,7 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
     notice: 'mode → vibe。后果提示',
     selectedIndex: 0,
   }));
-  assert.match(text, /mode → vibe|后果提示|\[提示\]/);
+  assert.match(text, /mode → vibe|后果提示/);
   assert.doesNotMatch(text, /鼠标|mouse|embed worker|内嵌 Worker|graph dispatch|图上派票\s*开/i);
   assert.match(text, /不可图上派票|只读/);
 });
@@ -1095,4 +1106,199 @@ test('s on with empty slot auto-spawns on tick without Enter', async () => {
   await surface.tick();
   assert.equal(launcher.launches.length, 1);
   assert.equal(surface.snapshot().slot?.issueId, '01-ready.md');
+});
+
+// --- dispatch-tui-start-and-polish / 05: fullscreen layout + visual hierarchy ---
+
+test('describeShellLayout: four stable regions; middle is stretch main', () => {
+  const layout = describeShellLayout();
+  assert.deepEqual(layout.regions, ['top', 'middle', 'slot', 'footer']);
+  assert.equal(layout.root.height, '100%');
+  assert.equal(layout.root.width, '100%');
+  assert.equal(layout.root.flexDirection, 'column');
+  assert.equal(layout.middle.flexGrow, 1);
+  assert.equal(layout.middle.stretch, true);
+  assert.equal(layout.top.flexGrow, 0);
+  assert.equal(layout.slot.flexGrow, 0);
+  assert.equal(layout.footer.flexGrow, 0);
+  // No heavy animation contract — layout is static structure only.
+  assert.equal(layout.animation, false);
+});
+
+test('region pure text drops debug bracket labels; keeps product copy', () => {
+  const top = renderTopBar(snapWithBoard({ autoAdvance: false }));
+  const middle = renderMiddlePanel(snapWithBoard());
+  const slot = renderSlotPanel(snapWithBoard());
+  const footer = renderFooter(snapWithBoard({ autoAdvance: false }));
+  const notice = renderNotice(snapWithBoard(), '已切换自动开下一张：开');
+
+  assert.doesNotMatch(top, /\[顶栏\]/);
+  assert.doesNotMatch(middle, /\[中部\]/);
+  assert.doesNotMatch(slot, /\[当前槽\]/);
+  assert.doesNotMatch(footer, /\[底栏\]/);
+  assert.doesNotMatch(notice, /\[提示\]/);
+
+  assert.match(top, /Issue Crusher|调度/);
+  assert.match(top, /功能:\s*demo/);
+  assert.match(middle, /依赖图/);
+  assert.match(middle, /现在可执行/);
+  assert.match(slot, /当前槽/);
+  assert.match(footer, /\[q\].*退出|退出/);
+  assert.match(notice, /已切换自动开下一张：开/);
+});
+
+test('single shell frame has no duplicate top-bar product line (ghost proxy)', () => {
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard({ autoAdvance: false, status: 'idle' }),
+  }));
+  // Unframed bare top copy must not sit beside the same framed product line twice.
+  const productHits = text.match(/Issue Crusher · 调度/g) || [];
+  assert.ok(productHits.length <= 1, `expected ≤1 product title, got ${productHits.length}: ${text}`);
+  const featureHits = text.match(/功能:\s*demo/g) || [];
+  assert.ok(featureHits.length <= 1, `expected ≤1 feature line, got ${featureHits.length}`);
+  assert.doesNotMatch(text, /\[顶栏\].*\[顶栏\]/s);
+});
+
+test('selected row and current-slot marks are distinguishable; session is secondary', () => {
+  const middle = renderMiddlePanel(snapWithBoard({
+    board: {
+      feature: 'demo',
+      readOnly: true,
+      issues: [
+        {
+          id: '01-a.md',
+          title: 'a',
+          closed: false,
+          blockedBy: [],
+          unlocks: [],
+          status: 'ready-for-agent',
+        },
+        {
+          id: '02-b.md',
+          title: 'b',
+          closed: false,
+          blockedBy: [],
+          unlocks: [],
+          status: 'ready-for-agent',
+        },
+      ],
+    },
+    slot: {
+      issueId: '01-a.md',
+      title: 'a',
+      pid: 11,
+      mode: 'review',
+      closed: false,
+      sessionId: 'sess-very-long-secondary-field',
+    },
+  }), { selectedIndex: 1 });
+
+  assert.match(middle, /01-a\.md.*◀当前槽|01-a\.md.*当前槽/);
+  assert.match(middle, /02-b\.md.*◀选中|02-b\.md.*选中/);
+  // Marks must not be identical tokens for both roles on the same row vocabulary.
+  assert.match(middle, /当前槽/);
+  assert.match(middle, /选中/);
+  assert.notEqual(
+    (middle.match(/当前槽/g) || [])[0],
+    (middle.match(/选中/g) || [])[0],
+  );
+
+  const slot = renderSlotPanel(snapWithBoard({
+    slot: {
+      issueId: '02-ready.md',
+      title: '可执行票',
+      pid: 99,
+      mode: 'vibe',
+      closed: false,
+      sessionId: 'sess-secondary-only',
+    },
+  }));
+  // Primary slot fields stay on the main line; session is a secondary line.
+  assert.match(slot, /票:\s*02-ready\.md/);
+  assert.match(slot, /pid:\s*99/);
+  assert.match(slot, /^\s+session:/m);
+  const mainLine = slot.split('\n')[0];
+  assert.doesNotMatch(mainLine, /session:/);
+});
+
+test('truncateDisplayField keeps readable head and does not explode long slot lines', () => {
+  const longTitle = `超长标题-${'x'.repeat(80)}`;
+  const longSession = `sess-${'a'.repeat(100)}`;
+  const title = truncateDisplayField(longTitle, 24);
+  const session = truncateDisplayField(longSession, 28);
+
+  assert.ok(title.length <= 24);
+  assert.ok(session.length <= 28);
+  assert.match(title, /…|\.\.\./);
+  assert.match(session, /…|\.\.\./);
+
+  const slot = renderSlotPanel(snapWithBoard({
+    slot: {
+      issueId: '02-ready.md',
+      title: longTitle,
+      pid: 1,
+      mode: 'review',
+      closed: false,
+      sessionId: longSession,
+    },
+  }), { maxFieldWidth: 32 });
+
+  for (const line of slot.split('\n')) {
+    // Slot region lines stay bounded so the panel does not fully collapse layout.
+    assert.ok(line.length <= 120, `slot line too long (${line.length}): ${line}`);
+  }
+  assert.match(slot, /02-ready\.md/);
+  assert.match(slot, /…|\.\.\./);
+});
+
+test('alternate-screen enter/leave clears residual glyphs (cleanup proxy)', async () => {
+  // Pure contract: enter = ALT_ENTER + clear; leave = clear + ALT_LEAVE.
+  const chunks = [];
+  const fakeOut = {
+    write(s) {
+      chunks.push(String(s));
+    },
+  };
+  assert.equal(enterAlternateScreen(fakeOut), true);
+  assert.equal(leaveAlternateScreen(fakeOut), true);
+  const pure = chunks.join('');
+  assert.ok(pure.startsWith(ALT_ENTER + CLEAR_SCREEN));
+  assert.ok(pure.endsWith(CLEAR_SCREEN + ALT_LEAVE));
+  assert.ok(pure.includes(CLEAR_SCREEN), 'refresh/exit clear must be present');
+
+  const surface = makeSurfaceOnly();
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  let out = '';
+  stdout.setEncoding('utf8');
+  stdout.on('data', (chunk) => {
+    out += chunk;
+  });
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    alternateScreen: true,
+  });
+
+  await new Promise((r) => setTimeout(r, 80));
+  stdin.write('q');
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('alt-screen exit cleanup test hung')), 3000);
+    }),
+  ]);
+
+  assert.ok(out.includes(ALT_ENTER), 'should enter alternate screen');
+  assert.ok(out.includes(ALT_LEAVE), 'should leave alternate screen on exit');
+  assert.ok(out.includes(CLEAR_SCREEN), 'should clear screen to drop residual bare text');
+  // Leave must appear after enter in the stream (exit cleanup order).
+  assert.ok(out.lastIndexOf(ALT_LEAVE) > out.indexOf(ALT_ENTER));
+  // Clear should appear both near enter and near leave (enter/refresh + exit).
+  const firstClear = out.indexOf(CLEAR_SCREEN);
+  const lastClear = out.lastIndexOf(CLEAR_SCREEN);
+  assert.ok(firstClear >= 0 && lastClear > firstClear, 'clear on enter and again on leave');
 });
