@@ -16,6 +16,7 @@
  * 10. ticket 04 — arrow keys ≡ j/k; footer labels Enter / arrows / s auto
  * 11. ticket 05 — fullscreen layout polish: stretch middle, hierarchy, no ghost labels
  * 12. 20260804-1006 / 02 — hard layout: numeric terminal height, footer pin, top wrap
+ * 13. 20260804-1802 / 02 — fullscreen `o` model→effort transactional menu + top/footer
  */
 
 import assert from 'node:assert/strict';
@@ -30,6 +31,9 @@ import {
   ALT_LEAVE,
   CLEAR_SCREEN,
   DispatchShell,
+  applyModelEffortMenuKey,
+  defaultEffortItems,
+  defaultModelItems,
   describeShellLayout,
   drainPendingInput,
   enterAlternateScreen,
@@ -37,8 +41,10 @@ import {
   leaveAlternateScreen,
   mapFullscreenKey,
   nextListSelection,
+  openModelEffortMenu,
   renderFooter,
   renderMiddlePanel,
+  renderModelEffortMenuFrame,
   renderNotice,
   renderSlotPanel,
   renderTopBar,
@@ -1697,4 +1703,238 @@ test('regression 03: m/f/r/y/n/t/q still map and drive surface without weakening
   assert.equal(quit.quit, true);
   assert.equal(surface.snapshot().stopped, true);
   assert.equal(surface.snapshot().autoAdvance, false);
+});
+
+// --- 20260804-1802-tui-model-effort / 02: fullscreen o model→effort menu ---
+
+test('mapFullscreenKey o opens model/effort flow; m still only toggles mode', () => {
+  assert.deepEqual(mapFullscreenKey('o'), { type: 'openModelEffort' });
+  assert.deepEqual(mapFullscreenKey('O'), { type: 'openModelEffort' });
+  assert.deepEqual(
+    mapFullscreenKey('m', { subsequentMode: 'review' }),
+    { type: 'setMode', arg: 'vibe' },
+  );
+  assert.notEqual(mapFullscreenKey('m', { subsequentMode: 'review' })?.type, 'openModelEffort');
+});
+
+test('renderTopBar shows subsequent model/effort or 运行时默认', () => {
+  const defaults = renderTopBar(snapWithBoard({
+    subsequentModel: null,
+    subsequentEffort: null,
+  }));
+  assert.match(defaults, /后续 model:\s*运行时默认/);
+  assert.match(defaults, /后续 effort:\s*运行时默认/);
+
+  const set = renderTopBar(snapWithBoard({
+    subsequentModel: 'grok-3.5',
+    subsequentEffort: 'high',
+  }));
+  assert.match(set, /后续 model:\s*grok-3\.5/);
+  assert.match(set, /后续 effort:\s*high/);
+  // Still distinguishable from mode / auto / status.
+  assert.match(set, /后续 mode:/);
+  assert.match(set, /自动开下一张:/);
+});
+
+test('renderFooter includes [o] model/effort when action available', () => {
+  const footer = renderFooter(snapWithBoard({
+    actions: {
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+  assert.match(footer, /\[o\].*model|\[o\].*effort|\[o\].*model\/effort/i);
+  assert.match(footer, /\[m\].*mode/);
+});
+
+test('model→effort menu: both confirms submit; cancel leaves subsequent+repo unchanged', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface, modeConfig } = makeSurface({
+    candidates: [first, second],
+  });
+  await surface.tick();
+  const slotBefore = {
+    issueId: surface.snapshot().slot?.issueId,
+    model: surface.snapshot().slot?.model ?? null,
+    effort: surface.snapshot().slot?.effort ?? null,
+  };
+  assert.equal(surface.snapshot().subsequentModel, null);
+  assert.equal(modeConfig.readModelEffort('grok').model, null);
+
+  // Cancel at model stage: no write.
+  let menu = openModelEffortMenu({ runtime: 'grok' });
+  menu = applyModelEffortMenuKey(menu, 'q');
+  assert.equal(menu.done, true);
+  assert.equal(menu.cancelled, true);
+  assert.equal(menu.submitted, null);
+  assert.equal(surface.snapshot().subsequentModel, null);
+  assert.equal(modeConfig.readModelEffort('grok').model, null);
+
+  // Cancel at effort stage after model pick: still no write (transactional).
+  menu = openModelEffortMenu({ runtime: 'grok' });
+  menu = applyModelEffortMenuKey(menu, 'j'); // move off 运行时默认 if possible
+  menu = applyModelEffortMenuKey(menu, '\r');
+  assert.equal(menu.stage, 'effort');
+  assert.equal(menu.done, false);
+  menu = applyModelEffortMenuKey(menu, 'q');
+  assert.equal(menu.cancelled, true);
+  assert.equal(menu.submitted, null);
+  assert.equal(surface.snapshot().subsequentModel, null);
+  assert.deepEqual(modeConfig.readModelEffort('grok'), { model: null, effort: null });
+
+  // Full confirm: model then effort → setModelEffort.
+  menu = openModelEffortMenu({
+    runtime: 'grok',
+    modelItems: [
+      { value: null, label: '运行时默认' },
+      { value: 'grok-3.5', label: 'grok-3.5' },
+    ],
+    effortItems: [
+      { value: null, label: '运行时默认' },
+      { value: 'high', label: 'high' },
+    ],
+  });
+  menu = applyModelEffortMenuKey(menu, '2'); // index 1 → grok-3.5
+  menu = applyModelEffortMenuKey(menu, '\r');
+  assert.equal(menu.stage, 'effort');
+  menu = applyModelEffortMenuKey(menu, '2'); // high
+  menu = applyModelEffortMenuKey(menu, '\r');
+  assert.equal(menu.done, true);
+  assert.equal(menu.cancelled, false);
+  assert.deepEqual(menu.submitted, { model: 'grok-3.5', effort: 'high' });
+
+  const submitted = await surface.setModelEffort(menu.submitted);
+  assert.equal(submitted.ok, true);
+  assert.equal(surface.snapshot().subsequentModel, 'grok-3.5');
+  assert.equal(surface.snapshot().subsequentEffort, 'high');
+  assert.deepEqual(modeConfig.readModelEffort('grok'), { model: 'grok-3.5', effort: 'high' });
+  // Live slot not hot-switched.
+  assert.equal(surface.snapshot().slot?.issueId, slotBefore.issueId);
+  assert.equal(surface.snapshot().slot?.model ?? null, slotBefore.model);
+  assert.equal(surface.snapshot().slot?.effort ?? null, slotBefore.effort);
+
+  // Next spawn carries subsequent contract.
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
+  assert.equal(surface.snapshot().slot?.model, 'grok-3.5');
+  assert.equal(surface.snapshot().slot?.effort, 'high');
+  assert.equal(launcher.launches[1].model, 'grok-3.5');
+  assert.equal(launcher.launches[1].effort, 'high');
+});
+
+test('handleFullscreenKey o returns openModelEffort without mutating subsequent', async () => {
+  const { surface, modeConfig } = makeSurface({
+    candidates: [candidate('01-first.md')],
+  });
+  await surface.tick();
+  const result = await handleFullscreenKey(surface, 'o');
+  assert.equal(result.openModelEffort, true);
+  assert.equal(surface.snapshot().subsequentModel, null);
+  assert.equal(modeConfig.readModelEffort('grok').model, null);
+});
+
+test('default model/effort lists lead with 运行时默认; no free-text path', () => {
+  const models = defaultModelItems('grok');
+  const efforts = defaultEffortItems();
+  assert.ok(models.length >= 1);
+  assert.equal(models[0].value, null);
+  assert.match(models[0].label, /运行时默认/);
+  assert.equal(efforts[0].value, null);
+  assert.match(efforts[0].label, /运行时默认/);
+  // Static stubs only — discovery is ticket 03.
+  assert.ok(efforts.some((item) => item.value === 'high'));
+});
+
+test('model→effort menu Esc cancels whole transaction like q', () => {
+  let menu = openModelEffortMenu({
+    runtime: 'grok',
+    modelItems: [
+      { value: null, label: '运行时默认' },
+      { value: 'grok-4', label: 'grok-4' },
+    ],
+  });
+  menu = applyModelEffortMenuKey(menu, 'j');
+  menu = applyModelEffortMenuKey(menu, '\r');
+  assert.equal(menu.stage, 'effort');
+  menu = applyModelEffortMenuKey(menu, '', { escape: true });
+  assert.equal(menu.done, true);
+  assert.equal(menu.cancelled, true);
+  assert.equal(menu.submitted, null);
+});
+
+test('DispatchShell modelEffortMenu overlay reuses frame without second alt-screen path', () => {
+  const menu = openModelEffortMenu({
+    runtime: 'grok',
+    modelItems: [
+      { value: null, label: '运行时默认' },
+      { value: 'grok-3.5', label: 'grok-3.5' },
+    ],
+  });
+  const frame = renderModelEffortMenuFrame(menu);
+  assert.match(frame, /model\/effort|subsequent model/i);
+  assert.match(frame, /运行时默认/);
+  assert.doesNotMatch(frame, /\[启动选单\]/);
+
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard({
+      subsequentModel: null,
+      subsequentEffort: null,
+      actions: { setModelEffort: { available: true }, setMode: { available: true } },
+    }),
+    modelEffortMenu: menu,
+    terminalRows: 24,
+  }));
+  assert.match(text, /运行时默认|subsequent model|model\/effort/i);
+  assert.match(text, /后续 model:\s*运行时默认/);
+  // Overlay is in-shell — no DECSET sequences from pure renderToString path.
+  assert.doesNotMatch(text, /\u001b\[\?1049h/);
+  assert.doesNotMatch(text, /\u001b\[\?1049l/);
+});
+
+test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unchanged', async () => {
+  const { surface, modeConfig } = makeSurface({
+    candidates: [candidate('01-first.md')],
+    mode: 'review',
+  });
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  let out = '';
+  stdout.setEncoding('utf8');
+  stdout.on('data', (chunk) => {
+    out += chunk;
+  });
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 5000,
+    alternateScreen: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 120));
+  stdin.write('o');
+  await new Promise((r) => setTimeout(r, 150));
+  assert.match(out, /model\/effort|subsequent model|运行时默认/i);
+  // Cancel menu (q while overlay open), then quit dispatch.
+  stdin.write('q');
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(surface.snapshot().subsequentModel, null);
+  assert.equal(modeConfig.readModelEffort('grok').model, null);
+  stdin.write('q');
+
+  const result = await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('fullscreen o cancel integration did not exit')), 3000);
+    }),
+  ]);
+  assert.equal(result.stopped, true);
+  assert.equal(surface.snapshot().subsequentModel, null);
+  // alternateScreen:false path must never emit nested DECSET.
+  assert.doesNotMatch(out, /\u001b\[\?1049h/);
 });

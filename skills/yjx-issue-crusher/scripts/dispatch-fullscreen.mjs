@@ -27,6 +27,11 @@ import {
   renderDependencyGraph,
   statusLabelZh,
 } from './dependency-graph.mjs';
+import {
+  applyStartupSelectKey,
+  mapStartupSelectKey,
+  renderStartupSelectFrame,
+} from './startup-select.mjs';
 
 /** Alternate-screen enter (hide cursor). Exported for cleanup contract tests. */
 export const ALT_ENTER = '\u001b[?1049h\u001b[?25l';
@@ -213,12 +218,23 @@ export function describeShellLayout({ rows } = {}) {
 }
 
 /**
- * Top bar: feature / runtime / subsequent mode / auto-open-next / chain status.
+ * Display label for subsequent model/effort (null/empty → 运行时默认).
+ * @param {string | null | undefined} value
+ * @returns {string}
+ */
+export function subsequentFlagLabel(value) {
+  if (value == null || String(value).trim() === '') return '运行时默认';
+  return String(value);
+}
+
+/**
+ * Top bar: feature / runtime / subsequent mode / model / effort /
+ * auto-open-next / chain status.
  * Pure — safe for unit tests without a terminal.
  * Product copy only (no `[顶栏]` debug prefix).
  *
- * Two lines so 「自动开下一张」and chain status stay discoverable after wrap
- * on narrow terminals (not buried mid-token on one ultra-long line).
+ * Two lines so model/effort, 「自动开下一张」and chain status stay discoverable
+ * after wrap on narrow terminals.
  *
  * @param {object | null | undefined} snap
  * @returns {string}
@@ -231,6 +247,8 @@ export function renderTopBar(snap) {
   // Default true when field omitted (older fakes / once path projection).
   const autoLabel = snap.autoAdvance === false ? '关' : '开';
   const feature = truncateDisplayField(snap.feature ?? '—', TOP_FIELD_MAX);
+  const modelLabel = subsequentFlagLabel(snap.subsequentModel);
+  const effortLabel = subsequentFlagLabel(snap.subsequentEffort);
   const primary = [
     'Issue Crusher · 调度',
     `功能: ${feature}`,
@@ -238,7 +256,10 @@ export function renderTopBar(snap) {
     `后续 mode: ${mode}${modeHint(mode)}`,
   ].join('  ·  ');
   // Critical operator dials on their own line — short enough for narrow TTYs.
+  // subsequent model/effort stay here so operators can trust the o-flow source.
   const critical = [
+    `后续 model: ${modelLabel}`,
+    `后续 effort: ${effortLabel}`,
     `自动开下一张: ${autoLabel}`,
     statusLine(snap),
   ].join('  ·  ');
@@ -366,6 +387,8 @@ export function renderFooter(snap) {
   const actions = snap?.actions || {};
   const keys = [];
   if (actions.setMode?.available !== false) keys.push('[m] mode 拨杆');
+  // o opens model→effort transactional menu (subsequent only; no live hot-switch).
+  if (actions.setModelEffort?.available !== false) keys.push('[o] model/effort');
   if (actions.forceAdvance?.available) keys.push('[f] 强制推进');
   if (actions.resume?.available) keys.push('[r] 恢复');
   if (actions.confirmHitl?.available) keys.push('[y] 同意');
@@ -376,6 +399,167 @@ export function renderFooter(snap) {
   // Navigation moves highlight only; Enter starts. Arrows ≡ j/k.
   keys.push('[t] 刷新', '[↑↓/j/k|数字] 导航', '[Enter] 开始', '[q] 退出');
   return keys.join('  ');
+}
+
+/**
+ * Static model list for the fullscreen `o` flow (ticket 02).
+ * First item is always 运行时默认 (null = omit flag). Full discovery is ticket 03.
+ *
+ * @param {string | null | undefined} runtime
+ * @returns {Array<{ value: string | null, label: string }>}
+ */
+export function defaultModelItems(runtime = 'grok') {
+  const items = [{ value: null, label: '运行时默认' }];
+  const rt = String(runtime || 'grok').toLowerCase();
+  if (rt === 'claude') {
+    items.push(
+      { value: 'sonnet', label: 'sonnet' },
+      { value: 'opus', label: 'opus' },
+      { value: 'haiku', label: 'haiku' },
+    );
+  } else {
+    // Grok static stubs — real `grok models` discovery lands in ticket 03.
+    items.push(
+      { value: 'grok-3', label: 'grok-3' },
+      { value: 'grok-4', label: 'grok-4' },
+    );
+  }
+  return items;
+}
+
+/**
+ * Static effort list for the fullscreen `o` flow.
+ * First item is always 运行时默认; remaining are passthrough strings.
+ *
+ * @returns {Array<{ value: string | null, label: string }>}
+ */
+export function defaultEffortItems() {
+  return [
+    { value: null, label: '运行时默认' },
+    { value: 'low', label: 'low' },
+    { value: 'medium', label: 'medium' },
+    { value: 'high', label: 'high' },
+    { value: 'xhigh', label: 'xhigh' },
+    { value: 'max', label: 'max' },
+  ];
+}
+
+/**
+ * Open a pure model→effort transactional menu state (no surface write until both confirm).
+ *
+ * @param {{
+ *   runtime?: string | null,
+ *   modelItems?: Array<{ value: string | null, label?: string }>,
+ *   effortItems?: Array<{ value: string | null, label?: string }>,
+ * }} [options]
+ */
+export function openModelEffortMenu({
+  runtime = 'grok',
+  modelItems = null,
+  effortItems = null,
+} = {}) {
+  const models = Array.isArray(modelItems) && modelItems.length > 0
+    ? modelItems
+    : defaultModelItems(runtime);
+  const efforts = Array.isArray(effortItems) && effortItems.length > 0
+    ? effortItems
+    : defaultEffortItems();
+  return {
+    open: true,
+    stage: 'model',
+    selectedIndex: 0,
+    pendingModel: undefined,
+    modelItems: models,
+    effortItems: efforts,
+    done: false,
+    cancelled: false,
+    submitted: null,
+  };
+}
+
+/**
+ * Pure key transition for the model→effort transaction.
+ * Reuses startup-select key contract (j/k/arrows/digits + Enter / q|Esc).
+ * Cancel at either stage abandons the whole transaction (no half-write).
+ *
+ * @param {ReturnType<typeof openModelEffortMenu>} state
+ * @param {string | null | undefined} input
+ * @param {{ escape?: boolean, return?: boolean, upArrow?: boolean, downArrow?: boolean } | null} [key]
+ */
+export function applyModelEffortMenuKey(state, input, key = null) {
+  if (!state || !state.open || state.done) return state;
+
+  const command = key?.ctrl && String(input).toLowerCase() === 'c'
+    ? { type: 'cancel' }
+    : mapStartupSelectKey(input, key);
+  if (!command) return state;
+
+  const items = state.stage === 'model' ? state.modelItems : state.effortItems;
+  const next = applyStartupSelectKey(
+    {
+      selectedIndex: state.selectedIndex,
+      done: false,
+      cancelled: false,
+      value: null,
+    },
+    command,
+    items,
+  );
+
+  if (next.cancelled) {
+    return {
+      ...state,
+      open: false,
+      done: true,
+      cancelled: true,
+      submitted: null,
+      selectedIndex: next.selectedIndex,
+    };
+  }
+
+  if (next.done) {
+    if (state.stage === 'model') {
+      return {
+        ...state,
+        stage: 'effort',
+        selectedIndex: 0,
+        pendingModel: next.value,
+      };
+    }
+    return {
+      ...state,
+      open: false,
+      done: true,
+      cancelled: false,
+      selectedIndex: next.selectedIndex,
+      submitted: {
+        model: state.pendingModel === undefined ? null : state.pendingModel,
+        effort: next.value,
+      },
+    };
+  }
+
+  return { ...state, selectedIndex: next.selectedIndex };
+}
+
+/**
+ * Text frame for the in-shell model/effort overlay (no second alt-screen).
+ *
+ * @param {ReturnType<typeof openModelEffortMenu> | null | undefined} state
+ * @returns {string}
+ */
+export function renderModelEffortMenuFrame(state) {
+  if (!state || !state.open) return '';
+  const items = state.stage === 'model' ? state.modelItems : state.effortItems;
+  const title = state.stage === 'model'
+    ? '选择 subsequent model（确认后选 effort；整次 o 事务）'
+    : '选择 subsequent effort（确认后提交；q/Esc 取消整次事务）';
+  // Reuse startup list chrome so j/k/digits/Enter/q match operator muscle memory.
+  return renderStartupSelectFrame({
+    title,
+    items,
+    selectedIndex: state.selectedIndex,
+  }).replace('[启动选单]', '[model/effort]');
 }
 
 /**
@@ -438,6 +622,8 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
     const next = subsequentMode === 'vibe' ? 'review' : 'vibe';
     return { type: 'setMode', arg: next };
   }
+  // o opens model→effort transactional menu (not mode; m stays mode-only).
+  if (lower === 'o') return { type: 'openModelEffort' };
   if (lower === 'j') return { type: 'selectNext' };
   if (lower === 'k') return { type: 'selectPrev' };
   if (/^[1-9]$/.test(lower)) return { type: 'selectIndex', arg: Number(lower) - 1 };
@@ -522,6 +708,11 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
     return handleDispatchCommand(surface, { type: 'start', arg: issueId ?? undefined });
   }
 
+  // openModelEffort is shell-owned (in-app overlay); pure handle only signals intent.
+  if (command.type === 'openModelEffort') {
+    return { openModelEffort: true };
+  }
+
   return handleDispatchCommand(surface, command);
 }
 
@@ -547,6 +738,7 @@ export function DispatchShell({
   notice = null,
   selectedIndex = null,
   terminalRows = null,
+  modelEffortMenu = null,
 } = {}) {
   const layout = describeShellLayout(
     terminalRows != null ? { rows: terminalRows } : {},
@@ -556,6 +748,67 @@ export function DispatchShell({
   const noticeLine = renderNotice(snap, notice);
   const topLines = renderTopBar(snap).split('\n');
   const footer = renderFooter(snap);
+
+  // In-app overlay reuses the same alt-screen session (no nested DECSET on Windows).
+  if (modelEffortMenu?.open) {
+    const menuLines = renderModelEffortMenuFrame(modelEffortMenu).split('\n');
+    return createElement(
+      Box,
+      {
+        flexDirection: layout.root.flexDirection,
+        width: layout.root.width,
+        height: layout.root.height,
+      },
+      createElement(
+        Box,
+        {
+          flexGrow: layout.top.flexGrow,
+          borderStyle: 'single',
+          paddingX: 1,
+          flexDirection: 'column',
+          width: '100%',
+        },
+        ...topLines.map((line, index) => createElement(
+          Text,
+          { key: `t${index}`, bold: true },
+          line || ' ',
+        )),
+      ),
+      createElement(
+        Box,
+        {
+          flexGrow: layout.middle.flexGrow,
+          borderStyle: 'single',
+          paddingX: 1,
+          flexDirection: 'column',
+          width: '100%',
+        },
+        ...menuLines.map((line, index) => createElement(
+          Text,
+          {
+            key: `me${index}`,
+            bold: index === 0 || /◀选中/.test(line),
+            dimColor: index === menuLines.length - 1,
+          },
+          line || ' ',
+        )),
+      ),
+      createElement(
+        Box,
+        {
+          flexGrow: layout.footer.flexGrow,
+          borderStyle: 'single',
+          paddingX: 1,
+          width: '100%',
+        },
+        createElement(
+          Text,
+          { dimColor: true },
+          'model→effort 事务：两级都确认才写 subsequent/仓；q/Esc 取消整次',
+        ),
+      ),
+    );
+  }
 
   return createElement(
     Box,
@@ -692,6 +945,8 @@ function DispatchFullscreenApp({
   const [snap, setSnap] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  // In-app model→effort overlay (same alt-screen; no nested DECSET).
+  const [modelEffortMenu, setModelEffortMenu] = useState(null);
   // Numeric height from mount stdout.rows (resolved once). Resize re-pin is
   // optional polish; keep mount path free of stream listeners so PassThrough
   // tests can exit cleanly on q.
@@ -700,6 +955,7 @@ function DispatchFullscreenApp({
   const quittingRef = useRef(false);
   const snapRef = useRef(null);
   const selectedRef = useRef(null);
+  const menuRef = useRef(null);
 
   useEffect(() => {
     snapRef.current = snap;
@@ -707,6 +963,9 @@ function DispatchFullscreenApp({
   useEffect(() => {
     selectedRef.current = selectedIndex;
   }, [selectedIndex]);
+  useEffect(() => {
+    menuRef.current = modelEffortMenu;
+  }, [modelEffortMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -740,7 +999,8 @@ function DispatchFullscreenApp({
 
     const intervalMs = Math.max(250, pollIntervalMs);
     const pollId = setInterval(() => {
-      if (cancelled || busyRef.current || quittingRef.current) return;
+      // Freeze poll while the o-menu owns the keyboard (avoid mid-menu redraw races).
+      if (cancelled || busyRef.current || quittingRef.current || menuRef.current?.open) return;
       busyRef.current = true;
       (async () => {
         try {
@@ -777,6 +1037,50 @@ function DispatchFullscreenApp({
 
   useInput((input, key) => {
     if (quittingRef.current) return;
+
+    // model→effort overlay owns keys until cancel/submit (no second Ink mount).
+    if (menuRef.current?.open) {
+      void (async () => {
+        while (busyRef.current) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (quittingRef.current) return;
+        busyRef.current = true;
+        try {
+          const nextMenu = applyModelEffortMenuKey(menuRef.current, input, key);
+          if (!nextMenu.done) {
+            setModelEffortMenu(nextMenu);
+            return;
+          }
+          setModelEffortMenu(null);
+          if (nextMenu.cancelled || !nextMenu.submitted) {
+            setNotice('已取消 model/effort（未改 subsequent/仓）');
+            return;
+          }
+          if (typeof surface.setModelEffort !== 'function') {
+            setNotice('当前表面不支持 setModelEffort');
+            return;
+          }
+          const result = await surface.setModelEffort(nextMenu.submitted);
+          if (!result?.ok) {
+            setNotice(`无法设置 model/effort: ${result?.reason ?? 'unknown'}`);
+            return;
+          }
+          const modelLabel = subsequentFlagLabel(nextMenu.submitted.model);
+          const effortLabel = subsequentFlagLabel(nextMenu.submitted.effort);
+          setNotice(`subsequent model/effort → ${modelLabel} / ${effortLabel}（已写仓；仅影响后续票）`);
+          try {
+            setSnap(surface.snapshot());
+          } catch {
+            // keep last frame
+          }
+        } finally {
+          busyRef.current = false;
+        }
+      })();
+      return;
+    }
+
     // Ctrl+C matches q: stop chain then leave fullscreen (do not bare-exit).
     const effectiveInput = key?.ctrl && String(input).toLowerCase() === 'c'
       ? 'q'
@@ -810,6 +1114,19 @@ function DispatchFullscreenApp({
           return;
         }
 
+        if (result.openModelEffort) {
+          // Gate on surface action availability when projection is ready.
+          if (currentSnap?.actions?.setModelEffort?.available === false) {
+            setNotice('当前不可设置 model/effort（已停链）');
+            return;
+          }
+          setModelEffortMenu(openModelEffortMenu({
+            runtime: currentSnap?.runtime ?? 'grok',
+          }));
+          setNotice(null);
+          return;
+        }
+
         if (result.message) setNotice(result.message);
 
         try {
@@ -834,6 +1151,7 @@ function DispatchFullscreenApp({
     notice,
     selectedIndex,
     terminalRows: resolvedRows,
+    modelEffortMenu,
   });
 }
 
