@@ -90,3 +90,23 @@ test('cli short form: chain <feature> positional', () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /soft-stuck|02-do-work/);
 });
+
+// --- 20260804-1006-fix-fullscreen-cold-start / 03: --once non-fullscreen still spawns ---
+
+test('regression 03: --once + fake-launcher still spawns on ready board (not fullscreen gate)', () => {
+  const result = runCli([
+    'chain',
+    '--feature', 'demo',
+    '--cwd', singleFixture,
+    '--project-root', singleFixture,
+    '--runtime', 'grok',
+    '--fake-launcher',
+    '--once',
+    '--stop',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  // Non-fullscreen once path must still attempt open-next (slot occupied / soft-stuck).
+  assert.match(result.stdout, /02-do-work|软卡住|soft-stuck/);
+  assert.doesNotMatch(result.stdout, /"slot": null/);
+  assert.match(result.stdout, /"stopped": true/);
+});

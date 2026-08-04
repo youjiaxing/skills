@@ -1577,3 +1577,124 @@ test('narrow top bar still exposes auto dial and chain status in shell frame', (
   assert.match(text, /状态:/);
   assert.match(text, /当前槽\s*（空）|当前槽 \(空\)|当前槽/);
 });
+
+// --- 20260804-1006-fix-fullscreen-cold-start / 03: start-model + single-slot regression ---
+
+test('regression 03: s toggle; Enter after s-off keeps auto off; s-on restores AFK', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const third = candidate('03-third.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second, third],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  // Clean Enter opens auto (AFK contract preserved).
+  await handleFullscreenKey(surface, '\r', { selectedIssueId: '01-first.md' });
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  // s off while soft-stuck; complete first so slot can clear without auto handoff.
+  await handleFullscreenKey(surface, 's');
+  assert.equal(surface.snapshot().autoAdvance, false);
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(surface.snapshot().slot, null);
+  assert.equal(launcher.launches.length, 1, 's-off must block auto handoff');
+
+  // Enter opens exactly one and must not reopen auto.
+  const started = await handleFullscreenKey(surface, '\r', {
+    selectedIssueId: '02-second.md',
+  });
+  assert.equal(started.spawned, true);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  // s on again restores AFK: after release, tick auto-spawns remaining ready (03).
+  tracker.setCompletion('02-second.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await handleFullscreenKey(surface, 's');
+  assert.equal(surface.snapshot().autoAdvance, true);
+  await surface.tick();
+  assert.equal(launcher.launches.length, 3, 's-on must restore auto-spawn of board next');
+  assert.equal(surface.snapshot().slot?.issueId, '03-third.md');
+});
+
+test('regression 03: soft-stuck Enter rejects second; cold mount stays empty until Enter', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    // Simulate pre-fullscreen chain default (on); mount must force off.
+  });
+
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 200,
+    alternateScreen: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(surface.snapshot().autoAdvance, false);
+  assert.equal(surface.snapshot().slot, null);
+  assert.equal(launcher.launches.length, 0, 'cold mount must not occupy a slot');
+
+  // First Enter occupies; second Enter on other ticket is single-slot reject.
+  stdin.write('\r');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+
+  const blocked = await handleFullscreenKey(surface, '\r', {
+    selectedIssueId: '02-second.md',
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'slot-occupied');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+
+  stdin.write('q');
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('regression 03 soft-stuck dual-path hung')), 3000);
+    }),
+  ]);
+});
+
+test('regression 03: m/f/r/y/n/t/q still map and drive surface without weakening', async () => {
+  assert.deepEqual(
+    mapFullscreenKey('m', { subsequentMode: 'review' }),
+    { type: 'setMode', arg: 'vibe' },
+  );
+  assert.deepEqual(mapFullscreenKey('f'), { type: 'forceAdvance' });
+  assert.deepEqual(mapFullscreenKey('r'), { type: 'resume' });
+  assert.deepEqual(mapFullscreenKey('y'), { type: 'confirmHitl' });
+  assert.deepEqual(mapFullscreenKey('n'), { type: 'rejectHitl' });
+  assert.deepEqual(mapFullscreenKey('t'), { type: 'tick' });
+  assert.deepEqual(mapFullscreenKey('q'), { type: 'quit' });
+  assert.deepEqual(mapFullscreenKey('s'), { type: 'toggleAutoAdvance' });
+  assert.deepEqual(mapFullscreenKey('\r'), { type: 'start' });
+
+  const { surface, launcher } = makeSurface({
+    candidates: [candidate('01-ready.md')],
+    autoAdvance: false,
+  });
+  await surface.refresh();
+
+  await handleFullscreenKey(surface, 't');
+  assert.equal(launcher.launches.length, 0, 't alone must not bypass auto gate');
+  assert.equal(surface.snapshot().slot, null);
+
+  const quit = await handleFullscreenKey(surface, 'q');
+  assert.equal(quit.quit, true);
+  assert.equal(surface.snapshot().stopped, true);
+  assert.equal(surface.snapshot().autoAdvance, false);
+});
