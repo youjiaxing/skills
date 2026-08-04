@@ -80,6 +80,47 @@ export function shouldUseFullscreenDispatch({
   return Boolean(input?.isTTY && output?.isTTY);
 }
 
+/**
+ * Drop already-buffered stdin so a prior fullscreen select Enter/confirm
+ * cannot become an unintended start key on dispatch mount.
+ * Safe no-op when stream is null, not readable, or flowing (pause first).
+ *
+ * @param {NodeJS.ReadableStream | null | undefined} input
+ * @returns {number} approximate drained unit count (bytes/chars/chunks)
+ */
+export function drainPendingInput(input) {
+  if (!input || typeof input.read !== 'function') return 0;
+
+  let pausedHere = false;
+  if (typeof input.isPaused === 'function' && !input.isPaused()) {
+    if (typeof input.pause === 'function') {
+      input.pause();
+      pausedHere = true;
+    }
+  }
+
+  let drained = 0;
+  try {
+    // Node Readable: read() in paused mode empties the internal buffer.
+    // Limit iterations so a pathological stream cannot spin forever.
+    for (let i = 0; i < 10_000; i += 1) {
+      const chunk = input.read();
+      if (chunk == null) break;
+      if (typeof chunk === 'string') drained += chunk.length;
+      else if (Buffer.isBuffer(chunk)) drained += chunk.length;
+      else drained += 1;
+    }
+  } catch {
+    // Best-effort only — never block fullscreen mount on drain failure.
+  } finally {
+    // Leave stream paused for Ink; do not resume if we paused (raw TTY
+    // handoff expects consumer to take ownership). If it was already
+    // paused, keep that. If we could not pause, leave as-is.
+    void pausedHere;
+  }
+  return drained;
+}
+
 function statusLine(snap) {
   if (!snap) return '状态: （启动中）';
   const label = snap.status ? statusLabelZh(snap.status) : '—';
@@ -757,6 +798,10 @@ export async function runFullscreenDispatch({
   if (typeof surface.setAutoAdvance === 'function') {
     await surface.setAutoAdvance(false);
   }
+
+  // Startup select (feature/runtime) confirms with Enter on the same stdin.
+  // Any leftover \r/\n would otherwise hit useInput as start → false occupy.
+  drainPendingInput(input);
 
   const ticksRef = { current: 0 };
   let enteredAlt = false;

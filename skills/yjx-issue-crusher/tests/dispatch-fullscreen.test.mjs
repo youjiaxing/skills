@@ -30,6 +30,7 @@ import {
   CLEAR_SCREEN,
   DispatchShell,
   describeShellLayout,
+  drainPendingInput,
   enterAlternateScreen,
   handleFullscreenKey,
   leaveAlternateScreen,
@@ -234,6 +235,169 @@ test('fullscreen mount: autoAdvance off; ready board + multi tick/poll → zero 
   ]);
   assert.equal(result.mode, 'fullscreen');
   assert.equal(launcher.launches.length, 0);
+});
+
+// --- 20260804-1006-fix-fullscreen-cold-start / 01: cold start zero slot ---
+
+test('drainPendingInput drops buffered keys so residual Enter cannot reach the app', () => {
+  const stdin = fakeStdin();
+  stdin.write('\r\n');
+  stdin.write('q');
+  const n = drainPendingInput(stdin);
+  assert.ok(n > 0, 'should report drained bytes/chars');
+  assert.equal(stdin.read(), null, 'buffer must be empty after drain');
+});
+
+test('fullscreen mount: residual Enter from startup select does not spawn or occupy slot', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  // Runtime already resolved as grok — must not imply spawn.
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    runtime: 'grok',
+  });
+
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  // Simulate leftover confirm from feature/runtime fullscreen picker.
+  stdin.write('\r');
+  stdin.write('\n');
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 250,
+    alternateScreen: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 800));
+
+  const snap = surface.snapshot();
+  assert.equal(snap.autoAdvance, false, 'residual Enter must not open auto');
+  assert.equal(snap.slot, null, 'residual Enter must not occupy slot');
+  assert.equal(launcher.launches.length, 0, 'residual Enter must not launch');
+  assert.equal(snap.runtime, 'grok');
+
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(launcher.launches.length, 0);
+
+  stdin.write('q');
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('residual-enter cold-start test hung')), 3000);
+    }),
+  ]);
+  assert.equal(launcher.launches.length, 0);
+});
+
+test('fullscreen cold start then Enter: exactly one launch (default next); highlight path one launch', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    runtime: 'grok',
+  });
+
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 5000,
+    alternateScreen: false,
+  });
+
+  // Cold window: multi-tick equivalent settle with auto off / empty slot.
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(surface.snapshot().slot, null);
+  assert.equal(surface.snapshot().autoAdvance, false);
+
+  // No highlight → board default next (01).
+  stdin.write('\r');
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '01-first.md');
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+
+  stdin.write('q');
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('cold-start Enter default test hung')), 3000);
+    }),
+  ]);
+  assert.equal(launcher.launches.length, 1, 'quit must not spawn more');
+});
+
+test('fullscreen cold start: j highlight then Enter launches only the highlighted ticket', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  // Board status must be ready-for-agent so the executable list is non-empty
+  // (listExecutableIssueIds ignores non-ready roles like bare "impl").
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    runtime: 'grok',
+    boardIssues: [
+      {
+        id: '01-first.md',
+        title: 'first',
+        closed: false,
+        blockedBy: [],
+        unlocks: [],
+        status: 'ready-for-agent',
+      },
+      {
+        id: '02-second.md',
+        title: 'second',
+        closed: false,
+        blockedBy: [],
+        unlocks: [],
+        status: 'ready-for-agent',
+      },
+    ],
+  });
+
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 5000,
+    alternateScreen: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(surface.snapshot().slot, null);
+
+  // From null highlight, first j uses base 0 then next → index 1 (02).
+  stdin.write('j');
+  await new Promise((r) => setTimeout(r, 100));
+  stdin.write('\r');
+  await new Promise((r) => setTimeout(r, 180));
+
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '02-second.md');
+  assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
+
+  stdin.write('q');
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('cold-start highlight Enter test hung')), 3000);
+    }),
+  ]);
+  assert.equal(launcher.launches.length, 1);
 });
 
 test('runDispatchTui on non-TTY never hangs on Ink and still supports q', async () => {

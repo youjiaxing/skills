@@ -9,6 +9,8 @@
 import { createElement, useState } from 'react';
 import { Box, Text, render, useApp, useInput } from 'ink';
 
+import { drainPendingInput } from './dispatch-fullscreen.mjs';
+
 const ALT_ENTER = '\u001b[?1049h\u001b[?25l';
 const ALT_LEAVE = '\u001b[?1049l\u001b[?25h';
 
@@ -304,6 +306,9 @@ export async function runFullscreenSelect({
     if (enteredAlt && typeof output.write === 'function') {
       output.write(ALT_LEAVE);
     }
+    // Confirm/cancel keys may still sit in the buffer; drop them so the
+    // following dispatch fullscreen mount cannot treat them as start.
+    drainPendingInput(input);
   }
 
   return {
