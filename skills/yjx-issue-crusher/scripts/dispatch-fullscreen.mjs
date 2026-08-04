@@ -13,6 +13,10 @@
  * Ticket 05 polish: full-height column layout (middle flexGrow), product
  * copy without debug bracket labels, primary/secondary field hierarchy,
  * long-field truncation, alternate-screen enter/leave cleanup.
+ *
+ * 20260804-1006 / 02 hard layout: Ink root uses numeric terminal rows
+ * (percent height collapses to content), multi-line top bar keeps auto dial
+ * discoverable after wrap, footer pins via stretch middle.
  */
 
 import { createElement, useEffect, useRef, useState } from 'react';
@@ -37,6 +41,25 @@ const GRAPH_LEGEND = '图例: ★可执行  ▶进行中  ·阻塞/未完成  �
 const DEFAULT_FIELD_MAX = 48;
 /** Top-bar secondary field budget (feature / long status fragments). */
 const TOP_FIELD_MAX = 40;
+/**
+ * Minimum usable shell height (rows). Below this, fall back so four regions
+ * still fit; Ink percent height cannot recover a content-shrunk root.
+ */
+const SHELL_HEIGHT_FLOOR = 12;
+
+/**
+ * Resolve terminal row budget for the shell root as a **numeric** Yoga height.
+ * Ink only sets root width from stdout; `height: '100%'` of an auto parent
+ * collapses to content and leaves dead black below the footer.
+ *
+ * @param {number | null | undefined} rows
+ * @returns {number}
+ */
+export function resolveShellHeight(rows) {
+  const n = Number(rows);
+  if (!Number.isFinite(n) || n < 8) return SHELL_HEIGHT_FLOOR;
+  return Math.floor(n);
+}
 
 /**
  * Write alternate-screen enter + clear (drops prior frame / residual bare text).
@@ -158,9 +181,14 @@ export function truncateDisplayField(value, max = DEFAULT_FIELD_MAX) {
  * Middle is the stretch main region; other bands stay content-sized.
  * No animation — static four-region column only.
  *
+ * When `rows` is provided, root height is a numeric terminal line budget so
+ * Yoga can flex-grow the middle and pin the footer. Without `rows`, height
+ * stays declarative `'100%'` for callers that only need region names.
+ *
+ * @param {{ rows?: number | null }} [opts]
  * @returns {{
  *   regions: string[],
- *   root: { height: string, width: string, flexDirection: string },
+ *   root: { height: string | number, width: string, flexDirection: string },
  *   top: { flexGrow: number },
  *   middle: { flexGrow: number, stretch: boolean },
  *   slot: { flexGrow: number },
@@ -168,11 +196,11 @@ export function truncateDisplayField(value, max = DEFAULT_FIELD_MAX) {
  *   animation: boolean,
  * }}
  */
-export function describeShellLayout() {
+export function describeShellLayout({ rows } = {}) {
   return {
     regions: ['top', 'middle', 'slot', 'footer'],
     root: {
-      height: '100%',
+      height: rows != null ? resolveShellHeight(rows) : '100%',
       width: '100%',
       flexDirection: 'column',
     },
@@ -189,6 +217,9 @@ export function describeShellLayout() {
  * Pure — safe for unit tests without a terminal.
  * Product copy only (no `[顶栏]` debug prefix).
  *
+ * Two lines so 「自动开下一张」and chain status stay discoverable after wrap
+ * on narrow terminals (not buried mid-token on one ultra-long line).
+ *
  * @param {object | null | undefined} snap
  * @returns {string}
  */
@@ -200,14 +231,18 @@ export function renderTopBar(snap) {
   // Default true when field omitted (older fakes / once path projection).
   const autoLabel = snap.autoAdvance === false ? '关' : '开';
   const feature = truncateDisplayField(snap.feature ?? '—', TOP_FIELD_MAX);
-  return [
+  const primary = [
     'Issue Crusher · 调度',
     `功能: ${feature}`,
     `runtime: ${snap.runtime ?? '—'}`,
     `后续 mode: ${mode}${modeHint(mode)}`,
+  ].join('  ·  ');
+  // Critical operator dials on their own line — short enough for narrow TTYs.
+  const critical = [
     `自动开下一张: ${autoLabel}`,
     statusLine(snap),
   ].join('  ·  ');
+  return `${primary}\n${critical}`;
 }
 
 /**
@@ -278,13 +313,15 @@ export function renderSlotPanel(snap, { maxFieldWidth = DEFAULT_FIELD_MAX } = {}
     lines.push('当前槽 （空）');
   } else {
     const slot = snap.slot;
+    // Long issue ids / titles must not blow the primary slot row (pid/closed stay visible).
+    const issueId = truncateDisplayField(slot.issueId ?? '—', max);
     const title = slot.title
       ? `标题: ${truncateDisplayField(slot.title, max)}`
       : null;
     lines.push(
       [
         '当前槽',
-        `票: ${slot.issueId ?? '—'}`,
+        `票: ${issueId}`,
         title,
         `pid: ${slot.pid ?? '-'}`,
         `mode: ${slot.mode ?? '—'}`,
@@ -494,22 +531,30 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
  * Hierarchy: top/status primary; middle content; footer dim; session secondary
  * (already dimmed in pure text via indent); selection bold; current-slot green.
  *
+ * Pass `terminalRows` (stdout.rows) so root height is numeric — required for
+ * middle stretch + footer pin. Without it, height stays `'100%'` (content-sized
+ * under renderToString / callers that only assert copy).
+ *
  * @param {{
  *   snap?: object | null,
  *   notice?: string | null,
  *   selectedIndex?: number | null,
+ *   terminalRows?: number | null,
  * }} props
  */
 export function DispatchShell({
   snap = null,
   notice = null,
   selectedIndex = null,
+  terminalRows = null,
 } = {}) {
-  const layout = describeShellLayout();
+  const layout = describeShellLayout(
+    terminalRows != null ? { rows: terminalRows } : {},
+  );
   const middleLines = renderMiddlePanel(snap, { selectedIndex }).split('\n');
   const slotLines = renderSlotPanel(snap).split('\n');
   const noticeLine = renderNotice(snap, notice);
-  const topBar = renderTopBar(snap);
+  const topLines = renderTopBar(snap).split('\n');
   const footer = renderFooter(snap);
 
   return createElement(
@@ -525,10 +570,15 @@ export function DispatchShell({
         flexGrow: layout.top.flexGrow,
         borderStyle: 'single',
         paddingX: 1,
+        flexDirection: 'column',
         width: '100%',
       },
-      // Primary band: product title + status fields (bold).
-      createElement(Text, { bold: true }, topBar),
+      // Primary band: multi-line product title + auto/status (bold).
+      ...topLines.map((line, index) => createElement(
+        Text,
+        { key: `t${index}`, bold: true },
+        line || ' ',
+      )),
     ),
     createElement(
       Box,
@@ -618,11 +668,17 @@ function selectedIssueIdFromSnap(snap, selectedIndex) {
 /**
  * Live fullscreen app: poll surface, redraw shell, keyboard → surface actions.
  *
+ * `terminalRows` comes from the mount stdout (numeric Yoga height). Optional
+ * `output` stream is watched for `resize` so the shell re-pins after window
+ * changes without holding Ink's useStdout (keeps test PassThrough exits clean).
+ *
  * @param {{
  *   surface: object,
  *   autoTick?: boolean,
  *   pollIntervalMs?: number,
  *   ticksRef?: { current: number },
+ *   terminalRows?: number | null,
+ *   output?: { rows?: number, on?: Function, off?: Function, removeListener?: Function } | null,
  * }} props
  */
 function DispatchFullscreenApp({
@@ -630,11 +686,16 @@ function DispatchFullscreenApp({
   autoTick = true,
   pollIntervalMs = 2000,
   ticksRef = null,
+  terminalRows = null,
 } = {}) {
   const { exit } = useApp();
   const [snap, setSnap] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  // Numeric height from mount stdout.rows (resolved once). Resize re-pin is
+  // optional polish; keep mount path free of stream listeners so PassThrough
+  // tests can exit cleanly on q.
+  const resolvedRows = resolveShellHeight(terminalRows);
   const busyRef = useRef(false);
   const quittingRef = useRef(false);
   const snapRef = useRef(null);
@@ -768,7 +829,12 @@ function DispatchFullscreenApp({
     })();
   });
 
-  return createElement(DispatchShell, { snap, notice, selectedIndex });
+  return createElement(DispatchShell, {
+    snap,
+    notice,
+    selectedIndex,
+    terminalRows: resolvedRows,
+  });
 }
 
 /**
@@ -816,6 +882,8 @@ export async function runFullscreenDispatch({
       autoTick,
       pollIntervalMs,
       ticksRef,
+      // Numeric rows so middle flexGrow actually eats leftover terminal height.
+      terminalRows: resolveShellHeight(output?.rows),
     }),
     {
       stdin: input,

@@ -15,6 +15,7 @@
  * 9. list selection j/k/↑↓/digits — highlight only; no graph dispatch / no worker embed
  * 10. ticket 04 — arrow keys ≡ j/k; footer labels Enter / arrows / s auto
  * 11. ticket 05 — fullscreen layout polish: stretch middle, hierarchy, no ghost labels
+ * 12. 20260804-1006 / 02 — hard layout: numeric terminal height, footer pin, top wrap
  */
 
 import assert from 'node:assert/strict';
@@ -41,6 +42,7 @@ import {
   renderNotice,
   renderSlotPanel,
   renderTopBar,
+  resolveShellHeight,
   runFullscreenDispatch,
   shouldUseFullscreenDispatch,
   truncateDisplayField,
@@ -100,10 +102,13 @@ function makeSurfaceOnly(overrides = {}) {
 }
 
 function fakeTtyStream() {
-  const stream = new PassThrough();
+  // High water + always-drain: full-height frames write more than the default
+  // 16KB buffer; without a consumer, PassThrough backpressure freezes Ink exit.
+  const stream = new PassThrough({ highWaterMark: 1024 * 1024 });
   stream.isTTY = true;
   stream.columns = 80;
   stream.rows = 24;
+  stream.on('data', () => {});
   return stream;
 }
 
@@ -1388,6 +1393,7 @@ test('selected row and current-slot marks are distinguishable; session is second
 test('truncateDisplayField keeps readable head and does not explode long slot lines', () => {
   const longTitle = `超长标题-${'x'.repeat(80)}`;
   const longSession = `sess-${'a'.repeat(100)}`;
+  const longIssueId = `99-${'very-long-ticket-slug-'.repeat(6)}.md`;
   const title = truncateDisplayField(longTitle, 24);
   const session = truncateDisplayField(longSession, 28);
 
@@ -1398,7 +1404,7 @@ test('truncateDisplayField keeps readable head and does not explode long slot li
 
   const slot = renderSlotPanel(snapWithBoard({
     slot: {
-      issueId: '02-ready.md',
+      issueId: longIssueId,
       title: longTitle,
       pid: 1,
       mode: 'review',
@@ -1411,7 +1417,10 @@ test('truncateDisplayField keeps readable head and does not explode long slot li
     // Slot region lines stay bounded so the panel does not fully collapse layout.
     assert.ok(line.length <= 120, `slot line too long (${line.length}): ${line}`);
   }
-  assert.match(slot, /02-ready\.md/);
+  // Issue id / title / session all truncate; pid + closed remain on primary row.
+  assert.match(slot, /票:.*…|票:.*\.\.\./);
+  assert.match(slot, /pid:\s*1/);
+  assert.match(slot, /已关票:\s*否/);
   assert.match(slot, /…|\.\.\./);
 });
 
@@ -1465,4 +1474,106 @@ test('alternate-screen enter/leave clears residual glyphs (cleanup proxy)', asyn
   const firstClear = out.indexOf(CLEAR_SCREEN);
   const lastClear = out.lastIndexOf(CLEAR_SCREEN);
   assert.ok(firstClear >= 0 && lastClear > firstClear, 'clear on enter and again on leave');
+});
+
+// --- 20260804-1006-fix-fullscreen-cold-start / 02: layout hard fixes ---
+
+test('resolveShellHeight: numeric terminal rows with safe floor (not percent-of-content)', () => {
+  assert.equal(resolveShellHeight(24), 24);
+  assert.equal(resolveShellHeight(12), 12);
+  // Pathological / missing rows still yield a usable column height.
+  assert.equal(resolveShellHeight(0), 12);
+  assert.equal(resolveShellHeight(null), 12);
+  assert.equal(resolveShellHeight(undefined), 12);
+  assert.equal(resolveShellHeight(3), 12);
+  assert.equal(resolveShellHeight(99.7), 99);
+});
+
+test('describeShellLayout with rows: root height is terminal lines; middle still stretch', () => {
+  const layout = describeShellLayout({ rows: 30 });
+  assert.deepEqual(layout.regions, ['top', 'middle', 'slot', 'footer']);
+  assert.equal(layout.root.height, 30);
+  assert.equal(layout.root.width, '100%');
+  assert.equal(layout.root.flexDirection, 'column');
+  assert.equal(layout.middle.flexGrow, 1);
+  assert.equal(layout.middle.stretch, true);
+  assert.equal(layout.top.flexGrow, 0);
+  assert.equal(layout.slot.flexGrow, 0);
+  assert.equal(layout.footer.flexGrow, 0);
+  assert.equal(layout.animation, false);
+  // Without rows, keep declarative 100% for callers that only need region names.
+  const bare = describeShellLayout();
+  assert.equal(bare.root.height, '100%');
+  assert.equal(bare.middle.flexGrow, 1);
+});
+
+test('DispatchShell with terminalRows fills height; middle grows; footer not mid-screen', () => {
+  const rows = 22;
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard({ autoAdvance: false, status: 'idle', slot: null }),
+    terminalRows: rows,
+  }));
+  const lines = text.split('\n');
+  // Root must consume the terminal row budget (Ink numeric height), not content-shrink.
+  assert.ok(
+    lines.length >= rows - 1 && lines.length <= rows + 1,
+    `expected ~${rows} lines, got ${lines.length}`,
+  );
+  assert.match(text, /Issue Crusher|调度/);
+  assert.match(text, /当前槽/);
+  assert.match(text, /\[q\].*退出|退出/);
+  assert.match(text, /自动开下一张:\s*关/);
+
+  // Footer key help lives near the bottom of the frame (not hovering mid-screen).
+  const footerIdx = lines.findIndex((line) => /\[q\].*退出|退出/.test(line));
+  assert.ok(footerIdx >= 0, 'footer key line must render');
+  assert.ok(
+    footerIdx >= Math.floor(lines.length * 0.55),
+    `footer should pin near bottom (idx=${footerIdx}, lines=${lines.length})`,
+  );
+
+  // Four region content still present; no debug bracket labels.
+  assert.match(text, /依赖图|现在可执行/);
+  assert.doesNotMatch(text, /\[顶栏\]|\[中部\]|\[底栏\]/);
+});
+
+test('renderTopBar keeps auto + status discoverable after wrap / multi-line', () => {
+  const longFeature = `very-long-feature-slug-${'x'.repeat(48)}`;
+  const top = renderTopBar(snapWithBoard({
+    feature: longFeature,
+    autoAdvance: false,
+    status: 'idle',
+    subsequentMode: 'review',
+  }));
+
+  // Critical operator fields must appear as whole tokens (not mid-field chopped).
+  assert.match(top, /自动开下一张:\s*关/);
+  assert.match(top, /状态:/);
+  assert.match(top, /Issue Crusher|调度/);
+  assert.match(top, /runtime:\s*grok|运行时:\s*grok/);
+
+  // Multi-line structure: auto/status not glued only into an ultra-long single line
+  // that narrow terminals bury after wrap mid-token.
+  const lines = top.split('\n').map((l) => l.trim()).filter(Boolean);
+  assert.ok(lines.length >= 2, `expected multi-line top bar, got ${lines.length}: ${top}`);
+  const autoLine = lines.find((l) => /自动开下一张/.test(l));
+  assert.ok(autoLine, 'auto dial must occupy its own discoverable line');
+  assert.match(autoLine, /自动开下一张:\s*关/);
+  // Auto line should stay short enough to survive typical narrow widths.
+  assert.ok(autoLine.length <= 72, `auto line too long to stay discoverable: ${autoLine.length}`);
+});
+
+test('narrow top bar still exposes auto dial and chain status in shell frame', () => {
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard({
+      feature: `narrow-wrap-${'z'.repeat(60)}`,
+      autoAdvance: false,
+      status: 'idle',
+      slot: null,
+    }),
+    terminalRows: 18,
+  }));
+  assert.match(text, /自动开下一张:\s*关/);
+  assert.match(text, /状态:/);
+  assert.match(text, /当前槽\s*（空）|当前槽 \(空\)|当前槽/);
 });
