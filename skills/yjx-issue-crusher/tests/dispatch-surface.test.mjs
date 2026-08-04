@@ -534,3 +534,85 @@ test('surface: after toggle off, start succeeds but autoAdvance stays off', asyn
   assert.equal(result.spawned, true);
   assert.equal(surface.snapshot().autoAdvance, false);
 });
+
+// --- 20260804-1802-tui-model-effort / 01: subsequent model/effort on the surface ---
+
+test('snapshot exposes subsequent model/effort and pinned slot model/effort', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { surface } = makeSurface({
+    candidates: [first, second],
+    model: 'grok-3.5',
+    effort: 'high',
+  });
+
+  await surface.tick();
+  const snap = surface.snapshot();
+  assert.equal(snap.subsequentModel, 'grok-3.5');
+  assert.equal(snap.subsequentEffort, 'high');
+  assert.equal(snap.slot.model, 'grok-3.5', 'slot exposes the spawn-pinned model');
+  assert.equal(snap.slot.effort, 'high');
+  assert.equal(snap.actions.setModelEffort.available, true);
+});
+
+test('surface setModelEffort writes repo, updates snapshot, next launch carries it, slot pinned', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface, modeConfig } = makeSurface({
+    candidates: [first, second],
+  });
+
+  await surface.tick();
+  assert.equal(surface.snapshot().subsequentModel, null, 'no flag/repo → runtime default');
+  assert.equal(surface.snapshot().slot.model, null);
+
+  const submitted = await surface.setModelEffort({ model: 'grok-3.5', effort: 'high' });
+  assert.equal(submitted.ok, true);
+  assert.deepEqual(modeConfig.readModelEffort('grok'), { model: 'grok-3.5', effort: 'high' });
+
+  const snap = surface.snapshot();
+  assert.equal(snap.subsequentModel, 'grok-3.5');
+  assert.equal(snap.subsequentEffort, 'high');
+  assert.equal(snap.slot.model, null, 'live worker stays pinned');
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(snap.slot.pid);
+  await surface.tick();
+  const nextSnap = surface.snapshot();
+  assert.equal(nextSnap.slot.issueId, '02-second.md');
+  assert.equal(nextSnap.slot.model, 'grok-3.5', 'next spawn carries the submitted model');
+  assert.equal(nextSnap.slot.effort, 'high');
+  assert.equal(launcher.launches[1].model, 'grok-3.5');
+  assert.equal(launcher.launches[1].effort, 'high');
+});
+
+test('surface setModelEffort fails cleanly when the chain lacks the port', async () => {
+  const stubChain = {
+    feature: 'demo',
+    cwd: '/tmp/project',
+    runtime: 'grok',
+    mode: 'review',
+    autoAdvance: true,
+    stopped: false,
+    status: 'idle',
+    slot: null,
+    pendingHitl: null,
+    events: [],
+    model: null,
+    effort: null,
+    step: async () => ({
+      spawned: false,
+      advanced: true,
+      reason: 'empty-slot',
+      next: null,
+      status: 'idle',
+    }),
+    refreshStatus: async () => ({ status: 'idle', reason: 'empty-slot' }),
+  };
+  const surface = createDispatchSurface({ chain: stubChain, tracker: null });
+  await surface.tick();
+  const result = await surface.setModelEffort({ model: 'grok-4' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'no-model-effort');
+  assert.equal(surface.snapshot().subsequentModel, null);
+});

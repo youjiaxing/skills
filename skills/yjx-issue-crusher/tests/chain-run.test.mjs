@@ -1117,3 +1117,212 @@ test('after s-off then s-on, step auto-spawns again', async () => {
   assert.equal(handoff.spawned, true);
   assert.equal(launcher.launches.length, 2);
 });
+
+// --- 20260804-1802-tui-model-effort / 01: subsequent model/effort 真源与仓分桶 ---
+
+function makeModelEffortConfig(initial = {}) {
+  return createMemoryModeConfig({ mode: initial.mode ?? null, workers: initial.workers });
+}
+
+test('startup model/effort flags seed the next spawn without writing repo', async () => {
+  const only = candidate('01-startup-flags.md');
+  const config = makeModelEffortConfig();
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    model: 'grok-3.5',
+    effort: 'high',
+    modeConfig: config,
+  });
+
+  assert.equal(chain.model, 'grok-3.5');
+  assert.equal(chain.effort, 'high');
+  await chain.step();
+
+  const launch = launcher.launches[0];
+  assert.equal(launch.model, 'grok-3.5');
+  assert.equal(launch.effort, 'high');
+  assert.equal(config.readModelEffort('grok').model, null, 'startup flags must not write repo');
+  assert.equal(config.writeCount, 0);
+});
+
+test('repo workers bucket seeds subsequent model/effort when flags omitted', async () => {
+  const only = candidate('01-repo-bucket.md');
+  const config = makeModelEffortConfig({
+    workers: { grok: { model: 'grok-4', effort: 'medium' } },
+  });
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    modeConfig: config,
+  });
+
+  assert.equal(chain.model, 'grok-4', 'repo bucket seeds grok model');
+  assert.equal(chain.effort, 'medium');
+  await chain.step();
+  assert.equal(launcher.launches[0].model, 'grok-4');
+  assert.equal(launcher.launches[0].effort, 'medium');
+});
+
+test('startup flag wins over repo bucket per dimension', async () => {
+  const only = candidate('01-flag-wins.md');
+  const config = makeModelEffortConfig({
+    workers: { grok: { model: 'grok-4', effort: 'medium' } },
+  });
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    model: 'grok-3.5', // flag only for model; effort falls back to repo bucket
+    modeConfig: config,
+  });
+
+  assert.equal(chain.model, 'grok-3.5');
+  assert.equal(chain.effort, 'medium');
+  await chain.step();
+  assert.equal(launcher.launches[0].model, 'grok-3.5');
+  assert.equal(launcher.launches[0].effort, 'medium');
+});
+
+test('repo bucket only seeds the current runtime bucket (no cross-runtime bleed)', async () => {
+  const only = candidate('01-runtime-bucket.md');
+  const config = makeModelEffortConfig({
+    workers: { claude: { model: 'opus', effort: 'max' } },
+  });
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    runtime: 'grok', // current runtime is grok; claude bucket must not bleed
+    modeConfig: config,
+  });
+
+  assert.equal(chain.model, null);
+  assert.equal(chain.effort, null);
+  await chain.step();
+  assert.equal(launcher.launches[0].model, null);
+  assert.equal(launcher.launches[0].effort, null);
+});
+
+test('setModelEffort writes repo bucket, updates subsequent, keeps pinned slot', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const config = makeModelEffortConfig();
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches[0].model, null, 'startup: no flag/repo → omit flags');
+  assert.equal(chain.slot.model, null);
+
+  const submitted = await chain.setModelEffort({ model: 'grok-3.5', effort: 'high' });
+  assert.equal(submitted.ok, true);
+  assert.deepEqual(config.readModelEffort('grok'), { model: 'grok-3.5', effort: 'high' });
+  assert.equal(chain.model, 'grok-3.5');
+  assert.equal(chain.effort, 'high');
+  assert.equal(chain.slot.model, null, 'live worker stays pinned to spawn-time contract');
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  const next = await chain.step();
+  assert.equal(next.spawned, true);
+  assert.equal(launcher.launches[1].model, 'grok-3.5');
+  assert.equal(launcher.launches[1].effort, 'high');
+});
+
+test('setModelEffort empty values omit flags and clear the repo bucket', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const config = makeModelEffortConfig({
+    workers: { grok: { model: 'grok-4', effort: 'max' } },
+  });
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches[0].model, 'grok-4', 'repo bucket seeds first spawn');
+
+  const submitted = await chain.setModelEffort({ model: null, effort: '' });
+  assert.equal(submitted.ok, true);
+  assert.deepEqual(config.readModelEffort('grok'), { model: null, effort: null });
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.step();
+  assert.equal(launcher.launches[1].model, null, 'cleared subsequent omits model flag');
+  assert.equal(launcher.launches[1].effort, null);
+});
+
+test('setModelEffort supersedes startup flags for subsequent spawns', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const config = makeModelEffortConfig();
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    model: 'grok-3.5',
+    effort: 'high',
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches[0].model, 'grok-3.5');
+
+  await chain.setModelEffort({ model: 'grok-4', effort: 'max' });
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.step();
+  assert.equal(launcher.launches[1].model, 'grok-4');
+  assert.equal(launcher.launches[1].effort, 'max');
+});
+
+test('setModelEffort without modeConfig is rejected (must write repo)', async () => {
+  const only = candidate('01-need-config.md');
+  const { chain } = makeChain({ candidates: [only] }); // no modeConfig port
+  await chain.step();
+  const submitted = await chain.setModelEffort({ model: 'grok-4' });
+  assert.equal(submitted.ok, false);
+  assert.equal(submitted.reason, 'no-model-config');
+  assert.equal(chain.model, null);
+});
+
+test('live worker cannot hot-switch contract model/effort via setModelEffort', async () => {
+  const only = candidate('01-pinned-me.md');
+  const config = makeModelEffortConfig();
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    model: 'grok-3.5',
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal(chain.slot.model, 'grok-3.5');
+
+  await chain.setModelEffort({ model: 'grok-4', effort: 'max' });
+  const again = await chain.step();
+  assert.equal(again.spawned, false);
+  assert.equal(chain.slot.model, 'grok-3.5', 'pinned slot contract unchanged');
+  assert.equal(chain.slot.effort, null, 'pinned slot effort unchanged');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].model, 'grok-3.5');
+});
+
+test('resume keeps the spawn-pinned model/effort contract', async () => {
+  const only = candidate('01-resume-pinned.md');
+  const config = makeModelEffortConfig();
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    model: 'grok-3.5',
+    effort: 'high',
+    launcherOptions: { sessionId: 'sess-me-1' },
+    modeConfig: config,
+  });
+
+  await chain.step();
+  assert.equal(chain.slot.model, 'grok-3.5');
+
+  launcher.markExited(chain.slot.pid); // dead + not closed → needs-resume
+  const resumed = await chain.resume();
+  assert.equal(resumed.ok, true);
+  const resumeLaunch = launcher.launches[1];
+  assert.equal(resumeLaunch.kind, 'resume');
+  assert.equal(resumeLaunch.model, 'grok-3.5');
+  assert.equal(resumeLaunch.effort, 'high');
+});

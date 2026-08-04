@@ -64,6 +64,8 @@ function printHelp() {
 【可选参数】
   --runtime grok|claude   用哪个 Agent（可省略；仓配置或交互询问）
   --mode review|vibe      审码 / 可自动关票（可省略；默认 review）
+  --model 名称             本进程后续 Worker 的模型（省略：仓分桶或运行时默认）
+  --effort 档位            本进程后续 Worker 的 effort（省略：仓分桶或运行时默认）
   --cwd 路径              产品仓目录（默认：当前目录）
   --fake-launcher         假启动，不真开 Grok/Claude（冒烟用）
   --once / --stop         非交互跑一下就退（测试用）
@@ -71,6 +73,7 @@ function printHelp() {
 
 【仓级默认】产品仓可建 .issue-crusher/config.json：
   { "mode": "vibe", "runtime": "claude" }
+  可选 workers.<runtime>.model / effort（grok|claude 分桶；缺省=运行时默认不传 flag）
 
 【调度界面按键】m review|vibe  f强制推进  r恢复  y/n确认  s停链  t刷新  q退出
 
@@ -465,6 +468,8 @@ export async function runChain(options) {
         status: snap.status,
         stopped: snap.stopped,
         subsequentMode: snap.subsequentMode,
+        subsequentModel: snap.subsequentModel,
+        subsequentEffort: snap.subsequentEffort,
         slot: snap.slot,
         pendingHitl: snap.pendingHitl,
         boardIssueCount: snap.board?.issues?.length ?? 0,

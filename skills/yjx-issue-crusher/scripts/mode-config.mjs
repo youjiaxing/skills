@@ -32,6 +32,18 @@ export function normalizeMode(raw) {
 }
 
 /**
+ * Normalize an optional model/effort value: trim; empty/blank → null
+ * (omit the CLI flag and let the runtime product default apply).
+ * @param {unknown} raw
+ * @returns {string|null}
+ */
+export function normalizeOptionalFlag(raw) {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
  * Normalize Worker runtime. Unknown/empty → null.
  * @param {unknown} raw
  * @returns {'grok'|'claude'|null}
@@ -75,11 +87,22 @@ export function resolveSubsequentMode({
 
 /**
  * In-memory ModeConfig for Chain Run tests (no filesystem).
- * @param {{ mode?: 'review'|'vibe'|null }} [options]
+ * @param {{ mode?: 'review'|'vibe'|null, workers?: Record<string, {model?: string|null, effort?: string|null}> }} [options]
  */
-export function createMemoryModeConfig({ mode = null } = {}) {
+export function createMemoryModeConfig({ mode = null, workers = {} } = {}) {
   let current = normalizeMode(mode);
   let writeCount = 0;
+  /** @type {Record<string, {model: string|null, effort: string|null}>} */
+  const buckets = {};
+  for (const [rt, bucket] of Object.entries(workers || {})) {
+    const normalizedRt = normalizeRuntime(rt);
+    if (normalizedRt && bucket && typeof bucket === 'object') {
+      buckets[normalizedRt] = {
+        model: normalizeOptionalFlag(bucket.model),
+        effort: normalizeOptionalFlag(bucket.effort),
+      };
+    }
+  }
 
   return {
     get writeCount() {
@@ -96,6 +119,36 @@ export function createMemoryModeConfig({ mode = null } = {}) {
       current = normalized;
       writeCount += 1;
       return current;
+    },
+    /**
+     * Read the workers.<runtime> model/effort bucket.
+     * Missing/empty values read as null (omit flag; runtime product default).
+     * @param {unknown} runtime
+     * @returns {{ model: string|null, effort: string|null }}
+     */
+    readModelEffort(runtime) {
+      const rt = normalizeRuntime(runtime);
+      if (!rt) throw new Error(`invalid runtime: ${runtime}`);
+      const bucket = buckets[rt] || { model: null, effort: null };
+      return { model: bucket.model ?? null, effort: bucket.effort ?? null };
+    },
+    /**
+     * Write the workers.<runtime> model/effort bucket.
+     * Empty/blank values normalize to null (= omit flag on the read side).
+     * @param {unknown} runtime
+     * @param {{ model?: unknown, effort?: unknown }} next
+     * @returns {{ model: string|null, effort: string|null }}
+     */
+    writeModelEffort(runtime, { model = null, effort = null } = {}) {
+      const rt = normalizeRuntime(runtime);
+      if (!rt) throw new Error(`invalid runtime: ${runtime}`);
+      const normalized = {
+        model: normalizeOptionalFlag(model),
+        effort: normalizeOptionalFlag(effort),
+      };
+      buckets[rt] = normalized;
+      writeCount += 1;
+      return { ...normalized };
     },
   };
 }
@@ -134,6 +187,71 @@ export function createFileModeConfig({ projectRoot, configPath } = {}) {
     readRuntime() {
       const data = readFile();
       return normalizeRuntime(data?.runtime);
+    },
+    /**
+     * Read the workers.<runtime> model/effort bucket for this repo config.
+     * Missing bucket or empty values → null (omit flag; runtime product default).
+     * @param {unknown} runtime
+     * @returns {{ model: string|null, effort: string|null }}
+     */
+    readModelEffort(runtime) {
+      const rt = normalizeRuntime(runtime);
+      if (!rt) throw new Error(`invalid runtime: ${runtime}`);
+      const data = readFile();
+      const bucket = data?.workers?.[rt];
+      if (!bucket || typeof bucket !== 'object') {
+        return { model: null, effort: null };
+      }
+      return {
+        model: normalizeOptionalFlag(bucket.model),
+        effort: normalizeOptionalFlag(bucket.effort),
+      };
+    },
+    /**
+     * Write the workers.<runtime> model/effort bucket, keeping `mode`,
+     * `runtime` and the other runtime's bucket intact.
+     * Empty/blank values omit the key; a fully-empty bucket is removed
+     * (read side always treats absence as null → omit flag).
+     * @param {unknown} runtime
+     * @param {{ model?: unknown, effort?: unknown }} next
+     * @returns {{ model: string|null, effort: string|null }}
+     */
+    writeModelEffort(runtime, { model = null, effort = null } = {}) {
+      const rt = normalizeRuntime(runtime);
+      if (!rt) throw new Error(`invalid runtime: ${runtime}`);
+      const normalized = {
+        model: normalizeOptionalFlag(model),
+        effort: normalizeOptionalFlag(effort),
+      };
+      const existing = readFile() || {};
+      const workers = existing.workers && typeof existing.workers === 'object'
+        ? { ...existing.workers }
+        : {};
+      const bucket = workers[rt] && typeof workers[rt] === 'object'
+        ? { ...workers[rt] }
+        : {};
+      if (normalized.model == null) {
+        delete bucket.model;
+      } else {
+        bucket.model = normalized.model;
+      }
+      if (normalized.effort == null) {
+        delete bucket.effort;
+      } else {
+        bucket.effort = normalized.effort;
+      }
+      if (Object.keys(bucket).length === 0) {
+        delete workers[rt];
+      } else {
+        workers[rt] = bucket;
+      }
+      const nextData = { ...existing, workers };
+      if (Object.keys(workers).length === 0) {
+        delete nextData.workers;
+      }
+      mkdirSync(path.dirname(resolvedPath), { recursive: true });
+      writeFileSync(resolvedPath, `${JSON.stringify(nextData, null, 2)}\n`, 'utf8');
+      return { ...normalized };
     },
     writeMode(next) {
       const normalized = normalizeMode(next);

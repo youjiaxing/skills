@@ -87,6 +87,10 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
         available: !stopped,
         reason: stopped ? 'stopped' : null,
       },
+      setModelEffort: {
+        available: !stopped,
+        reason: stopped ? 'stopped' : null,
+      },
       forceAdvance: {
         available: !stopped && Boolean(chain.slot) && closed,
         reason: stopped
@@ -142,6 +146,8 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
         pid: chain.slot.pid ?? null,
         sessionId: chain.slot.sessionId ?? null,
         mode: chain.slot.mode ?? null,
+        model: chain.slot.model ?? null,
+        effort: chain.slot.effort ?? null,
         closed,
       }
       : null;
@@ -162,6 +168,8 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       cwd: chain.cwd,
       runtime: chain.runtime,
       subsequentMode: chain.mode,
+      subsequentModel: chain.model ?? null,
+      subsequentEffort: chain.effort ?? null,
       workerMode: slot?.mode ?? null,
       status,
       stopped,
@@ -201,6 +209,21 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
     },
     async setMode(nextMode) {
       const result = await chain.setMode(nextMode);
+      await buildSnapshot();
+      return result;
+    },
+    /**
+     * Submit subsequent model/effort (operator `o` flow in ticket 02;
+     * programmatic port here). Writes the repo workers bucket via chain and
+     * rebuilds the projection; the live slot contract is never mutated.
+     *
+     * @param {{ model?: string|null, effort?: string|null }} payload
+     */
+    async setModelEffort(payload) {
+      if (typeof chain.setModelEffort !== 'function') {
+        return { ok: false, reason: 'no-model-effort' };
+      }
+      const result = await chain.setModelEffort(payload);
       await buildSnapshot();
       return result;
     },

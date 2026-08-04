@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -109,4 +111,98 @@ test('regression 03: --once + fake-launcher still spawns on ready board (not ful
   assert.match(result.stdout, /02-do-work|软卡住|soft-stuck/);
   assert.doesNotMatch(result.stdout, /"slot": null/);
   assert.match(result.stdout, /"stopped": true/);
+});
+
+// --- 20260804-1802-tui-model-effort / 01: CLI model/effort init and repo bucket ---
+
+test('cli chain --once carries --model/--effort into snapshot and pinned slot', () => {
+  const result = runCli([
+    'chain',
+    '--feature', 'demo',
+    '--cwd', singleFixture,
+    '--project-root', singleFixture,
+    '--runtime', 'grok',
+    '--fake-launcher',
+    '--model', 'grok-3.5',
+    '--effort', 'high',
+    '--once',
+    '--stop',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /"subsequentModel": "grok-3\.5"/);
+  assert.match(result.stdout, /"subsequentEffort": "high"/);
+  // The spawned fake slot pins the same values (snapshot slot.model/effort).
+  assert.match(result.stdout, /"model": "grok-3\.5"/);
+  assert.match(result.stdout, /"effort": "high"/);
+});
+
+test('cli chain --once without model/effort omits flags (runtime default)', () => {
+  const result = runCli([
+    'chain',
+    '--feature', 'demo',
+    '--cwd', singleFixture,
+    '--project-root', singleFixture,
+    '--runtime', 'grok',
+    '--fake-launcher',
+    '--once',
+    '--stop',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /"subsequentModel": null/);
+  assert.match(result.stdout, /"subsequentEffort": null/);
+});
+
+test('cli chain --once seeds subsequent model/effort from repo workers bucket', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'ic-cli-bucket-'));
+  try {
+    cpSync(emptyFixture, root, { recursive: true });
+    mkdirSync(path.join(root, '.issue-crusher'), { recursive: true });
+    writeFileSync(
+      path.join(root, '.issue-crusher', 'config.json'),
+      JSON.stringify({ workers: { grok: { model: 'grok-4', effort: 'medium' } } }, null, 2),
+    );
+    const result = runCli([
+      'chain',
+      '--feature', 'demo',
+      '--cwd', root,
+      '--project-root', root,
+      '--runtime', 'grok',
+      '--fake-launcher',
+      '--once',
+      '--stop',
+    ]);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /"subsequentModel": "grok-4"/);
+    assert.match(result.stdout, /"subsequentEffort": "medium"/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cli chain --once: flag beats repo bucket (flag wins over repo per dimension)', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'ic-cli-flagwins-'));
+  try {
+    cpSync(emptyFixture, root, { recursive: true });
+    mkdirSync(path.join(root, '.issue-crusher'), { recursive: true });
+    writeFileSync(
+      path.join(root, '.issue-crusher', 'config.json'),
+      JSON.stringify({ workers: { grok: { model: 'grok-4', effort: 'medium' } } }, null, 2),
+    );
+    const result = runCli([
+      'chain',
+      '--feature', 'demo',
+      '--cwd', root,
+      '--project-root', root,
+      '--runtime', 'grok',
+      '--fake-launcher',
+      '--model', 'grok-3.5',
+      '--once',
+      '--stop',
+    ]);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /"subsequentModel": "grok-3\.5"/, 'flag model wins');
+    assert.match(result.stdout, /"subsequentEffort": "medium"/, 'effort falls back to repo');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -24,6 +24,7 @@ import {
   buildLaunchContract,
   buildResumeContract,
   buildSessionTitle,
+  normalizeOptionalFlag,
   resolveEntryClass,
 } from './build-launch-contract.mjs';
 import {
@@ -70,6 +71,31 @@ export function createChainRun({
   /** @type {Array<object>} */
   const events = [];
 
+  /**
+   * Startup initial subsequent model/effort (ticket 01): CLI flag →
+   * repo `workers.<current runtime>` bucket → empty (omit flags, runtime
+   * product default). Resolved once at process start; setModelEffort
+   * overrides afterwards. Startup flags never write the repo.
+   */
+  function resolveInitialModelEffort() {
+    const flagModel = normalizeOptionalFlag(model);
+    const flagEffort = normalizeOptionalFlag(effort);
+    let repo = null;
+    if (modeConfig && typeof modeConfig.readModelEffort === 'function') {
+      repo = modeConfig.readModelEffort(runtime);
+    }
+    return {
+      model: flagModel ?? repo?.model ?? null,
+      effort: flagEffort ?? repo?.effort ?? null,
+    };
+  }
+
+  const initialModelEffort = resolveInitialModelEffort();
+  /** Subsequent model for the next spawn (null → omit flag). */
+  let subsequentModel = initialModelEffort.model;
+  /** Subsequent effort for the next spawn (null → omit flag). */
+  let subsequentEffort = initialModelEffort.effort;
+
   let status = 'idle';
   let stopped = false;
   /** @type {boolean} */
@@ -109,11 +135,15 @@ export function createChainRun({
   let slot = null;
 
   function displayModel() {
-    return model == null || model === '' ? RUNTIME_DEFAULT : model;
+    return subsequentModel == null || subsequentModel === ''
+      ? RUNTIME_DEFAULT
+      : subsequentModel;
   }
 
   function displayEffort() {
-    return effort == null || effort === '' ? RUNTIME_DEFAULT : effort;
+    return subsequentEffort == null || subsequentEffort === ''
+      ? RUNTIME_DEFAULT
+      : subsequentEffort;
   }
 
   function readRepoMode() {
@@ -220,8 +250,8 @@ export function createChainRun({
       issue,
       mode: spawnMode,
       entryClass,
-      model,
-      effort,
+      model: subsequentModel,
+      effort: subsequentEffort,
     });
     const result = await launcher.launch(contract);
 
@@ -376,6 +406,14 @@ export function createChainRun({
     get mode() {
       return effectiveSubsequentMode();
     },
+    /** Subsequent model for the next spawn (null → omit flag; runtime default). */
+    get model() {
+      return subsequentModel;
+    },
+    /** Subsequent effort for the next spawn (null → omit flag; runtime default). */
+    get effort() {
+      return subsequentEffort;
+    },
     get events() {
       return events;
     },
@@ -461,6 +499,29 @@ export function createChainRun({
       }
 
       return { ok: true, mode: normalized };
+    },
+    /**
+     * Scheduler / TUI submit of subsequent model/effort (ticket 01).
+     * Writes the repo `workers.<runtime>` bucket immediately (when modeConfig
+     * is present), supersedes startup flag/repo values for subsequent spawns,
+     * and never mutates the live worker pin. Empty/blank values normalize to
+     * null (= omit the CLI flag; runtime product default).
+     *
+     * @param {{ model?: string|null, effort?: string|null }} next
+     */
+    async setModelEffort({ model: nextModel = null, effort: nextEffort = null } = {}) {
+      // Spec: submit must write repo immediately — require a write port.
+      if (!modeConfig || typeof modeConfig.writeModelEffort !== 'function') {
+        return { ok: false, reason: 'no-model-config' };
+      }
+      const normalized = {
+        model: normalizeOptionalFlag(nextModel),
+        effort: normalizeOptionalFlag(nextEffort),
+      };
+      await modeConfig.writeModelEffort(runtime, normalized);
+      subsequentModel = normalized.model;
+      subsequentEffort = normalized.effort;
+      return { ok: true, model: normalized.model, effort: normalized.effort };
     },
     /**
      * Human force-advance: skip waiting for worker exit.

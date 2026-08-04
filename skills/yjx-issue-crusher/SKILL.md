@@ -62,15 +62,29 @@ Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门�
 
 - 仓级路径：产品仓根 **`.issue-crusher/config.json`**  
   - 键 **`mode`**：`"review"` \| `"vibe"`  
-  - 键 **`runtime`**（可选）：`"grok"` \| `"claude"`，供 CLI 省略 `--runtime` 时使用
+  - 键 **`runtime`**（可选）：`"grok"` \| `"claude"`，供 CLI 省略 `--runtime` 时使用  
+  - 键 **`workers.<runtime>.{model,effort}`**（可选）：按 runtime 分桶的 subsequent 模型/强度；空或省略 = 不传 flag  
 - 调度 TUI 拨杆：立即写仓，只影响**后续** spawn；当前 Worker 在 spawn 时**钉死** mode  
 - 切到 vibe：一行后果提示（将自动 commit/关票）  
 - **无**用户级本机总默认、**无** feature 级 mode
 
+### subsequent model / effort
+
+进程内维护 subsequent **model**、**effort**（可空 = 不传 flag），与 subsequent mode 并列。
+
+**启动初值（不为 model/effort 弹选单；启动 flag 默认不写仓）：**
+
+1. CLI `--model` / `--effort`（有则用；按维独立）  
+2. 否则仓内 `workers.<当前 runtime>.model|effort`  
+3. 否则空（运行时产品默认）
+
+**提交（`setModelEffort` / 调度 surface 端口）：** 立即写仓到当前 runtime 分桶，只影响**之后** spawn；当前槽在 spawn 时钉死的 model/effort **不热切**。空/空白读侧一律当不传 flag。  
+**无**跨 runtime 扁平顶层 `model`/`effort` 真源。全屏交互选单（键 `o`）另票；本层只保证真源与可测提交接口。
+
 ### 启动与标题
 
 - **必填：** `runtime`（`grok` \| `claude`）、`feature`、`issue`、`cwd`  
-- **可选：** `model`、`effort`（省略则不传 flag，用运行时产品默认）  
+- **可选：** `model`、`effort`（见上 subsequent 初值；省略则不传 flag，用运行时产品默认）  
 - **标题：** `<feature>/<NN>-<slug>`；Claude `-n`；Grok 首行 `/rename`  
 - **impl 入口：** `/implement <票相对路径>`（路径引用，不贴全文）  
 - **Wayfinder 入口：** `/wayfinder <票相对路径>`（须 HITL 同意后）  
@@ -119,8 +133,8 @@ closed == false
 
 ### 测试 seam
 
-- **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / 单槽。  
-- **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮。  
+- **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽。  
+- **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`setModelEffort` 写仓与 snapshot 字段可测。  
 - 不测真 Grok/Claude 窗体内部。
 
 ---
@@ -131,6 +145,7 @@ closed == false
 - **local-markdown** Tracker 适配 + 只读 `getBoard()`  
 - **假 / 真** WorkerLauncher（同一 launch DTO；真启动器开 **独立前台窗**，不进调度屏）  
 - **mode** 解析与仓文件写回  
+- **subsequent model/effort** 初值（CLI → 仓分桶 → 空）与 `setModelEffort` 写仓  
 - **HITL** confirm/reject（Wayfinder / human / 未知）  
 - **CLI：** `recommend` · `probe-launch` · **`chain`**（默认命令；可选假启动器）  
 - **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏；**Enter 开始**、列表导航、自动开下一张开关）  
@@ -212,20 +227,26 @@ Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 *
 |----------|------|
 | Claude | `ic my-feature --runtime claude` |
 | 本进程 mode | `ic my-feature --mode vibe` |
+| 本进程 model/effort | `ic my-feature --model grok-4 --effort high` |
 | 只推荐下一张 | `ic recommend my-feature` |
 
-**仓级默认 runtime / mode**（可进 git）：产品仓 `.issue-crusher/config.json`
+**仓级默认 runtime / mode / workers 分桶**（可进 git）：产品仓 `.issue-crusher/config.json`
 
 ```json
 {
   "mode": "vibe",
-  "runtime": "claude"
+  "runtime": "claude",
+  "workers": {
+    "grok": { "model": "grok-4", "effort": "high" },
+    "claude": { "model": "opus", "effort": "max" }
+  }
 }
 ```
 
 解析：  
 - **runtime**：`--runtime` → 仓 `runtime` → **交互 dual-TTY 全屏选单**（`grok` / `claude`）；非交互/脚本/`--once` 须显式指定（`--fake-launcher` 冒烟缺省时默认 grok）  
 - **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（全屏拨杆 `m` 仍会写回仓 `mode`）  
+- **model / effort**：`--model`/`--effort` → 仓 `workers.<当前 runtime>` → 空（不传 flag）；提交 subsequent 后静默写回当前 runtime 分桶  
 - **feature**：位置参数 → 否则 dual-TTY **全屏列出** `.scratch` 下 feature 选取；非交互须显式给出
 
 未 `npm link` 时仍可用长路径：
@@ -243,6 +264,8 @@ node <skill-dir>/scripts/cli.mjs my-feature
 | `--project-root` | Tracker 根（默认：与 cwd 相同） |
 | `--runtime` | `grok` \| `claude`（见上默认） |
 | `--mode` | 仅本进程 `review`\|`vibe`，默认不写仓 |
+| `--model` | 本进程 subsequent 模型初值（默认不写仓；见上优先级） |
+| `--effort` | 本进程 subsequent effort 初值（默认不写仓；见上优先级） |
 | `--fake-launcher` | 假启动器（冒烟，不开真 Worker 窗） |
 | `--once` | **非全屏**：tick 后打印调度帧并退出（脚本/CI/冒烟）；**可**在该路径按看板尝试开票 |
 | `--stop` | 与 `--once` 联用：tick 后禁止继续自动开票并结束（脚本用） |
