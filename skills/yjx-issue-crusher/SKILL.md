@@ -21,7 +21,7 @@ disable-model-invocation: true
 
 | 角色 | 做 | 不做 |
 |------|----|------|
-| **编排器（CLI ± Ink 全屏调度 TUI）** | 读候选/完成态；spawn Worker；盯完成闸门；按 review/vibe 决定可否开下一张；失败/未关票停开下一张；全屏分区调度与只读图 | 不当 agent 主界面；不自动换模/effort；不把进程退出当唯一成功；**不内嵌 Worker 终端**；不做多仓总控 |
+| **编排器（CLI ± Ink 全屏调度 TUI）** | 读候选/完成态；全屏下按「开始/自动开下一张」门闩 spawn Worker；盯完成闸门；按 review/vibe 与自动开关决定可否开下一张；失败/未关票停开下一张；全屏分区调度与只读图 | 不当 agent 主界面；不自动换模/effort；不把进程退出当唯一成功；**不内嵌 Worker 终端**；不做多仓总控；**全屏进门不擅自开 Worker** |
 | **Worker（Grok Build / Claude Code 独立前台窗）** | 在指定 cwd 做票；人可介入；会话可回看；与调度 TUI **分窗** | 不选下一张、不跨 feature 调度 |
 | **Tracker 适配器** | 读候选 / 完成 / 只读看板投影 | 不含编排策略、不 spawn Worker |
 
@@ -98,24 +98,46 @@ closed == false
 - 默认自动 resume N 次、默认 PTY 注入 continue/`/quit`  
 - 多 Worker 并排视图作为默认
 
+### 全屏：开始与「自动开下一张」（交互合同）
+
+仅 **dual-TTY 全屏** 适用。非全屏见下节「何时全屏 / 何时打印帧」。
+
+| 规则 | 约定 |
+|------|------|
+| 刚进全屏 | **不**自动弹 Worker；**自动开下一张 = 关** |
+| 列表导航 | `j` / `k`、**方向键 ↑↓**、`1–9`：只移动「现在可执行」高亮 |
+| **Enter** | 开 **一张**：有高亮 → 该票；无高亮 → 看板默认下一张（与自动候选同一套 frontier 规则） |
+| 第一次成功 Enter 开票 | 同时把 **自动开下一张** 打开（此后可 AFK） |
+| 自动开着时 | 条件满足（`Closed` ∧ 退出或强制推进等既有双条件）后按 **看板** 开后续 ready 票，**忽略** 高亮 |
+| 自动开着且槽空 | 仍可用高亮 + Enter **指定**下一张；不按则 poll/tick 自动开 |
+| **`s`** | **切换**「自动开下一张」开 / 关 |
+| 用 `s` 关掉之后 | 再 Enter **只开一张**，**不**把自动开回来；恢复自动只能再按 `s` |
+| 空槽且 `s` 拨到开 | 允许随后按看板自动开（不必先 Enter） |
+| **`q`** / Ctrl+C | 关掉自动并退出全屏 |
+
+顶栏须可读展示「自动开下一张：开/关」。UI/文档宜用直白用语，避免只写「停链」让人不知能否再开。
+
 ### 测试 seam
 
-**唯一主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，只断言外部行为（spawn / 停链 / 强制推进 / resume / 候选 / mode / 单槽）。不测真 Grok/Claude TUI 内部。
+- **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / 单槽。  
+- **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮。  
+- 不测真 Grok/Claude 窗体内部。
 
 ---
 
-## 能力清单（已实现）
+## 能力清单
 
-- **Chain Run** 测试缝与状态机（双条件、边沿、单槽、stop）  
+- **Chain Run** 测试缝与状态机（双条件、边沿、单槽、自动开下一张门闩）  
 - **local-markdown** Tracker 适配 + 只读 `getBoard()`  
 - **假 / 真** WorkerLauncher（同一 launch DTO；真启动器开 **独立前台窗**，不进调度屏）  
 - **mode** 解析与仓文件写回  
 - **HITL** confirm/reject（Wayfinder / human / 未知）  
 - **CLI：** `recommend` · `probe-launch` · **`chain`**（默认命令；可选假启动器）  
-- **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏键位；键盘驱动既有 surface 动作）  
-- **启动期全屏选单**：缺 feature / runtime 时用 Ink 列表（`j`/`k`/数字 + Enter；`q` 取消），不再以 readline 问句为主路径  
-- **非全屏路径：** `--once` / 非 TTY / 非交互 → 打印调度帧后退出（不挂全屏、不询问）；单 TTY 等退化场景可走可打印帧 + 行内命令后备  
-- 交互全屏 **后台 poll**（默认 2s）自动 tick，支持 AFK 接力  
+- **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏；**Enter 开始**、列表导航、自动开下一张开关）  
+- **启动期全屏选单**：缺 feature / runtime 时用 Ink 列表（`j`/`k`/方向键/数字 + Enter；`q` 取消）  
+- **非全屏路径：** `--once` / 非 TTY / 非交互 → 打印调度帧后退出；**仍可**在 tick 时按看板尝试开票（不套全屏「默认不开」）  
+- 交互全屏 **后台 poll**（默认 2s）在 **自动开下一张为开** 时支持 AFK 接力  
+- **全屏呈现**：铺满终端高度、进入/退出清残影、主/次信息分层、选中与当前槽可辨；无复杂动画
 
 ---
 
@@ -177,12 +199,14 @@ ic
 
 | 分区 | 内容 |
 |------|------|
-| **顶栏** | feature · runtime · 后续 mode · 链状态 |
-| **中部** | 中文 ASCII 依赖图（★可执行 ▶进行中 ·阻塞 ✓完成）+「现在可执行」清单（只读，无图上派票） |
+| **顶栏** | feature · runtime · 后续 mode · **自动开下一张：开/关** · 链状态 |
+| **中部** | 中文 ASCII 依赖图（★可执行 ▶进行中 ·阻塞 ✓完成）+「现在可执行」清单（导航高亮；**Enter 开票**；无图上派票） |
 | **当前槽** | 在跑票 / pid / Closed / 钉死 mode；有待确认时显示 HITL |
-| **底栏** | 当前可用键位 |
+| **底栏** | 当前可用键位（与真实行为一致） |
 
 Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 **不内嵌** Worker 输出。多 feature / 多仓 = **多开** `ic` 进程（各管各的调度窗 + Worker 窗）。
+
+**全屏进门不自动开 Worker**；开第一张用 **Enter**（见「全屏：开始与自动开下一张」）。呈现目标：铺满终端高度、无顶栏残影/重影、主/次信息字色分层、选中与当前槽可辨；不追求重动画。
 
 | 还想指定 | 写法 |
 |----------|------|
@@ -220,18 +244,18 @@ node <skill-dir>/scripts/cli.mjs my-feature
 | `--runtime` | `grok` \| `claude`（见上默认） |
 | `--mode` | 仅本进程 `review`\|`vibe`，默认不写仓 |
 | `--fake-launcher` | 假启动器（冒烟，不开真 Worker 窗） |
-| `--once` | **非全屏**：tick 后打印调度帧并退出（脚本/CI/冒烟） |
-| `--stop` | 与 `--once` 联用：tick 后停链 |
+| `--once` | **非全屏**：tick 后打印调度帧并退出（脚本/CI/冒烟）；**可**在该路径按看板尝试开票 |
+| `--stop` | 与 `--once` 联用：tick 后禁止继续自动开票并结束（脚本用） |
 
 ### 何时全屏 / 何时打印帧
 
 | 条件 | 行为 |
 |------|------|
-| stdin+stdout 皆 TTY，且无 `--once` | **Ink 全屏**调度（alternate-screen）；缺 feature/runtime 时先挂全屏选单 |
-| `--once`、管道、非 TTY、显式非交互 | **不挂** Ink；打印一帧（或有限 tick）后退出；缺参按非交互合同报错/默认，**不**弹选单 |
-| 退化交互（例如仅一侧 TTY） | 可打印帧 + 行内 `>` 命令后备（**不是**主 UI；日常请用 dual-TTY 全屏） |
+| stdin+stdout 皆 TTY，且无 `--once` | **Ink 全屏**；缺 feature/runtime 时先挂全屏选单；**默认不 spawn**，Enter / 自动开下一张 见上表 |
+| `--once`、管道、非 TTY、显式非交互 | **不挂** Ink；打印一帧（或有限 tick）后退出；**不**套全屏「默认不开」，可按看板尝试开票；缺参按非交互合同 |
+| 退化交互（例如仅一侧 TTY） | 可打印帧 + 行内命令后备（**不是**主 UI；日常请用 dual-TTY 全屏） |
 
-空链 / 停链冒烟（非全屏、可脚本化）：
+非全屏冒烟示例：
 
 ```bash
 ic my-feature --fake-launcher --once --stop
@@ -248,21 +272,25 @@ ic demo \
 
 ### 全屏调度键位
 
-主路径为**单键**（无 readline 行编辑）。底栏会按 `snapshot.actions` 隐藏不可用项。
+主路径为**单键**（无 readline 行编辑）。底栏会按可用动作隐藏不可用项，文案须与行为一致。
 
 ```text
-m                   mode 拨杆：在 review ↔ vibe 间切换（写仓；切 vibe 一行后果提示；只影响后续 spawn）
+Enter               开一张：有高亮 → 该票；无高亮 → 看板默认下一张
+                    （干净开始下：成功开票后打开「自动开下一张」；
+                     若刚用 s 关掉自动：只开一张，不把自动开回来）
+j / k 或 ↓ / ↑     「现在可执行」高亮下一项 / 上一项（只改高亮）
+1–9                 高亮对应可执行项（只改高亮）
+s                   切换「自动开下一张」开 ↔ 关
+m                   mode 拨杆：review ↔ vibe（写仓；切 vibe 一行提示；只影响后续 spawn）
 f                   强制推进（仅当前票 Closed 可用）
 r                   needs-resume 一键恢复
 y / n               HITL 同意 / 拒绝
-s                   停链（此后不再自动 spawn）
 t                   手动 tick / 刷新一次
-j / k               「现在可执行」列表高亮下一项 / 上一项（只影响显示，不派票）
-1–9                 高亮对应可执行项（只影响显示）
-q                   停链并退出全屏（Ctrl+C 等同）
+q                   关掉自动并退出全屏（Ctrl+C 等同）
 ```
 
-看板与依赖图 **read-only**，无图上派票、无内嵌 Worker。
+看板与依赖图 **read-only**，无图上派票、无内嵌 Worker。  
+自动开着时 **忽略** 列表高亮，只按看板选下一张；高亮只约束 **Enter**。
 
 ### 启动全屏选单键位
 
@@ -271,7 +299,7 @@ q                   停链并退出全屏（Ctrl+C 等同）
 ```text
 j / k 或 ↓ / ↑     移动高亮
 1–9                 跳到对应项
-Enter               确认
+Enter               确认选项（进入调度全屏，此时仍不自动开 Worker）
 q / Esc             取消（不留下残缺终端状态）
 ```
 

@@ -22,7 +22,7 @@ npx skills add youjiaxing/skills --skill yjx-discuss
 - `yjx-local-tracker-setup`：在 Matt Pocock Local Markdown tracker 上增量启用 `Closed` 完成真源和机器配置，默认只预览。
 - `yjx-local-kanban`：只读输出 Local Markdown implementation issues 的人类看板、完整 JSON 依赖图和 Mermaid。
 - `yjx-local-ralph`：从 Local Markdown frontier 手动确认并启动单张 issue，完成后停止；依赖 `yjx-local-kanban`。
-- `yjx-issue-crusher`：issue 串行接力编排器（Chain Run + **Ink 全屏**调度 TUI；Worker 独立前台窗）。`npm link` 后短命令 `ic <feature>` / `issue-crusher`。合同与用法见该 skill 的 `SKILL.md`；local-md 软依赖同根 `yjx-local-kanban`；交互全屏依赖 monorepo 根的 **Ink + React**。
+- `yjx-issue-crusher`：issue 串行接力编排器（Chain Run + **Ink 全屏**调度 TUI；Worker 独立前台窗）。`npm link` 后短命令 `ic <feature>` / `issue-crusher`。**全屏默认不自动开 Worker**（Enter 开始；`s` 切换「自动开下一张」）；`--once` 等非全屏仍可一拍尝试开票。合同与用法见该 skill 的 `SKILL.md`；local-md 软依赖同根 `yjx-local-kanban`；交互全屏依赖 monorepo 根的 **Ink + React**。
 
 ### Local Markdown tracker 组合
 
@@ -42,7 +42,7 @@ npx skills add youjiaxing/skills --skill yjx-issue-crusher
 依赖分层：
 
 - `yjx-local-tracker-setup` / `yjx-local-kanban` / `yjx-local-ralph`：以 **Node 标准库**为主（无 Ink）。  
-- `yjx-issue-crusher`：编排核心仍以标准库为主；**交互 dual-TTY 全屏调度与启动选单**需要 monorepo 根依赖 **Ink + React**（`npm install` 后使用）。`--once` / 非 TTY 冒烟路径不挂全屏。
+- `yjx-issue-crusher`：编排核心仍以标准库为主；**交互 dual-TTY 全屏调度与启动选单**需要 monorepo 根依赖 **Ink + React**（`npm install` 后使用）。全屏进门不自动 spawn；`--once` / 非 TTY 冒烟路径不挂全屏，行为见该 skill `SKILL.md`。
 
 ## 开发者设置
 
