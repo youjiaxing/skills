@@ -154,12 +154,47 @@ export function drainPendingInput(input) {
   return drained;
 }
 
+/**
+ * Operator-facing status line for the top bar.
+ * Edge states must stay distinguishable without reading SKILL.md:
+ * - awaiting-worker-exit + auto on → may auto-reap then open next
+ * - awaiting-worker-exit + auto off → use f (Closed only)
+ * - needs-resume + r available → press r (history, not next ticket)
+ * - needs-resume + no session id → explicit dead-end, no silent empty window
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string}
+ */
 function statusLine(snap) {
   if (!snap) return '状态: （启动中）';
-  const label = snap.status ? statusLabelZh(snap.status) : '—';
+  const status = snap.status;
+  const label = status ? statusLabelZh(status) : '—';
   // Avoid "已停链 [已停链]" when status is already the stopped label.
-  const stoppedMark = snap.stopped && snap.status !== 'stopped' ? ' [已停链]' : '';
-  return `状态: ${label}${stoppedMark}`;
+  const stoppedMark = snap.stopped && status !== 'stopped' ? ' [已停链]' : '';
+
+  let hint = '';
+  if (status === 'awaiting-worker-exit') {
+    hint = snap.autoAdvance === false
+      ? '（可按 f 强制推进）'
+      : '（可自动收尾）';
+  } else if (status === 'needs-resume') {
+    // Prefer action projection (same gate as footer [r]); fall back to slot id.
+    const resume = snap.actions?.resume;
+    if (resume?.reason === 'no-session-id') {
+      hint = '（无 session id）';
+    } else if (resume?.available === true) {
+      hint = '（按 r）';
+    } else if (resume?.available === false) {
+      // Unavailable for a reason other than no-id: do not advertise r.
+      hint = resume.reason ? `（${resume.reason}）` : '';
+    } else if (snap.slot?.sessionId) {
+      hint = '（按 r）';
+    } else {
+      hint = '（无 session id）';
+    }
+  }
+
+  return `状态: ${label}${hint}${stoppedMark}`;
 }
 
 function modeHint(mode) {

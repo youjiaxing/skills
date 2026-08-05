@@ -1749,6 +1749,180 @@ test('renderTopBar shows subsequent model/effort or 运行时默认', () => {
   assert.match(set, /自动开下一张:/);
 });
 
+// --- 20260805-1244-vibe-handoff-and-resume / 03: status copy + key regression ---
+
+test('renderTopBar distinguishes awaiting-worker-exit (auto-reap vs manual f)', () => {
+  const autoOn = renderTopBar(snapWithBoard({
+    status: 'awaiting-worker-exit',
+    autoAdvance: true,
+    slot: {
+      issueId: '01-first.md',
+      pid: 11,
+      mode: 'vibe',
+      closed: true,
+    },
+    actions: {
+      forceAdvance: { available: true, reason: null },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  }));
+  assert.match(autoOn, /等待.*退出|Worker.*退出/);
+  assert.match(autoOn, /自动收尾|可自动/);
+  assert.doesNotMatch(autoOn, /按\s*r|恢复会话/);
+
+  const autoOff = renderTopBar(snapWithBoard({
+    status: 'awaiting-worker-exit',
+    autoAdvance: false,
+    slot: {
+      issueId: '01-first.md',
+      pid: 11,
+      mode: 'vibe',
+      closed: true,
+    },
+    actions: {
+      forceAdvance: { available: true, reason: null },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  }));
+  assert.match(autoOff, /等待.*退出|Worker.*退出/);
+  assert.match(autoOff, /强制推进|按\s*f/);
+  assert.doesNotMatch(autoOff, /自动收尾/);
+});
+
+test('renderTopBar distinguishes needs-resume (press r) vs no session id', () => {
+  const withId = renderTopBar(snapWithBoard({
+    status: 'needs-resume',
+    autoAdvance: false,
+    slot: {
+      issueId: '01-first.md',
+      pid: 11,
+      sessionId: 'sess-1',
+      mode: 'review',
+      closed: false,
+    },
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: true, reason: null },
+    },
+  }));
+  assert.match(withId, /恢复|needs-resume/i);
+  assert.match(withId, /按\s*r|\[r\]/);
+  assert.doesNotMatch(withId, /无 session|no-session-id/i);
+  assert.doesNotMatch(withId, /自动收尾/);
+
+  const noId = renderTopBar(snapWithBoard({
+    status: 'needs-resume',
+    autoAdvance: false,
+    slot: {
+      issueId: '01-first.md',
+      pid: 11,
+      sessionId: null,
+      mode: 'review',
+      closed: false,
+    },
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: false, reason: 'no-session-id' },
+    },
+  }));
+  assert.match(noId, /恢复|needs-resume/i);
+  assert.match(noId, /无 session|no-session-id/i);
+  assert.doesNotMatch(noId, /按\s*r|\[r\]/);
+});
+
+test('renderFooter shows f only when forceAdvance available; r only when resume available', () => {
+  const neither = renderFooter(snapWithBoard({
+    status: 'soft-stuck',
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  }));
+  assert.doesNotMatch(neither, /\[f\]/);
+  assert.doesNotMatch(neither, /\[r\]/);
+
+  const forceOnly = renderFooter(snapWithBoard({
+    status: 'awaiting-worker-exit',
+    actions: {
+      forceAdvance: { available: true, reason: null },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  }));
+  assert.match(forceOnly, /\[f\].*强制推进/);
+  assert.doesNotMatch(forceOnly, /\[r\]/);
+
+  const resumeOnly = renderFooter(snapWithBoard({
+    status: 'needs-resume',
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: true, reason: null },
+    },
+  }));
+  assert.match(resumeOnly, /\[r\].*恢复/);
+  assert.doesNotMatch(resumeOnly, /\[f\]/);
+
+  const noSession = renderFooter(snapWithBoard({
+    status: 'needs-resume',
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: false, reason: 'no-session-id' },
+    },
+  }));
+  assert.doesNotMatch(noSession, /\[r\]/);
+  assert.doesNotMatch(noSession, /\[f\]/);
+});
+
+test('handleFullscreenKey f with autoAdvance on does not double-spawn next ticket', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await surface.tick();
+  const oldPid = surface.snapshot().slot.pid;
+  tracker.setCompletion('01-first.md', true);
+  await surface.refresh();
+  assert.equal(surface.snapshot().status, 'awaiting-worker-exit');
+  assert.equal(surface.snapshot().actions.forceAdvance.available, true);
+
+  // Human f while auto-reap path is also eligible: exactly one next spawn.
+  const forced = await handleFullscreenKey(surface, 'f');
+  assert.match(forced.message || '', /强制推进|接力/);
+  assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+
+  // Extra tick must not open a third worker for the same handoff.
+  await surface.tick();
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
+  // f default is orphan; auto-reap must not also kill after force-advance.
+  assert.equal(launcher.isAlive(oldPid), true);
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('handleFullscreenKey f never kills when issue is not Closed', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await surface.tick();
+  const pid = surface.snapshot().slot.pid;
+  assert.equal(surface.snapshot().actions.forceAdvance.available, false);
+
+  const denied = await handleFullscreenKey(surface, 'f');
+  assert.match(denied.message || '', /无法强制推进|not-closed|Closed/i);
+  assert.equal(launcher.isAlive(pid), true);
+  assert.equal(launcher.kills.length, 0);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+});
+
 test('renderFooter includes [o] model/effort when action available', () => {
   const footer = renderFooter(snapWithBoard({
     actions: {

@@ -84,3 +84,13 @@ test('statusLabelZh covers soft-stuck', () => {
   assert.match(statusLabelZh('soft-stuck'), /软卡住/);
   assert.equal(statusLabelZh('idle'), '空闲');
 });
+
+// 20260805-1244 / 03 — edge status labels must stay operator-distinguishable.
+test('statusLabelZh distinguishes awaiting-worker-exit and needs-resume', () => {
+  assert.match(statusLabelZh('awaiting-worker-exit'), /等待.*退出|Worker.*退出/);
+  assert.match(statusLabelZh('needs-resume'), /恢复|resume/i);
+  assert.notEqual(
+    statusLabelZh('awaiting-worker-exit'),
+    statusLabelZh('needs-resume'),
+  );
+});

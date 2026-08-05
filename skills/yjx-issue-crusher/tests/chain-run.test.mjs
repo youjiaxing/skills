@@ -378,6 +378,37 @@ test('auto safe-reap does not stomp force-advance default no-kill orphan path', 
   assert.equal(launcher.kills.length, 0);
 });
 
+// 20260805-1244 / 03: concurrent f + auto path → one next ticket, never kill not-Closed.
+test('Closed + auto on: forceAdvance then step opens next exactly once (no double spawn)', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const third = candidate('03-third.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second, third],
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  const oldPid = chain.slot.pid;
+  tracker.setCompletion('01-first.md', true);
+
+  const forced = await chain.forceAdvance();
+  assert.equal(forced.ok, true);
+
+  const firstStep = await chain.step();
+  assert.equal(firstStep.spawned, true);
+  assert.equal(chain.slot?.issue?.id, '02-second.md');
+  assert.equal(launcher.launches.length, 2);
+
+  const secondStep = await chain.step();
+  assert.equal(secondStep.spawned, false);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(chain.slot?.issue?.id, '02-second.md');
+  // Default f orphans; auto-reap must not also kill after force-advance.
+  assert.equal(launcher.isAlive(oldPid), true);
+  assert.equal(launcher.kills.length, 0);
+});
+
 test('Closed + auto on + worker already exited: no kill call, still spawns next', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
