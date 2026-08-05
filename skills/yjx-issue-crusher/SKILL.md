@@ -30,22 +30,25 @@ disable-model-invocation: true
 | 概念 | 定义 | 真源 |
 |------|------|------|
 | **业务完成** | 本票在看板上已完成 | 普通 impl：issue 头 **`Closed: true`**（读侧） |
-| **会话可收尾** | 本票 Worker 进程已结束 | **进程退出**（pid） |
-| **可开下一张** | 允许 spawn 下一张 | **`Closed` ∧（进程退出 ∨ 已 Closed 下人手 `forceAdvance`）** |
+| **会话可收尾** | 本票 Worker 进程已结束 | **进程退出**（pid）；或 Closed 后的安全收尾 / 人手强制推进 |
+| **可开下一张** | 允许 spawn 下一张 | **`Closed` ∧（进程退出 ∨ 已 Closed 下人手 `forceAdvance` ∨ 自动开下一张为开时对本槽安全收尾）** |
 
 禁止把进程退出单独当成功。  
+**仅 Closed 后**才允许收尾本槽旧 Worker；未 Closed 时编排器**绝不**结束任何进程。  
 Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门。
 
 ### 边沿状态
 
 | 状态 | 条件 | 行为 |
 |------|------|------|
-| `soft-stuck` | 进程存活 + 未 Closed | 禁止下一张；默认不杀进程 |
-| `awaiting-worker-exit` | 已 Closed + 进程未退 | 可观测；自动路径仍禁止下一张 |
+| `soft-stuck` | 进程存活 + 未 Closed | 禁止下一张；**绝不**杀进程 |
+| `awaiting-worker-exit` | 已 Closed + 进程未退 | 可观测（`refresh`）；**自动开下一张为开**时 `step`/tick 短确认后安全收尾**本槽**再开下一张；**自动为关**时仍禁止自动下一张（可用 `f` 等人工路径） |
 | `needs-resume` | 死进程 + 未 Closed | 禁止下一张；`resume` 按已记 session id + 原 runtime/cwd，**不**重塞 skill 入口 |
 | 逻辑单槽 | 任意时刻 | 最多一个活 Worker；槽占用时拒绝第二次自动 spawn |
 
-`forceAdvance`：仅 Closed 可用；默认不强杀旧进程（`killWorker: true` 为显式 opt-in）。
+**Closed 后安全收尾（自动开下一张为开）：** 短确认 Closed 仍成立且进程仍属本槽 → 已自退则只确认死亡；仍活则 `kill` **仅本槽 pid**。未 Closed、自动开下一张为关、HITL/空槽/非本槽 → **不**结束进程。
+
+`forceAdvance`：仅 Closed 可用；默认不强杀旧进程（`killWorker: true` 为显式 opt-in）；与自动安全收尾互不踩：人手 `f` 默认 orphan 路径不被 auto-reap 再杀一次。
 
 ### review / vibe
 
@@ -130,7 +133,7 @@ closed == false
 | 列表导航 | `j` / `k`、**方向键 ↑↓**、`1–9`：只移动「现在可执行」高亮 |
 | **Enter** | 开 **一张**：有高亮 → 该票；无高亮 → 看板默认下一张（与自动候选同一套 frontier 规则） |
 | 第一次成功 Enter 开票 | 同时把 **自动开下一张** 打开（此后可 AFK） |
-| 自动开着时 | 条件满足（`Closed` ∧ 退出或强制推进等既有双条件）后按 **看板** 开后续 ready 票，**忽略** 高亮 |
+| 自动开着时 | 条件满足（`Closed` ∧（退出 ∨ 强制推进 ∨ **Closed 后对本槽安全收尾**））后按 **看板** 开后续 ready 票，**忽略** 高亮 |
 | 自动开着且槽空 | 仍可用高亮 + Enter **指定**下一张；不按则 poll/tick 自动开 |
 | **`s`** | **切换**「自动开下一张」开 / 关 |
 | 用 `s` 关掉之后 | 再 Enter **只开一张**，**不**把自动开回来；恢复自动只能再按 `s` |

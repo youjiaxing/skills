@@ -18,6 +18,10 @@
  *   first successful manual start opens autoAdvance for AFK handoff.
  * dispatch-tui-start-and-polish/03: toggleAutoAdvance (user s dial);
  *   after explicit off, manual start must not reopen autoAdvance.
+ * 20260805-1244/01: Closed ∧ autoAdvance on ∧ live slot worker → short
+ *   reconfirm then safe-reap this slot only, then dual-gate opens next;
+ *   never kill when not Closed / auto off / HITL / empty / other slot;
+ *   forceAdvance default no-kill orphan path stays independent.
  */
 
 import {
@@ -169,7 +173,9 @@ export function createChainRun({
 
   /**
    * Classify the occupied slot for outward status / step reason.
-   * Dual conditions for opening the next ticket remain Closed ∧ (exit ∨ force-advance).
+   * Dual conditions for opening the next ticket remain
+   * Closed ∧ (exit ∨ force-advance ∨ auto safe-reap under autoAdvance).
+   * refreshStatus never reaps; only step() may safe-reap.
    */
   async function classifyOccupiedSlot() {
     if (!slot) return { ok: true, reason: 'empty-slot', status: 'idle' };
@@ -196,6 +202,39 @@ export function createChainRun({
         : 'closed-and-exited',
       status: 'idle',
     };
+  }
+
+  /**
+   * Closed ∧ autoAdvance on ∧ this slot still holds a live worker for that
+   * ticket → short reconfirm, then end only this slot's process (if still
+   * alive). Already-exited: confirm death only, no kill. Never runs when
+   * not Closed, auto off, force-advance already requested, empty slot, or
+   * HITL-only (no slot). Does not touch other pids.
+   */
+  async function safeReapClosedSlotWorker() {
+    if (!slot || !autoAdvance || slot.forceAdvanceRequested) {
+      return { reaped: false, reason: 'not-applicable' };
+    }
+
+    const completion = await tracker.getCompletion(slot.issue.id);
+    if (!completion.closed) {
+      return { reaped: false, reason: 'not-closed' };
+    }
+
+    // Short reconfirm: re-read Closed + liveness before acting.
+    const reconfirm = await tracker.getCompletion(slot.issue.id);
+    if (!reconfirm.closed) {
+      return { reaped: false, reason: 'not-closed' };
+    }
+    if (!workerAlive()) {
+      return { reaped: false, reason: 'already-exited' };
+    }
+
+    const pid = slot.pid;
+    if (typeof launcher.kill === 'function') {
+      await launcher.kill(pid);
+    }
+    return { reaped: true, reason: 'reaped', pid };
   }
 
   async function recommendHitl() {
@@ -637,8 +676,11 @@ export function createChainRun({
     /**
      * One evaluation cycle:
      * - If stopped, never auto-spawn or open HITL offers.
+     * - If a slot is held and Closed ∧ autoAdvance on ∧ still alive, safe-reap
+     *   this slot's worker (short reconfirm); then dual-gate release.
      * - If a slot is held, release it only when dual conditions are met.
-     * - If autoAdvance is false, reclassify/release only — no auto spawn / HITL offer.
+     * - If autoAdvance is false, reclassify/release only — no auto reap of a
+     *   still-live Closed worker, no auto spawn / HITL offer.
      * - Then spawn at most one auto candidate into an empty slot (single slot).
      * - If no auto candidate but a HITL candidate exists, emit needs-confirmation
      *   and do not spawn until confirmHitl.
@@ -657,6 +699,8 @@ export function createChainRun({
       }
 
       if (slot) {
+        // AFK path: Closed + auto on + live this-slot worker → reap then gate.
+        await safeReapClosedSlotWorker();
         const gate = await classifyOccupiedSlot();
         if (!gate.ok) {
           status = gate.status;

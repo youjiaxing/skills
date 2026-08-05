@@ -76,7 +76,9 @@ test('dispatch snapshot shows effective mode and empty-slot status', async () =>
   assert.equal(snap.actions.stop.available, true);
 });
 
-test('dispatch snapshot updates slot state as chain migrates soft-stuck → awaiting-exit → next', async () => {
+test('dispatch snapshot updates slot state as chain migrates soft-stuck → Closed auto-reap → next', async () => {
+  // With autoAdvance on (default chain/once seam), Closed + live worker is
+  // safe-reaped on tick and next ready ticket spawns — no permanent stick.
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, surface } = makeSurface({
@@ -90,17 +92,21 @@ test('dispatch snapshot updates slot state as chain migrates soft-stuck → awai
   assert.equal(snap.slot?.title, 'demo/01-first');
   assert.equal(snap.actions.forceAdvance.available, false);
 
+  const oldPid = snap.slot.pid;
   tracker.setCompletion('01-first.md', true);
-  await surface.tick();
+  // refresh only: still observable as awaiting-worker-exit, no kill yet
+  await surface.refresh();
   snap = surface.snapshot();
   assert.equal(snap.status, 'awaiting-worker-exit');
   assert.equal(snap.actions.forceAdvance.available, true);
+  assert.equal(launcher.isAlive(oldPid), true);
 
-  launcher.markExited(snap.slot.pid);
   await surface.tick();
   snap = surface.snapshot();
   assert.equal(snap.status, 'soft-stuck');
   assert.equal(snap.slot?.issueId, '02-second.md');
+  assert.equal(launcher.isAlive(oldPid), false);
+  assert.deepEqual(launcher.kills, [oldPid]);
 });
 
 test('read-only board projection exposes dependencies; surface has no graph dispatch action', async () => {

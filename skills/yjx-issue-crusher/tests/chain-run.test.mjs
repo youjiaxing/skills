@@ -173,7 +173,8 @@ test('process exit alone is not a success condition for opening the next issue',
   assert.equal(chain.slot?.issue.id, '01-alpha.md');
 });
 
-test('Closed without exit and without force-advance does not spawn next', async () => {
+test('Closed without exit + autoAdvance on: safe-reaps this slot then spawns next', async () => {
+  // 20260805-1244 / 01: AFK handoff must not stick on awaiting-worker-exit forever.
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, chain } = makeChain({
@@ -181,12 +182,17 @@ test('Closed without exit and without force-advance does not spawn next', async 
   });
 
   await chain.step();
+  const oldPid = chain.slot.pid;
   tracker.setCompletion('01-first.md', true);
-  assert.equal(launcher.isAlive(chain.slot.pid), true);
+  assert.equal(launcher.isAlive(oldPid), true);
 
   const result = await chain.step();
-  assert.equal(result.spawned, false);
-  assert.equal(launcher.launches.length, 1);
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  assert.equal(launcher.isAlive(oldPid), false);
+  assert.deepEqual(launcher.kills, [oldPid]);
+  assert.equal(chain.slot?.issue?.id, '02-second.md');
 });
 
 test('Closed + worker exit opens next ready impl exactly once with correct identity', async () => {
@@ -277,15 +283,22 @@ test('soft-stuck: alive and not Closed blocks next spawn and does not kill the w
   assert.equal(launcher.kills.length, 0);
 });
 
-test('Closed without exit is observable as awaiting-worker-exit and auto path still blocks next', async () => {
+test('Closed without exit + autoAdvance off: awaiting-worker-exit, no kill, no next spawn', async () => {
+  // Dual gate still holds; auto off must not auto-reap (manual f still available).
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, chain } = makeChain({
     candidates: [first, second],
+    autoAdvance: false,
   });
 
-  await chain.step();
+  await chain.startIssue('01-first.md');
+  // startIssue opens auto on clean path — lock it back off like user s-off.
+  chain.toggleAutoAdvance();
+  assert.equal(chain.autoAdvance, false);
+
   tracker.setCompletion('01-first.md', true);
+  const oldPid = chain.slot.pid;
 
   const result = await chain.step();
 
@@ -293,7 +306,92 @@ test('Closed without exit is observable as awaiting-worker-exit and auto path st
   assert.equal(result.reason, 'awaiting-worker-exit');
   assert.equal(chain.status, 'awaiting-worker-exit');
   assert.equal(launcher.launches.length, 1);
-  assert.equal(launcher.isAlive(chain.slot.pid), true);
+  assert.equal(launcher.isAlive(oldPid), true);
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('refreshStatus still observes awaiting-worker-exit without reaping', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  const oldPid = chain.slot.pid;
+  tracker.setCompletion('01-first.md', true);
+
+  const refreshed = await chain.refreshStatus();
+  assert.equal(refreshed.status, 'awaiting-worker-exit');
+  assert.equal(refreshed.reason, 'awaiting-worker-exit');
+  assert.equal(launcher.isAlive(oldPid), true);
+  assert.equal(launcher.kills.length, 0);
+  assert.equal(launcher.launches.length, 1);
+});
+
+// --- 20260805-1244-vibe-handoff-and-resume / 01: Closed safe reap + auto next ---
+
+test('not Closed: autoAdvance on still never kills the live worker', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  const pid = chain.slot.pid;
+
+  const result = await chain.step();
+  assert.equal(result.reason, 'soft-stuck');
+  assert.equal(result.spawned, false);
+  assert.equal(launcher.isAlive(pid), true);
+  assert.equal(launcher.kills.length, 0);
+  assert.equal(launcher.launches.length, 1);
+});
+
+test('auto safe-reap does not stomp force-advance default no-kill orphan path', async () => {
+  // Human f after Closed: default orphan (no kill). Auto path must not also kill
+  // that same old pid when forceAdvanceRequested already opens the dual gate.
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  const oldPid = chain.slot.pid;
+  tracker.setCompletion('01-first.md', true);
+
+  const forced = await chain.forceAdvance(); // default killWorker: false
+  assert.equal(forced.ok, true);
+  assert.equal(launcher.kills.length, 0);
+  assert.equal(launcher.isAlive(oldPid), true);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  // Orphan stays alive; auto-reap must not fire after force-advance.
+  assert.equal(launcher.isAlive(oldPid), true);
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('Closed + auto on + worker already exited: no kill call, still spawns next', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  const oldPid = chain.slot.pid;
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(oldPid);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  assert.equal(launcher.kills.length, 0, 'already dead → confirm only, no kill');
 });
 
 test('force-advance after Closed spawns next and by default does not kill the old worker', async () => {
