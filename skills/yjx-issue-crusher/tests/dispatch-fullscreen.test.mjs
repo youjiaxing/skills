@@ -1837,15 +1837,24 @@ test('handleFullscreenKey o returns openModelEffort without mutating subsequent'
 });
 
 test('default model/effort lists lead with 运行时默认; no free-text path', () => {
+  // Sync Grok fallback is degrade-only; async discovery fills the real list.
   const models = defaultModelItems('grok');
   const efforts = defaultEffortItems();
-  assert.ok(models.length >= 1);
+  assert.equal(models.length, 1);
   assert.equal(models[0].value, null);
   assert.match(models[0].label, /运行时默认/);
   assert.equal(efforts[0].value, null);
   assert.match(efforts[0].label, /运行时默认/);
-  // Static stubs only — discovery is ticket 03.
-  assert.ok(efforts.some((item) => item.value === 'high'));
+  assert.deepEqual(
+    efforts.slice(1).map((item) => item.value),
+    ['low', 'medium', 'high', 'xhigh', 'max'],
+  );
+  // Claude sync path keeps alias hints.
+  const claude = defaultModelItems('claude');
+  assert.equal(claude[0].value, null);
+  assert.ok(claude.some((item) => item.value === 'sonnet'));
+  assert.ok(claude.some((item) => item.value === 'opus'));
+  assert.ok(claude.some((item) => item.value === 'haiku'));
 });
 
 test('model→effort menu Esc cancels whole transaction like q', () => {
@@ -1914,12 +1923,15 @@ test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unch
     autoTick: true,
     pollIntervalMs: 5000,
     alternateScreen: false,
+    // Inject discovery so CI never calls real `grok models`.
+    discoverModels: async () => ['inject-model-a', 'inject-model-b'],
   });
 
   await new Promise((r) => setTimeout(r, 120));
   stdin.write('o');
   await new Promise((r) => setTimeout(r, 150));
   assert.match(out, /model\/effort|subsequent model|运行时默认/i);
+  assert.match(out, /inject-model-a/);
   // Cancel menu (q while overlay open), then quit dispatch.
   stdin.write('q');
   await new Promise((r) => setTimeout(r, 120));
@@ -1937,4 +1949,46 @@ test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unch
   assert.equal(surface.snapshot().subsequentModel, null);
   // alternateScreen:false path must never emit nested DECSET.
   assert.doesNotMatch(out, /\u001b\[\?1049h/);
+});
+
+test('runFullscreenDispatch o: discovery failure still opens menu with 运行时默认 only', async () => {
+  const { surface } = makeSurface({
+    candidates: [candidate('01-first.md')],
+    mode: 'review',
+  });
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  let out = '';
+  stdout.setEncoding('utf8');
+  stdout.on('data', (chunk) => {
+    out += chunk;
+  });
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 5000,
+    alternateScreen: false,
+    discoverModels: async () => {
+      throw new Error('not logged in');
+    },
+  });
+
+  await new Promise((r) => setTimeout(r, 120));
+  stdin.write('o');
+  await new Promise((r) => setTimeout(r, 150));
+  assert.match(out, /运行时默认/);
+  assert.doesNotMatch(out, /inject-model|not logged in/);
+  stdin.write('q'); // cancel menu
+  await new Promise((r) => setTimeout(r, 80));
+  stdin.write('q'); // quit
+
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('discovery-fail o path did not exit')), 3000);
+    }),
+  ]);
 });

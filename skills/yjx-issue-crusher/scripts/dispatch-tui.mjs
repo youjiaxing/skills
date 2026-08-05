@@ -141,6 +141,11 @@ export function snapshotFingerprint(snap) {
  *   autoTick?: boolean,
  *   pollIntervalMs?: number,
  *   maxTicks?: number,
+ *   once?: boolean,
+ *   fullscreen?: boolean,
+ *   alternateScreen?: boolean,
+ *   discoverModels?: (() => Promise<string[] | Iterable<string>>) | null,
+ *   resolveModelItemsFn?: Function,
  * }} options
  */
 export async function runDispatchTui({
@@ -153,6 +158,8 @@ export async function runDispatchTui({
   once = false,
   fullscreen = undefined,
   alternateScreen = undefined,
+  discoverModels = null,
+  resolveModelItemsFn = undefined,
 } = {}) {
   if (!surface) throw new Error('surface is required');
 
@@ -163,6 +170,7 @@ export async function runDispatchTui({
   });
 
   // Interactive dual-TTY: Ink fullscreen shell (ticket 01). --once / non-TTY stay printable.
+  // discoverModels is only meaningful on the fullscreen `o` path (never --once).
   if (useFullscreen && maxTicks === Infinity) {
     return runFullscreenDispatch({
       surface,
@@ -171,6 +179,8 @@ export async function runDispatchTui({
       autoTick,
       pollIntervalMs,
       alternateScreen: alternateScreen ?? Boolean(output?.isTTY),
+      discoverModels,
+      resolveModelItemsFn,
     });
   }
 

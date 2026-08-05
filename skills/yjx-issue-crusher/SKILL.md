@@ -78,8 +78,16 @@ Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门�
 2. 否则仓内 `workers.<当前 runtime>.model|effort`  
 3. 否则空（运行时产品默认）
 
-**提交（`setModelEffort` / 调度 surface 端口）：** 立即写仓到当前 runtime 分桶，只影响**之后** spawn；当前槽在 spawn 时钉死的 model/effort **不热切**。空/空白读侧一律当不传 flag。  
-**无**跨 runtime 扁平顶层 `model`/`effort` 真源。全屏交互选单（键 `o`）另票；本层只保证真源与可测提交接口。
+**全屏键 `o`（仅 dual-TTY 全屏；`--once` / 非 TTY 不挂）：** model 列表 → effort 列表，两级都确认才提交；任一级 `q`/Esc 取消则 subsequent 与仓均不变。列表首项恒为「运行时默认」（不传 flag）。
+
+- **model 目录：** 编排器透传字符串，不维护权威全量表。Grok：可注入发现端口，默认 best-effort 跑 `grok models`（失败/超时仅保留「运行时默认」等降级项，不挂死）。Claude：静态常见别名提示（如 sonnet/opus/haiku）+ 默认。  
+- **effort 目录：** 首项默认 + 至少 Claude 公开档位提示（low/medium/high/xhigh/max），两侧一律字符串透传；非法值交给 Worker。  
+- **一期无** TUI 自由文本手填；列表没有的 id 仍走 `--model`/`--effort` 或手改 json。
+
+**提交（`setModelEffort` / 调度 surface 端口 / `o` 事务确认）：** 立即写仓到当前 runtime 分桶，只影响**之后** spawn；当前槽在 spawn 时钉死的 model/effort **不热切**。空/空白读侧一律当不传 flag。  
+**无**跨 runtime 扁平顶层 `model`/`effort` 真源。
+
+**与「不自动换模」：** 编排器仍不在无操作者意图时自行改 model/effort。`o`、CLI flag、仓分桶都是**操作者显式设定 subsequent**，不是策略引擎自动调参。
 
 ### 启动与标题
 
@@ -134,7 +142,8 @@ closed == false
 ### 测试 seam
 
 - **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽。  
-- **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`setModelEffort` 写仓与 snapshot 字段可测。  
+- **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`o` 事务选单与 `setModelEffort` 写仓可测。  
+- **发现端口：** 注入假 discoverer 断言失败/超时降级；CI 不依赖真实 `grok models` 登录。  
 - 不测真 Grok/Claude 窗体内部。
 
 ---
@@ -146,11 +155,12 @@ closed == false
 - **假 / 真** WorkerLauncher（同一 launch DTO；真启动器开 **独立前台窗**，不进调度屏）  
 - **mode** 解析与仓文件写回  
 - **subsequent model/effort** 初值（CLI → 仓分桶 → 空）与 `setModelEffort` 写仓  
+- **全屏 `o`**：model→effort 事务选单；Grok 可注入 model 发现（`grok models` best-effort 降级）；Claude 别名 + effort 档位提示  
 - **HITL** confirm/reject（Wayfinder / human / 未知）  
 - **CLI：** `recommend` · `probe-launch` · **`chain`**（默认命令；可选假启动器）  
-- **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏；**Enter 开始**、列表导航、自动开下一张开关）  
-- **启动期全屏选单**：缺 feature / runtime 时用 Ink 列表（`j`/`k`/方向键/数字 + Enter；`q` 取消）  
-- **非全屏路径：** `--once` / 非 TTY / 非交互 → 打印调度帧后退出；**仍可**在 tick 时按看板尝试开票（不套全屏「默认不开」）  
+- **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏；**Enter 开始**、列表导航、自动开下一张开关、`o` model/effort）  
+- **启动期全屏选单**：缺 feature / runtime 时用 Ink 列表（`j`/`k`/方向键/数字 + Enter；`q` 取消）；**不为** model/effort 强问  
+- **非全屏路径：** `--once` / 非 TTY / 非交互 → 打印调度帧后退出；**仍可**在 tick 时按看板尝试开票（不套全屏「默认不开」）；**无** `o` 选单  
 - 交互全屏 **后台 poll**（默认 2s）在 **自动开下一张为开** 时支持 AFK 接力  
 - **全屏呈现**：铺满终端高度、进入/退出清残影、主/次信息分层、选中与当前槽可辨；无复杂动画
 
@@ -214,10 +224,10 @@ ic
 
 | 分区 | 内容 |
 |------|------|
-| **顶栏** | feature · runtime · 后续 mode · **自动开下一张：开/关** · 链状态 |
+| **顶栏** | feature · runtime · 后续 mode · **后续 model/effort**（空则「运行时默认」）· **自动开下一张：开/关** · 链状态 |
 | **中部** | 中文 ASCII 依赖图（★可执行 ▶进行中 ·阻塞 ✓完成）+「现在可执行」清单（导航高亮；**Enter 开票**；无图上派票） |
 | **当前槽** | 在跑票 / pid / Closed / 钉死 mode；有待确认时显示 HITL |
-| **底栏** | 当前可用键位（与真实行为一致） |
+| **底栏** | 当前可用键位（含 `[o] model/effort`；与真实行为一致） |
 
 Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 **不内嵌** Worker 输出。多 feature / 多仓 = **多开** `ic` 进程（各管各的调度窗 + Worker 窗）。
 
@@ -305,6 +315,8 @@ j / k 或 ↓ / ↑     「现在可执行」高亮下一项 / 上一项（只�
 1–9                 高亮对应可执行项（只改高亮）
 s                   切换「自动开下一张」开 ↔ 关
 m                   mode 拨杆：review ↔ vibe（写仓；切 vibe 一行提示；只影响后续 spawn）
+o                   model → effort 两级选单（整次事务确认后写 subsequent + 仓分桶；
+                    只影响之后新开的 Worker；q/Esc 取消不写）
 f                   强制推进（仅当前票 Closed 可用）
 r                   needs-resume 一键恢复
 y / n               HITL 同意 / 拒绝
@@ -313,7 +325,8 @@ q                   关掉自动并退出全屏（Ctrl+C 等同）
 ```
 
 看板与依赖图 **read-only**，无图上派票、无内嵌 Worker。  
-自动开着时 **忽略** 列表高亮，只按看板选下一张；高亮只约束 **Enter**。
+自动开着时 **忽略** 列表高亮，只按看板选下一张；高亮只约束 **Enter**。  
+`--once` / 非 TTY **不出现** `o` 选单（无交互 model/effort UI）。
 
 ### 启动全屏选单键位
 
@@ -360,6 +373,7 @@ npm test
 
 主 seam：`tests/chain-run.test.mjs`。  
 调度 / 全屏 / 启动选单：`tests/dispatch-surface.test.mjs` · `tests/dispatch-fullscreen.test.mjs` · `tests/startup-select.test.mjs` · `tests/cli-chain.test.mjs` · `tests/interactive-prompts.test.mjs`。  
+model 发现 / effort 提示：`tests/model-catalog.test.mjs`。  
 local-md fixture：`empty-frontier` / `single-ready` / `mixed-board` / `hitl-only`。
 
 ---

@@ -206,3 +206,45 @@ test('cli chain --once: flag beats repo bucket (flag wins over repo per dimensio
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- 20260804-1802-tui-model-effort / 03: discovery + once path + no model/effort questionnaire ---
+
+test('cli chain --once never mounts o model/effort menu chrome', () => {
+  const result = runCli([
+    'chain',
+    '--feature', 'demo',
+    '--cwd', singleFixture,
+    '--project-root', singleFixture,
+    '--runtime', 'grok',
+    '--fake-launcher',
+    '--once',
+    '--stop',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  // Printable once path must not advertise fullscreen o menu or selection chrome.
+  assert.doesNotMatch(result.stdout, /\[o\].*model|\[model\/effort\]|选择 subsequent model/i);
+  // Still carries the once contract (spawn attempt + JSON summary).
+  assert.match(result.stdout, /"stopped": true/);
+  assert.match(result.stdout, /"subsequentModel": null/);
+});
+
+test('cli chain --once does not force a model/effort questionnaire', () => {
+  const result = runCli([
+    'chain',
+    '--feature', 'demo',
+    '--cwd', emptyFixture,
+    '--project-root', emptyFixture,
+    '--runtime', 'grok',
+    '--fake-launcher',
+    '--once',
+    '--stop',
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.doesNotMatch(
+    `${result.stdout}${result.stderr}`,
+    /请选择 model|请选择 effort|select model|select effort|model\?|effort\?/i,
+  );
+  // Omitting flags is valid: runtime default (null).
+  assert.match(result.stdout, /"subsequentModel": null/);
+  assert.match(result.stdout, /"subsequentEffort": null/);
+});

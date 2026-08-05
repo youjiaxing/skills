@@ -75,10 +75,12 @@ function printHelp() {
   { "mode": "vibe", "runtime": "claude" }
   可选 workers.<runtime>.model / effort（grok|claude 分桶；缺省=运行时默认不传 flag）
 
-【调度界面按键】m review|vibe  f强制推进  r恢复  y/n确认  s停链  t刷新  q退出
+【调度界面按键】m review|vibe  o model/effort  f强制推进  r恢复  y/n确认  s自动开下一张  t刷新  q退出
+  （o 仅 dual-TTY 全屏；--once/非 TTY 无选单。操作者显式选模 ≠ 编排器自动换模）
 
 只敲 ic（不带功能名）：扫描本仓 feature，提示你选取后再开链。
 未指定 runtime 且仓里也没有：会先问 Grok 还是 Claude，再开第一张票。
+启动不为 model/effort 弹问卷（可用 --model/--effort 或仓 workers 分桶，或进全屏后按 o）。
 `);
 }
 

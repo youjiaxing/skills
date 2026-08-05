@@ -28,10 +28,18 @@ import {
   statusLabelZh,
 } from './dependency-graph.mjs';
 import {
+  claudeModelItems,
+  defaultEffortItems,
+  degradedModelItems,
+  resolveModelItems,
+} from './model-catalog.mjs';
+import {
   applyStartupSelectKey,
   mapStartupSelectKey,
   renderStartupSelectFrame,
 } from './startup-select.mjs';
+
+export { defaultEffortItems, resolveModelItems };
 
 /** Alternate-screen enter (hide cursor). Exported for cleanup contract tests. */
 export const ALT_ENTER = '\u001b[?1049h\u001b[?25l';
@@ -402,46 +410,18 @@ export function renderFooter(snap) {
 }
 
 /**
- * Static model list for the fullscreen `o` flow (ticket 02).
- * First item is always 运行时默认 (null = omit flag). Full discovery is ticket 03.
+ * Sync model list fallback for the fullscreen `o` flow.
+ * Prefer async {@link resolveModelItems} (injectable Grok discovery) at open time.
+ * - claude: static alias hints + 运行时默认
+ * - grok (sync, no discovery): 运行时默认 only — real list comes from discovery
  *
  * @param {string | null | undefined} runtime
  * @returns {Array<{ value: string | null, label: string }>}
  */
 export function defaultModelItems(runtime = 'grok') {
-  const items = [{ value: null, label: '运行时默认' }];
   const rt = String(runtime || 'grok').toLowerCase();
-  if (rt === 'claude') {
-    items.push(
-      { value: 'sonnet', label: 'sonnet' },
-      { value: 'opus', label: 'opus' },
-      { value: 'haiku', label: 'haiku' },
-    );
-  } else {
-    // Grok static stubs — real `grok models` discovery lands in ticket 03.
-    items.push(
-      { value: 'grok-3', label: 'grok-3' },
-      { value: 'grok-4', label: 'grok-4' },
-    );
-  }
-  return items;
-}
-
-/**
- * Static effort list for the fullscreen `o` flow.
- * First item is always 运行时默认; remaining are passthrough strings.
- *
- * @returns {Array<{ value: string | null, label: string }>}
- */
-export function defaultEffortItems() {
-  return [
-    { value: null, label: '运行时默认' },
-    { value: 'low', label: 'low' },
-    { value: 'medium', label: 'medium' },
-    { value: 'high', label: 'high' },
-    { value: 'xhigh', label: 'xhigh' },
-    { value: 'max', label: 'max' },
-  ];
+  if (rt === 'claude') return claudeModelItems();
+  return degradedModelItems();
 }
 
 /**
@@ -932,6 +912,8 @@ function selectedIssueIdFromSnap(snap, selectedIndex) {
  *   ticksRef?: { current: number },
  *   terminalRows?: number | null,
  *   output?: { rows?: number, on?: Function, off?: Function, removeListener?: Function } | null,
+ *   discoverModels?: (() => Promise<string[] | Iterable<string>>) | null,
+ *   resolveModelItemsFn?: typeof resolveModelItems,
  * }} props
  */
 function DispatchFullscreenApp({
@@ -940,6 +922,8 @@ function DispatchFullscreenApp({
   pollIntervalMs = 2000,
   ticksRef = null,
   terminalRows = null,
+  discoverModels = null,
+  resolveModelItemsFn = resolveModelItems,
 } = {}) {
   const { exit } = useApp();
   const [snap, setSnap] = useState(null);
@@ -1120,8 +1104,21 @@ function DispatchFullscreenApp({
             setNotice('当前不可设置 model/effort（已停链）');
             return;
           }
+          const runtime = currentSnap?.runtime ?? 'grok';
+          // Best-effort discovery (injectable); fail/timeout → 运行时默认 only.
+          let modelItems;
+          try {
+            modelItems = await resolveModelItemsFn({
+              runtime,
+              discoverModels,
+            });
+          } catch {
+            modelItems = defaultModelItems(runtime);
+          }
           setModelEffortMenu(openModelEffortMenu({
-            runtime: currentSnap?.runtime ?? 'grok',
+            runtime,
+            modelItems,
+            effortItems: defaultEffortItems(),
           }));
           setNotice(null);
           return;
@@ -1165,6 +1162,8 @@ function DispatchFullscreenApp({
  *   autoTick?: boolean,
  *   pollIntervalMs?: number,
  *   alternateScreen?: boolean,
+ *   discoverModels?: (() => Promise<string[] | Iterable<string>>) | null,
+ *   resolveModelItemsFn?: typeof resolveModelItems,
  * }} options
  */
 export async function runFullscreenDispatch({
@@ -1174,6 +1173,8 @@ export async function runFullscreenDispatch({
   autoTick = true,
   pollIntervalMs = 2000,
   alternateScreen = Boolean(output?.isTTY),
+  discoverModels = null,
+  resolveModelItemsFn = resolveModelItems,
 } = {}) {
   if (!surface) throw new Error('surface is required');
 
@@ -1197,6 +1198,8 @@ export async function runFullscreenDispatch({
   const instance = render(
     createElement(DispatchFullscreenApp, {
       surface,
+      discoverModels,
+      resolveModelItemsFn,
       autoTick,
       pollIntervalMs,
       ticksRef,
