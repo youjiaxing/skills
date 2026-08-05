@@ -113,11 +113,22 @@ export async function handleDispatchCommand(surface, command) {
     }
     case 'resume': {
       const result = await surface.resume();
-      return {
-        message: result.ok
-          ? `已恢复会话（pid ${result.pid}）。`
-          : `恢复失败: ${result.reason}`,
-      };
+      if (result.ok) {
+        return {
+          message: `已恢复旧会话历史（pid ${result.pid}；非开下一张）。`,
+        };
+      }
+      if (result.reason === 'no-session-id') {
+        return {
+          message: '恢复失败: 无 session id，不能静默开空窗（r 仅挂回已记会话）。',
+        };
+      }
+      if (result.reason === 'not-needs-resume' || result.reason === 'no-slot') {
+        return {
+          message: `恢复失败: ${result.reason}（r 只服务 needs-resume 死进程未关票，不负责开下一张）。`,
+        };
+      }
+      return { message: `恢复失败: ${result.reason}` };
     }
     case 'confirmHitl': {
       const result = await surface.confirmHitl();

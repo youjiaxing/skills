@@ -92,7 +92,7 @@ export function renderDispatchFrame(snap) {
   const available = [];
   if (actions.setMode?.available) available.push('[m] review|vibe 切换模式');
   if (actions.forceAdvance?.available) available.push('[f] 强制推进（仅已关票）');
-  if (actions.resume?.available) available.push('[r] 恢复会话');
+  if (actions.resume?.available) available.push('[r] 恢复历史');
   if (actions.confirmHitl?.available) available.push('[y] 同意开票');
   if (actions.rejectHitl?.available) available.push('[n] 拒绝');
   if (actions.stop?.available) available.push('[s] 停链');

@@ -58,8 +58,10 @@ test('grok initial: argv is foreground (no -p/--single), optional model/effort o
   assert.equal(inv.args.includes('--no-session-persistence'), false);
 
   const prompt = inv.args[inv.args.length - 1];
-  assert.match(prompt, /\/rename\s+demo\/12-real-worker-launcher/);
-  assert.match(prompt, /\/implement\b/);
+  // Grok: skill slash first; no /rename in prompt (title is out-of-band).
+  assert.match(prompt, /^\/implement\b/u);
+  assert.equal(/\/rename\b/.test(prompt), false);
+  assert.equal(/Scope is limited/i.test(prompt), false);
 });
 
 test('grok initial: model and effort flags only when provided', () => {
@@ -291,4 +293,311 @@ test('windowsArgvToCommandLine quotes spaces and preserves simple tokens', () =>
     '-n feat/01-title "hello world"',
   );
   assert.match(windowsArgvToCommandLine(['say "hi"']), /\\"/);
+});
+
+test('grokSessionDir encodes cwd the way Grok does on disk', async () => {
+  const { grokSessionDir } = await import('../scripts/real-launcher.mjs');
+  const dir = grokSessionDir('D:\\go_workspace\\proj', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', {
+    grokHome: 'C:\\Users\\x\\.grok',
+  });
+  assert.match(dir, /sessions/);
+  assert.match(dir, /D%3A%5Cgo_workspace%5Cproj/);
+  assert.match(dir, /aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee$/);
+});
+
+test('applyGrokSessionTitle patches summary.json when it appears', async () => {
+  const { applyGrokSessionTitle } = await import('../scripts/real-launcher.mjs');
+  const files = new Map();
+  let now = 0;
+  const ok = await applyGrokSessionTitle({
+    cwd: 'D:\\proj',
+    sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    title: 'demo/01-ticket',
+    grokHome: 'C:\\fake-grok',
+    timeoutMs: 500,
+    intervalMs: 10,
+    now: () => now,
+    sleepFn: async () => {
+      now += 50;
+      if (now >= 50 && files.size === 0) {
+        files.set(
+          'summary',
+          JSON.stringify({ info: { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', cwd: 'D:\\proj' } }),
+        );
+      }
+    },
+    access: async () => {
+      if (!files.has('summary')) throw new Error('ENOENT');
+    },
+    readFile: async () => files.get('summary'),
+    writeFile: async (_file, body) => {
+      files.set('summary', body);
+    },
+  });
+  assert.equal(ok, true);
+  const written = JSON.parse(files.get('summary'));
+  assert.equal(written.generated_title, 'demo/01-ticket');
+  assert.equal(written.session_summary, 'demo/01-ticket');
+  assert.equal(written.title_is_manual, true);
+});
+
+test('createRealLauncher applies grok title out-of-band after spawn', async () => {
+  const titleCalls = [];
+  const launcher = createRealLauncher({
+    generateSessionId: () => FIXED_SESSION,
+    spawnWorker() {
+      return { pid: 4242 };
+    },
+    applySessionTitle: async (args) => {
+      titleCalls.push(args);
+      return true;
+    },
+  });
+  const result = await launcher.launch(initialContract({ runtime: 'grok' }));
+  assert.equal(result.pid, 4242);
+  assert.equal(result.titleApplied, true);
+  assert.equal(titleCalls.length, 1);
+  assert.equal(titleCalls[0].sessionId, FIXED_SESSION);
+  assert.equal(titleCalls[0].title, 'demo/12-real-worker-launcher');
+  assert.equal(titleCalls[0].cwd, 'D:/proj');
+});
+
+test('createRealLauncher does not apply title hook for claude or resume', async () => {
+  const titleCalls = [];
+  const launcher = createRealLauncher({
+    generateSessionId: () => FIXED_SESSION,
+    spawnWorker() {
+      return { pid: 1 };
+    },
+    applySessionTitle: async (args) => {
+      titleCalls.push(args);
+      return true;
+    },
+  });
+  await launcher.launch(initialContract({ runtime: 'claude' }));
+  await launcher.launch(
+    buildResumeContract({
+      runtime: 'grok',
+      feature: 'demo',
+      cwd: 'D:/proj',
+      issue: baseIssue(),
+      sessionId: FIXED_SESSION,
+      title: 'demo/12-real-worker-launcher',
+    }),
+  );
+  assert.equal(titleCalls.length, 0);
+});
+
+// --- 20260805-1244 ticket 02: resume history non-blank probe ---
+
+/** Observed blank bootstrap: system + one skills system-reminder user, no user_query. */
+const BLANK_GROK_HISTORY = [
+  JSON.stringify({ type: 'system', content: 'You are Grok released by xAI.' }),
+  JSON.stringify({
+    type: 'user',
+    content: [{ type: 'text', text: '<system-reminder>\nThe following skills are available for use:\n</system-reminder>' }],
+  }),
+].join('\n');
+
+/** Observed non-blank: real operator turn with /implement inside user_query. */
+const NONBLANK_GROK_HISTORY = [
+  JSON.stringify({ type: 'system', content: 'You are Grok released by xAI.' }),
+  JSON.stringify({
+    type: 'user',
+    content: [{ type: 'text', text: '<system-reminder>\nskills list\n</system-reminder>' }],
+  }),
+  JSON.stringify({
+    type: 'user',
+    content: [{
+      type: 'text',
+      text: '<user_query>\n/implement .scratch/demo/issues/01-first.md\nHard constraints: completion requires Closed: true\n</user_query>',
+    }],
+  }),
+].join('\n');
+
+test('classifyGrokChatHistory marks system-reminder-only transcript as blank', async () => {
+  const { classifyGrokChatHistory } = await import('../scripts/real-launcher.mjs');
+  const verdict = classifyGrokChatHistory(BLANK_GROK_HISTORY);
+  assert.equal(verdict.blank, true);
+  assert.equal(verdict.exists, true);
+  assert.ok(verdict.userCount >= 1);
+  assert.equal(verdict.hasUserQuery, false);
+  assert.equal(verdict.hasSkillEntry, false);
+  assert.match(verdict.reason || '', /blank|bootstrap|no user_query|reminder-only/i);
+});
+
+test('classifyGrokChatHistory marks user_query /implement transcript as non-blank', async () => {
+  const { classifyGrokChatHistory } = await import('../scripts/real-launcher.mjs');
+  const verdict = classifyGrokChatHistory(NONBLANK_GROK_HISTORY);
+  assert.equal(verdict.blank, false);
+  assert.equal(verdict.exists, true);
+  assert.equal(verdict.hasUserQuery, true);
+  assert.equal(verdict.hasSkillEntry, true);
+  assert.ok(verdict.userCount >= 2);
+});
+
+test('classifyGrokChatHistory missing or empty text is blank', async () => {
+  const { classifyGrokChatHistory } = await import('../scripts/real-launcher.mjs');
+  assert.equal(classifyGrokChatHistory('').blank, true);
+  assert.equal(classifyGrokChatHistory(null).blank, true);
+  assert.equal(classifyGrokChatHistory(undefined).exists, false);
+});
+
+test('readGrokChatHistory loads jsonl and classifies blank vs non-blank', async () => {
+  const { readGrokChatHistory } = await import('../scripts/real-launcher.mjs');
+  const files = new Map([
+    ['blank', BLANK_GROK_HISTORY],
+    ['full', NONBLANK_GROK_HISTORY],
+  ]);
+  const blank = await readGrokChatHistory({
+    cwd: 'D:\\proj',
+    sessionId: 'blank-sid',
+    grokHome: 'C:\\fake-grok',
+    readFile: async () => files.get('blank'),
+    access: async () => {},
+  });
+  assert.equal(blank.blank, true);
+  assert.equal(blank.exists, true);
+  assert.match(blank.path || '', /chat_history\.jsonl$/);
+
+  const full = await readGrokChatHistory({
+    cwd: 'D:\\proj',
+    sessionId: 'full-sid',
+    grokHome: 'C:\\fake-grok',
+    readFile: async () => files.get('full'),
+    access: async () => {},
+  });
+  assert.equal(full.blank, false);
+  assert.equal(full.hasSkillEntry, true);
+
+  const missing = await readGrokChatHistory({
+    cwd: 'D:\\proj',
+    sessionId: 'missing-sid',
+    grokHome: 'C:\\fake-grok',
+    readFile: async () => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    },
+    access: async () => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    },
+  });
+  assert.equal(missing.exists, false);
+  assert.equal(missing.blank, true);
+});
+
+test('buildResumeContract keeps empty prompt and never re-injects skill entry', () => {
+  const resume = buildResumeContract({
+    runtime: 'grok',
+    feature: 'demo',
+    cwd: 'D:/proj',
+    issue: baseIssue(),
+    sessionId: FIXED_SESSION,
+    mode: 'vibe',
+  });
+  assert.equal(resume.kind, 'resume');
+  assert.equal(resume.initialPrompt, '');
+  assert.equal(resume.sessionId, FIXED_SESSION);
+  assert.equal(/\/implement\b/.test(resume.initialPrompt), false);
+  assert.equal(/\/wayfinder\b/.test(resume.initialPrompt), false);
+});
+
+test('buildResumeContract requires sessionId', () => {
+  assert.throws(
+    () => buildResumeContract({
+      runtime: 'grok',
+      feature: 'demo',
+      cwd: 'D:/proj',
+      issue: baseIssue(),
+      sessionId: '',
+    }),
+    /sessionId/i,
+  );
+});
+
+test('createRealLauncher resume attaches history probe (non-blank vs blank), not spawn alone', async () => {
+  const calls = [];
+  const launcher = createRealLauncher({
+    spawnWorker() {
+      return { pid: 8801 };
+    },
+    readHistory: async (args) => {
+      calls.push(args);
+      return {
+        exists: true,
+        blank: false,
+        hasUserQuery: true,
+        hasSkillEntry: true,
+        userCount: 2,
+        reason: null,
+        path: 'fake/chat_history.jsonl',
+      };
+    },
+  });
+
+  const ok = await launcher.launch(
+    buildResumeContract({
+      runtime: 'grok',
+      feature: 'demo',
+      cwd: 'D:/proj',
+      issue: baseIssue(),
+      sessionId: FIXED_SESSION,
+    }),
+  );
+  assert.equal(ok.pid, 8801);
+  assert.equal(ok.history?.blank, false);
+  assert.equal(ok.history?.hasUserQuery, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sessionId, FIXED_SESSION);
+
+  const blankLauncher = createRealLauncher({
+    spawnWorker() {
+      return { pid: 8802 };
+    },
+    readHistory: async () => ({
+      exists: true,
+      blank: true,
+      hasUserQuery: false,
+      hasSkillEntry: false,
+      userCount: 1,
+      reason: 'bootstrap-reminder-only',
+    }),
+  });
+  const blank = await blankLauncher.launch(
+    buildResumeContract({
+      runtime: 'grok',
+      feature: 'demo',
+      cwd: 'D:/proj',
+      issue: baseIssue(),
+      sessionId: FIXED_SESSION,
+    }),
+  );
+  assert.equal(blank.pid, 8802, 'spawn may still succeed');
+  assert.equal(blank.history?.blank, true, 'probe must still flag blank history');
+  assert.match(blank.history?.reason || '', /blank|bootstrap|reminder/i);
+});
+
+test('createRealLauncher does not history-probe initial launches or claude resume by default', async () => {
+  const calls = [];
+  const launcher = createRealLauncher({
+    generateSessionId: () => FIXED_SESSION,
+    spawnWorker() {
+      return { pid: 1 };
+    },
+    applySessionTitle: async () => true,
+    readHistory: async (args) => {
+      calls.push(args);
+      return { exists: true, blank: false };
+    },
+  });
+  await launcher.launch(initialContract({ runtime: 'grok' }));
+  await launcher.launch(
+    buildResumeContract({
+      runtime: 'claude',
+      feature: 'demo',
+      cwd: 'D:/proj',
+      issue: baseIssue(),
+      sessionId: FIXED_SESSION,
+    }),
+  );
+  assert.equal(calls.length, 0);
 });

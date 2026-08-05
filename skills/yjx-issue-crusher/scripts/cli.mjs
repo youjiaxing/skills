@@ -392,7 +392,14 @@ export async function runChain(options) {
     : (typeof options.selectItems === 'function'
       ? options.selectItems
       : (useFullscreenPrompts && typeof options.ask !== 'function'
-        ? createFullscreenSelectItems({ input, output })
+        ? createFullscreenSelectItems({
+          input,
+          output,
+          // Startup feature/runtime pickers are inline. The long-lived
+          // dispatch shell owns the alternate screen; avoiding nested
+          // screen handoffs keeps sequential pickers reliable on ConPTY.
+          alternateScreen: false,
+        })
         : null));
 
   let promptSession = null;

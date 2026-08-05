@@ -214,15 +214,38 @@ test('needs-resume exposes one-click resume that uses recorded session id', asyn
   const snap = surface.snapshot();
   assert.equal(snap.status, 'needs-resume');
   assert.equal(snap.actions.resume.available, true);
+  assert.equal(snap.actions.resume.reason, null);
 
   const resumed = await surface.resume();
   assert.equal(resumed.ok, true);
   assert.equal(launcher.launches.length, 2);
   assert.equal(launcher.launches[1].kind, 'resume');
   assert.equal(launcher.launches[1].sessionId, 'sess-resume-tui');
-  if (launcher.launches[1].initialPrompt) {
-    assert.doesNotMatch(launcher.launches[1].initialPrompt, /\/implement\b/);
-  }
+  assert.equal(launcher.launches[1].initialPrompt, '');
+  assert.doesNotMatch(String(launcher.launches[1].initialPrompt || ''), /\/implement\b/);
+  assert.doesNotMatch(String(launcher.launches[1].initialPrompt || ''), /\/wayfinder\b/);
+});
+
+test('needs-resume without session id keeps r unavailable with explicit reason', async () => {
+  const first = candidate('01-first.md');
+  const { launcher, surface } = makeSurface({
+    candidates: [first],
+    launcherOptions: { sessionId: null },
+  });
+
+  await surface.tick();
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+
+  const snap = surface.snapshot();
+  assert.equal(snap.status, 'needs-resume');
+  assert.equal(snap.actions.resume.available, false);
+  assert.equal(snap.actions.resume.reason, 'no-session-id');
+
+  const resumed = await surface.resume();
+  assert.equal(resumed.ok, false);
+  assert.equal(resumed.reason, 'no-session-id');
+  assert.equal(launcher.launches.length, 1, 'must not spawn a blank worker');
 });
 
 test('HITL ask appears on surface; confirm/reject match ticket 11', async () => {

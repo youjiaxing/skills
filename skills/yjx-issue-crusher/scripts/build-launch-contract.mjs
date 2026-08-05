@@ -183,15 +183,13 @@ export function buildLaunchContract({
   const issuePath = issue.path || `.scratch/${feature}/issues/${issue.id}`;
   const lines = [];
 
-  // Grok has no -n; first-line /rename is the title obligation.
-  // Claude uses structured title for -n; prompt need not repeat /rename.
-  if (runtime === 'grok') {
-    lines.push(`/rename ${title}`);
-  }
-
-  lines.push(
-    `Scope is limited to the issue at \`${issuePath}\` (path reference only; do not paste full issue text).`,
-  );
+  // Lead with the skill slash (or neutral open path). Do NOT:
+  // - put `/rename` in the prompt (Grok treats leading /rename as a dead
+  //   bootstrap; embedded /rename is plain text and does not set the title);
+  // - inject "Scope is limited..." style guardrails (operator preference /
+  //   they also become the auto-generated session title noise).
+  // Grok session title is applied out-of-band by the real launcher (summary.json).
+  // Claude title is the -n flag on argv.
   lines.push(...entryLines(resolvedEntry, issuePath));
   lines.push(modeConstraintLine(resolvedEntry, effectiveMode));
 

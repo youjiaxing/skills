@@ -118,8 +118,9 @@ export function shouldUseFullscreenDispatch({
 
 /**
  * Drop already-buffered stdin so a prior fullscreen select Enter/confirm
- * cannot become an unintended start key on dispatch mount.
- * Safe no-op when stream is null, not readable, or flowing (pause first).
+ * cannot become an unintended start key on dispatch mount. The stream is
+ * resumed before returning because the next Ink mount must own a live TTY.
+ * Safe no-op when stream is null or not readable.
  *
  * @param {NodeJS.ReadableStream | null | undefined} input
  * @returns {number} approximate drained unit count (bytes/chars/chunks)
@@ -127,12 +128,8 @@ export function shouldUseFullscreenDispatch({
 export function drainPendingInput(input) {
   if (!input || typeof input.read !== 'function') return 0;
 
-  let pausedHere = false;
   if (typeof input.isPaused === 'function' && !input.isPaused()) {
-    if (typeof input.pause === 'function') {
-      input.pause();
-      pausedHere = true;
-    }
+    if (typeof input.pause === 'function') input.pause();
   }
 
   let drained = 0;
@@ -149,10 +146,10 @@ export function drainPendingInput(input) {
   } catch {
     // Best-effort only — never block fullscreen mount on drain failure.
   } finally {
-    // Leave stream paused for Ink; do not resume if we paused (raw TTY
-    // handoff expects consumer to take ownership). If it was already
-    // paused, keep that. If we could not pause, leave as-is.
-    void pausedHere;
+    // Restore the readable state before handing stdin to Ink. This must also
+    // undo a paused state left by the previous Ink mount during a menu handoff;
+    // otherwise the next fullscreen select/dispatch receives no keypresses.
+    if (typeof input.resume === 'function') input.resume();
   }
   return drained;
 }
@@ -398,7 +395,7 @@ export function renderFooter(snap) {
   // o opens model→effort transactional menu (subsequent only; no live hot-switch).
   if (actions.setModelEffort?.available !== false) keys.push('[o] model/effort');
   if (actions.forceAdvance?.available) keys.push('[f] 强制推进');
-  if (actions.resume?.available) keys.push('[r] 恢复');
+  if (actions.resume?.available) keys.push('[r] 恢复历史');
   if (actions.confirmHitl?.available) keys.push('[y] 同意');
   if (actions.rejectHitl?.available) keys.push('[n] 拒绝');
   // s is the auto-open-next dial (not chain stop). Show current state plainly.
@@ -948,10 +945,6 @@ function DispatchFullscreenApp({
     selectedRef.current = selectedIndex;
   }, [selectedIndex]);
   useEffect(() => {
-    menuRef.current = modelEffortMenu;
-  }, [modelEffortMenu]);
-
-  useEffect(() => {
     let cancelled = false;
 
     async function bootstrap() {
@@ -1029,13 +1022,20 @@ function DispatchFullscreenApp({
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
         if (quittingRef.current) return;
+        // A queued key can outlive a cancel/submit from an earlier key. Read
+        // the ref only after waiting and ignore that stale key if the overlay
+        // has already closed; never dereference a null menu.
+        const currentMenu = menuRef.current;
+        if (!currentMenu?.open) return;
         busyRef.current = true;
         try {
-          const nextMenu = applyModelEffortMenuKey(menuRef.current, input, key);
+          const nextMenu = applyModelEffortMenuKey(currentMenu, input, key);
           if (!nextMenu.done) {
+            menuRef.current = nextMenu;
             setModelEffortMenu(nextMenu);
             return;
           }
+          menuRef.current = null;
           setModelEffortMenu(null);
           if (nextMenu.cancelled || !nextMenu.submitted) {
             setNotice('已取消 model/effort（未改 subsequent/仓）');
@@ -1115,11 +1115,15 @@ function DispatchFullscreenApp({
           } catch {
             modelItems = defaultModelItems(runtime);
           }
-          setModelEffortMenu(openModelEffortMenu({
+          const nextMenu = openModelEffortMenu({
             runtime,
             modelItems,
             effortItems: defaultEffortItems(),
-          }));
+          });
+          // Publish the ref synchronously with React state so a fast next
+          // key sees the newly opened menu rather than a stale prior one.
+          menuRef.current = nextMenu;
+          setModelEffortMenu(nextMenu);
           setNotice(null);
           return;
         }

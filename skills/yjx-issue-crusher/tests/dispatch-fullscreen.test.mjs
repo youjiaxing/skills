@@ -259,6 +259,19 @@ test('drainPendingInput drops buffered keys so residual Enter cannot reach the a
   assert.equal(stdin.read(), null, 'buffer must be empty after drain');
 });
 
+test('drainPendingInput hands a live TTY stream back to Ink', () => {
+  const stdin = fakeStdin();
+  drainPendingInput(stdin);
+  assert.equal(stdin.isPaused(), false, 'stdin must be readable after residual-key drain');
+});
+
+test('drainPendingInput resumes a stream left paused by the previous Ink mount', () => {
+  const stdin = fakeStdin();
+  stdin.pause();
+  drainPendingInput(stdin);
+  assert.equal(stdin.isPaused(), false, 'handoff must resume even an already-paused stdin');
+});
+
 test('fullscreen mount: residual Enter from startup select does not spawn or occupy slot', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
@@ -1949,6 +1962,67 @@ test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unch
   assert.equal(surface.snapshot().subsequentModel, null);
   // alternateScreen:false path must never emit nested DECSET.
   assert.doesNotMatch(out, /\u001b\[\?1049h/);
+});
+
+test('runFullscreenDispatch o can cancel, reopen, and submit without stale-menu crash', async () => {
+  const { surface, modeConfig } = makeSurface({
+    runtime: 'claude',
+    candidates: [candidate('01-first.md')],
+    mode: 'review',
+  });
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 5000,
+    alternateScreen: false,
+  });
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  await wait(120);
+  // First transaction: cancel at model stage.
+  stdin.write('o');
+  await wait(150);
+  stdin.write('q');
+  await wait(120);
+
+  // Second transaction: cancel at effort stage.
+  stdin.write('o');
+  await wait(150);
+  stdin.write('j');
+  await wait(120);
+  stdin.write('\r');
+  await wait(150);
+  stdin.write('\u001b');
+  await wait(120);
+
+  // Third transaction: confirm Claude sonnet + low.
+  stdin.write('o');
+  await wait(150);
+  stdin.write('j');
+  await wait(120);
+  stdin.write('\r');
+  await wait(150);
+  stdin.write('j');
+  await wait(120);
+  stdin.write('\r');
+  await wait(180);
+
+  assert.equal(surface.snapshot().subsequentModel, 'sonnet');
+  assert.equal(surface.snapshot().subsequentEffort, 'low');
+  assert.deepEqual(modeConfig.readModelEffort('claude'), { model: 'sonnet', effort: 'low' });
+
+  stdin.write('q');
+  const result = await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('reopen/submit o flow did not exit')), 3000);
+    }),
+  ]);
+  assert.equal(result.stopped, true);
 });
 
 test('runFullscreenDispatch o: discovery failure still opens menu with 运行时默认 only', async () => {

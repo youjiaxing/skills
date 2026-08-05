@@ -43,7 +43,7 @@ Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门�
 |------|------|------|
 | `soft-stuck` | 进程存活 + 未 Closed | 禁止下一张；**绝不**杀进程 |
 | `awaiting-worker-exit` | 已 Closed + 进程未退 | 可观测（`refresh`）；**自动开下一张为开**时 `step`/tick 短确认后安全收尾**本槽**再开下一张；**自动为关**时仍禁止自动下一张（可用 `f` 等人工路径） |
-| `needs-resume` | 死进程 + 未 Closed | 禁止下一张；`resume` 按已记 session id + 原 runtime/cwd，**不**重塞 skill 入口 |
+| `needs-resume` | 死进程 + 未 Closed | 禁止下一张；`r`/`resume` 按已记 session id + 原 runtime/cwd **挂回旧会话历史**（须非空白），**不**重塞 `/implement`/`/wayfinder`，**不**开下一张；无 session id 时 `r` 不可用（原因 `no-session-id`），不静默开空窗 |
 | 逻辑单槽 | 任意时刻 | 最多一个活 Worker；槽占用时拒绝第二次自动 spawn |
 
 **Closed 后安全收尾（自动开下一张为开）：** 短确认 Closed 仍成立且进程仍属本槽 → 已自退则只确认死亡；仍活则 `kill` **仅本槽 pid**。未 Closed、自动开下一张为关、HITL/空槽/非本槽 → **不**结束进程。
@@ -96,10 +96,11 @@ Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门�
 
 - **必填：** `runtime`（`grok` \| `claude`）、`feature`、`issue`、`cwd`  
 - **可选：** `model`、`effort`（见上 subsequent 初值；省略则不传 flag，用运行时产品默认）  
-- **标题：** `<feature>/<NN>-<slug>`；Claude `-n`；Grok 首行 `/rename`  
-- **impl 入口：** `/implement <票相对路径>`（路径引用，不贴全文）  
+- **标题：** `<feature>/<NN>-<slug>`；Claude `-n`；Grok **进程外**写 `summary.json`（**不要**把 `/rename` 放进初始 prompt：行首会空启动，行内只当纯文本）  
+- **impl 入口：** `/implement <票相对路径>`（路径引用，不贴全文；prompt **以 skill 斜杠开头**）  
 - **Wayfinder 入口：** `/wayfinder <票相对路径>`（须 HITL 同意后）  
-- 每票**全新顶层会话**；可恢复路径禁止关闭 session 持久化
+- 每票**全新顶层会话**；可恢复路径禁止关闭 session 持久化  
+- **`r` / resume（仅 `needs-resume`）：** 用已记 session id 开 **同一会话**（`--resume <id>`），挂回完整历史；**不是**开下一张 ready 票；**不**重塞 skill 入口。无 session id → 动作不可用 / `no-session-id`，禁止静默空窗。历史是否非空可用 Grok `chat_history.jsonl` 探针（须含真实 `user_query`，仅 skills system-reminder 算空白）
 
 ### 自动候选（与 ralph 同向）
 
@@ -146,6 +147,7 @@ closed == false
 
 - **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽。  
 - **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`o` 事务选单与 `setModelEffort` 写仓可测。  
+- **Resume 历史探针：** `classifyGrokChatHistory` / `readGrokChatHistory` 对 `chat_history.jsonl` 做空白 vs 有历史红绿判定（不依赖「进程 spawn 成功」 alone）。  
 - **发现端口：** 注入假 discoverer 断言失败/超时降级；CI 不依赖真实 `grok models` 登录。  
 - 不测真 Grok/Claude 窗体内部。
 
@@ -321,7 +323,7 @@ m                   mode 拨杆：review ↔ vibe（写仓；切 vibe 一行提�
 o                   model → effort 两级选单（整次事务确认后写 subsequent + 仓分桶；
                     只影响之后新开的 Worker；q/Esc 取消不写）
 f                   强制推进（仅当前票 Closed 可用）
-r                   needs-resume 一键恢复
+r                   needs-resume：挂回旧 session 历史（≠ 开下一张；无 id 不可用）
 y / n               HITL 同意 / 拒绝
 t                   手动 tick / 刷新一次
 q                   关掉自动并退出全屏（Ctrl+C 等同）

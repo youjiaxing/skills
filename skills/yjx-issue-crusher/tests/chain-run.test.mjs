@@ -92,7 +92,9 @@ test('ready impl launch contract: required identity, title, implement path, revi
   assert.equal(launch.title, 'demo/05-worker-launch-and-title-contract');
   assert.equal(launch.mode, 'review');
   assert.match(launch.initialPrompt, /\/implement\s+\.scratch\/demo\/issues\/05-worker-launch-and-title-contract\.md/);
-  assert.match(launch.initialPrompt, /\/rename\s+demo\/05-worker-launch-and-title-contract/);
+  // Grok title is applied out-of-band (summary.json); prompt must not lead with /rename.
+  assert.doesNotMatch(launch.initialPrompt, /\/rename\b/);
+  assert.match(launch.initialPrompt, /^\/implement\b/u);
   assert.match(launch.initialPrompt, /review/i);
   assert.match(launch.initialPrompt, /do not auto-commit|禁止自动 commit|禁自动 commit/i);
   assert.doesNotMatch(launch.initialPrompt, /# 05 —/);
@@ -487,13 +489,73 @@ test('resume launch carries recorded session id + runtime/cwd and omits implemen
   assert.equal(resumeLaunch.issue.id, '01-first.md');
   assert.equal(resumeLaunch.title, 'demo/01-first');
   // Must not re-inject a fresh ticket skill entry.
-  if (resumeLaunch.initialPrompt) {
-    assert.doesNotMatch(resumeLaunch.initialPrompt, /\/implement\b/);
-    assert.doesNotMatch(resumeLaunch.initialPrompt, /\/wayfinder\b/);
-  }
+  assert.equal(resumeLaunch.initialPrompt, '');
+  assert.doesNotMatch(String(resumeLaunch.initialPrompt || ''), /\/implement\b/);
+  assert.doesNotMatch(String(resumeLaunch.initialPrompt || ''), /\/wayfinder\b/);
   assert.equal(chain.status, 'soft-stuck');
   assert.equal(chain.slot?.pid, 5001);
   assert.equal(chain.slot?.sessionId, 'sess-resume-42');
+});
+
+test('needs-resume without session id refuses resume and does not spawn a blank worker', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first, second],
+    launcherOptions: { sessionId: null, pid: 7000 },
+  });
+
+  await chain.step();
+  assert.equal(chain.slot?.sessionId, null);
+  launcher.markExited(chain.slot.pid);
+  await chain.step();
+  assert.equal(chain.status, 'needs-resume');
+
+  const resumed = await chain.resume();
+  assert.equal(resumed.ok, false);
+  assert.equal(resumed.reason, 'no-session-id');
+  assert.equal(launcher.launches.length, 1, 'must not open a fresh blank worker');
+  assert.equal(chain.status, 'needs-resume');
+  assert.equal(chain.slot?.pid, 7000);
+});
+
+test('resume surfaces launcher history probe when present (blank vs non-blank)', async () => {
+  const only = candidate('01-first.md');
+  const tracker = createFakeTracker({ candidates: [only] });
+  const base = createFakeLauncher({ sessionId: 'sess-hist-1', pid: 8100 });
+  const launcher = {
+    ...base,
+    async launch(request) {
+      const result = await base.launch(request);
+      if (request?.kind === 'resume') {
+        result.history = {
+          exists: true,
+          blank: false,
+          hasUserQuery: true,
+          hasSkillEntry: true,
+          reason: null,
+        };
+      }
+      return result;
+    },
+  };
+  const chain = createChainRun({
+    tracker,
+    launcher,
+    feature: 'demo',
+    cwd: '/tmp/project',
+    runtime: 'grok',
+  });
+
+  await chain.step();
+  launcher.markExited(chain.slot.pid);
+  await chain.step();
+  assert.equal(chain.status, 'needs-resume');
+
+  const resumed = await chain.resume();
+  assert.equal(resumed.ok, true);
+  assert.equal(resumed.history?.blank, false);
+  assert.equal(resumed.history?.hasUserQuery, true);
 });
 
 test('single slot: second automatic spawn is rejected while the slot is occupied', async () => {

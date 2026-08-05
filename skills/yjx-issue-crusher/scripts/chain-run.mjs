@@ -651,7 +651,14 @@ export function createChainRun({
         forceAdvanceRequested: false,
       };
       status = stopped ? 'stopped' : 'soft-stuck';
-      return { ok: true, pid: result.pid, sessionId: slot.sessionId };
+      // history: optional blank/non-blank probe from real launcher (Grok);
+      // fake launcher omits it. Acceptance must not treat spawn alone as proof.
+      return {
+        ok: true,
+        pid: result.pid,
+        sessionId: slot.sessionId,
+        history: result.history ?? null,
+      };
     },
     /**
      * Reclassify occupied-slot status without spawning (for TUI refresh).

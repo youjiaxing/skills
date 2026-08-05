@@ -18,6 +18,9 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 
 import { normalizeOptionalFlag } from './build-launch-contract.mjs';
@@ -204,6 +207,257 @@ export function resolveExecutable(command, { platform = process.platform } = {})
 }
 
 /**
+ * Grok stores sessions under ~/.grok/sessions/<url-encoded-cwd>/<session-id>/.
+ * Encoding matches observed on-disk layout (backslash → %5C, colon → %3A).
+ */
+export function grokSessionDir(cwd, sessionId, { grokHome } = {}) {
+  if (!cwd) throw new Error('cwd is required');
+  if (!sessionId) throw new Error('sessionId is required');
+  const home = grokHome || process.env.GROK_HOME || path.join(os.homedir(), '.grok');
+  const encodedCwd = String(cwd).replace(/\\/gu, '%5C').replace(/:/gu, '%3A');
+  return path.join(home, 'sessions', encodedCwd, String(sessionId));
+}
+
+/**
+ * Flatten one chat_history.jsonl content field to searchable text.
+ * Grok stores either a plain string or [{type:'text', text:'...'}].
+ */
+function flattenHistoryContent(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (part == null) return '';
+      if (typeof part === 'string') return part;
+      if (typeof part === 'object' && typeof part.text === 'string') return part.text;
+      try {
+        return JSON.stringify(part);
+      } catch {
+        return '';
+      }
+    }).join('\n');
+  }
+  if (typeof content === 'object' && typeof content.text === 'string') {
+    return content.text;
+  }
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Classify a Grok `chat_history.jsonl` body as blank vs restorable history.
+ *
+ * Blank (product bug / dead bootstrap): missing file, empty, or only system +
+ * skills system-reminder user turns — no real operator `user_query`.
+ * Non-blank: at least one user turn carrying `<user_query>` (and optionally
+ * a skill slash like `/implement` / `/wayfinder`).
+ *
+ * This is the red/green probe for needs-resume: spawn success alone is not enough.
+ *
+ * @param {string|null|undefined} text raw jsonl
+ * @returns {{
+ *   exists: boolean,
+ *   blank: boolean,
+ *   userCount: number,
+ *   systemCount: number,
+ *   hasUserQuery: boolean,
+ *   hasSkillEntry: boolean,
+ *   lineCount: number,
+ *   reason: string|null,
+ * }}
+ */
+export function classifyGrokChatHistory(text) {
+  if (text == null) {
+    return {
+      exists: false,
+      blank: true,
+      userCount: 0,
+      systemCount: 0,
+      hasUserQuery: false,
+      hasSkillEntry: false,
+      lineCount: 0,
+      reason: 'missing',
+    };
+  }
+
+  const raw = String(text);
+  if (raw.trim() === '') {
+    return {
+      exists: true,
+      blank: true,
+      userCount: 0,
+      systemCount: 0,
+      hasUserQuery: false,
+      hasSkillEntry: false,
+      lineCount: 0,
+      reason: 'empty',
+    };
+  }
+
+  const lines = raw.split(/\r?\n/u).filter((line) => line.trim() !== '');
+  let userCount = 0;
+  let systemCount = 0;
+  let hasUserQuery = false;
+  let hasSkillEntry = false;
+
+  for (const line of lines) {
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const type = entry?.type || entry?.role || 'unknown';
+    if (type === 'system') systemCount += 1;
+    if (type === 'user') {
+      userCount += 1;
+      const body = flattenHistoryContent(entry.content);
+      if (/<user_query\b/iu.test(body)) hasUserQuery = true;
+      if (/\/implement\b/u.test(body) || /\/wayfinder\b/u.test(body)) {
+        hasSkillEntry = true;
+      }
+    }
+  }
+
+  if (hasUserQuery) {
+    return {
+      exists: true,
+      blank: false,
+      userCount,
+      systemCount,
+      hasUserQuery,
+      hasSkillEntry,
+      lineCount: lines.length,
+      reason: null,
+    };
+  }
+
+  return {
+    exists: true,
+    blank: true,
+    userCount,
+    systemCount,
+    hasUserQuery,
+    hasSkillEntry,
+    lineCount: lines.length,
+    reason: userCount === 0
+      ? 'no-user-turns'
+      : 'bootstrap-reminder-only',
+  };
+}
+
+/**
+ * Read Grok session chat_history.jsonl and classify blank vs non-blank.
+ * Inject readFile/access for unit tests; production uses fs promises.
+ *
+ * @returns {Promise<object>} classifyGrokChatHistory fields + path
+ */
+export async function readGrokChatHistory({
+  cwd,
+  sessionId,
+  grokHome,
+  readFile = (file) => fs.readFile(file, 'utf8'),
+  access = (file) => fs.access(file),
+} = {}) {
+  if (!cwd) throw new Error('cwd is required');
+  if (!sessionId) throw new Error('sessionId is required');
+
+  const historyPath = path.join(
+    grokSessionDir(cwd, sessionId, { grokHome }),
+    'chat_history.jsonl',
+  );
+
+  try {
+    await access(historyPath);
+  } catch {
+    return {
+      ...classifyGrokChatHistory(null),
+      path: historyPath,
+    };
+  }
+
+  try {
+    const text = await readFile(historyPath);
+    return {
+      ...classifyGrokChatHistory(text),
+      path: historyPath,
+    };
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return {
+        ...classifyGrokChatHistory(null),
+        path: historyPath,
+      };
+    }
+    throw error;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Best-effort: set Grok session title after spawn by patching summary.json.
+ * Embedded `/rename` in the initial prompt is plain text and does not rename.
+ * Leading `/rename` blanks the whole prompt — so title is applied out-of-band.
+ *
+ * @returns {Promise<boolean>} true when the title was written
+ */
+export async function applyGrokSessionTitle({
+  cwd,
+  sessionId,
+  title,
+  grokHome,
+  timeoutMs = 4000,
+  intervalMs = 100,
+  now = () => Date.now(),
+  sleepFn = sleep,
+  readFile = (file) => fs.readFile(file, 'utf8'),
+  writeFile = (file, body) => fs.writeFile(file, body, 'utf8'),
+  access = (file) => fs.access(file),
+} = {}) {
+  const trimmed = title == null ? '' : String(title).trim();
+  if (!cwd || !sessionId || !trimmed) return false;
+
+  const summaryPath = path.join(grokSessionDir(cwd, sessionId, { grokHome }), 'summary.json');
+  const deadline = now() + Math.max(0, timeoutMs);
+
+  while (now() <= deadline) {
+    try {
+      await access(summaryPath);
+      let current = {};
+      try {
+        current = JSON.parse(await readFile(summaryPath));
+      } catch {
+        current = {};
+      }
+      if (!current || typeof current !== 'object' || Array.isArray(current)) {
+        current = {};
+      }
+      current.generated_title = trimmed;
+      current.session_summary = trimmed;
+      current.title_is_manual = true;
+      if (!current.info || typeof current.info !== 'object') {
+        current.info = { id: String(sessionId), cwd: String(cwd) };
+      } else {
+        current.info.id = current.info.id || String(sessionId);
+        current.info.cwd = current.info.cwd || String(cwd);
+      }
+      await writeFile(summaryPath, `${JSON.stringify(current, null, 2)}\n`);
+      return true;
+    } catch {
+      // summary not created yet
+    }
+    await sleepFn(intervalMs);
+  }
+  return false;
+}
+
+/**
  * Windows argv → single Arguments string (CreateProcess / ProcessStartInfo rules).
  * Mirrors Python subprocess.list2cmdline / MSVC C argv encoding.
  */
@@ -366,6 +620,11 @@ export function defaultKillProcess(pid) {
  * @param {boolean} [options.preallocateSessionId=true]
  * @param {Record<string, string>} [options.commands] override binary names
  * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {typeof applyGrokSessionTitle} [options.applySessionTitle] grok title hook
+ * @param {boolean} [options.applyGrokTitle=true]
+ * @param {number} [options.grokTitleTimeoutMs=4000]
+ * @param {typeof readGrokChatHistory} [options.readHistory] resume history probe
+ * @param {boolean} [options.probeResumeHistory=true] attach blank/non-blank on grok resume
  */
 export function createRealLauncher(options = {}) {
   const {
@@ -376,6 +635,11 @@ export function createRealLauncher(options = {}) {
     preallocateSessionId = true,
     commands = {},
     env,
+    applySessionTitle = applyGrokSessionTitle,
+    applyGrokTitle = true,
+    grokTitleTimeoutMs = 4000,
+    readHistory = readGrokChatHistory,
+    probeResumeHistory = true,
   } = options;
 
   /** @type {Array<object>} */
@@ -414,12 +678,60 @@ export function createRealLauncher(options = {}) {
         throw new Error(`spawn of ${invocation.command} returned no pid`);
       }
 
+      /** @type {boolean|null} */
+      let titleApplied = null;
+      if (
+        applyGrokTitle
+        && request.runtime === 'grok'
+        && request.kind !== 'resume'
+        && invocation.sessionId
+        && request.title
+        && typeof applySessionTitle === 'function'
+      ) {
+        try {
+          titleApplied = await applySessionTitle({
+            cwd: invocation.cwd,
+            sessionId: invocation.sessionId,
+            title: request.title,
+            timeoutMs: grokTitleTimeoutMs,
+          });
+        } catch {
+          titleApplied = false;
+        }
+      }
+
+      /** @type {object|null} */
+      let history = null;
+      if (
+        probeResumeHistory
+        && request.kind === 'resume'
+        && request.runtime === 'grok'
+        && invocation.sessionId
+        && typeof readHistory === 'function'
+      ) {
+        try {
+          history = await readHistory({
+            cwd: invocation.cwd,
+            sessionId: invocation.sessionId,
+          });
+        } catch {
+          history = {
+            exists: false,
+            blank: true,
+            reason: 'probe-error',
+          };
+        }
+      }
+
       const result = {
         pid: spawned.pid,
         sessionId: invocation.sessionId,
         sessionIdStatus: invocation.sessionIdStatus,
         sessionIdNote: invocation.sessionIdNote,
         invocation,
+        titleApplied,
+        // Resume acceptance: blank vs non-blank history (not spawn-success alone).
+        history,
       };
       launches.push({ ...request, result, invocation });
       return result;
