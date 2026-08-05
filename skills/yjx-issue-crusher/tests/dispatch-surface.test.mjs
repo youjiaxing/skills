@@ -248,14 +248,14 @@ test('needs-resume without session id keeps r unavailable with explicit reason',
   assert.equal(launcher.launches.length, 1, 'must not spawn a blank worker');
 });
 
-test('HITL ask appears on surface; confirm/reject match ticket 11', async () => {
-  const wayfinder = candidate('01-wayfinder.md', {
-    entryClass: 'wayfinder',
-    type: 'research',
+test('HITL ask on surface is for human/unknown; wayfinder starts via Enter', async () => {
+  const human = candidate('05-human.md', {
+    entryClass: 'human',
+    statusRole: 'ready-for-human',
   });
   const { launcher, surface } = makeSurface({
     candidates: [],
-    hitlCandidates: [wayfinder],
+    hitlCandidates: [human],
   });
 
   await surface.tick();
@@ -263,23 +263,43 @@ test('HITL ask appears on surface; confirm/reject match ticket 11', async () => 
   assert.equal(snap.status, 'needs-confirmation');
   assert.equal(snap.actions.confirmHitl.available, true);
   assert.equal(snap.actions.rejectHitl.available, true);
-  assert.equal(snap.pendingHitl?.issueId, '01-wayfinder.md');
-  assert.equal(snap.pendingHitl?.entryClass, 'wayfinder');
+  assert.equal(snap.pendingHitl?.issueId, '05-human.md');
+  assert.equal(snap.pendingHitl?.entryClass, 'human');
   assert.deepEqual(launcher.launches, []);
 
-  // Reject path: zero spawn, empty slot.
   const rejected = await surface.rejectHitl();
   assert.equal(rejected.ok, true);
   assert.equal(launcher.launches.length, 0);
   assert.equal(surface.snapshot().slot, null);
 
-  // Re-offer and confirm.
   await surface.tick();
   const confirmed = await surface.confirmHitl();
   assert.equal(confirmed.ok, true);
   assert.equal(confirmed.spawned, true);
-  assert.match(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
+  assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
   assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/implement\b/);
+});
+
+test('surface start opens wayfinder with /wayfinder without confirmHitl', async () => {
+  const wayfinder = candidate('01-wayfinder.md', {
+    entryClass: 'wayfinder',
+    type: 'grilling',
+  });
+  const { launcher, surface } = makeSurface({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+    autoAdvance: false,
+  });
+
+  await surface.refresh();
+  assert.equal(surface.snapshot().status, 'idle');
+  assert.equal(surface.snapshot().pendingHitl, null);
+
+  const started = await surface.start('01-wayfinder.md');
+  assert.equal(started.ok, true);
+  assert.equal(started.spawned, true);
+  assert.match(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
+  assert.equal(launcher.launches[0].issue.id, '01-wayfinder.md');
 });
 
 test('stop freezes auto spawn; surface reports stopped', async () => {

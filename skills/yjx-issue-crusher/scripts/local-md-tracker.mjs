@@ -87,15 +87,21 @@ export function createLocalMarkdownTracker({
       return {
         feature: payload.feature ?? feature,
         readOnly: true,
-        issues: (payload.issues || []).map((issue) => ({
-          id: issue.id,
-          title: issue.title,
-          closed: Boolean(issue.closed),
-          blockedBy: Array.isArray(issue.blockedBy) ? issue.blockedBy : [],
-          unlocks: Array.isArray(issue.unlocks) ? issue.unlocks : [],
-          status: issue.statusRole ?? issue.status ?? issue.type ?? null,
-          path: issue.path,
-        })),
+        issues: (payload.issues || []).map((issue) => {
+          const entryClass = toCandidate(issue).entryClass;
+          return {
+            id: issue.id,
+            title: issue.title,
+            closed: Boolean(issue.closed),
+            blockedBy: Array.isArray(issue.blockedBy) ? issue.blockedBy : [],
+            unlocks: Array.isArray(issue.unlocks) ? issue.unlocks : [],
+            status: issue.statusRole ?? issue.status ?? issue.type ?? null,
+            type: issue.type ?? null,
+            entryClass,
+            workflow: issue.workflow ?? null,
+            path: issue.path,
+          };
+        }),
       };
     },
     /** @deprecated no-op kept for callers; payload is always fresh. */

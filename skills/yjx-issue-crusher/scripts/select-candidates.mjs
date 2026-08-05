@@ -2,7 +2,8 @@
  * Auto-relay candidate contract, aligned with yjx-local-ralph select-issue:
  * ordinary implementation ready-for-agent only (Wayfinder has no statusRole).
  *
- * HITL (ticket 11): Wayfinder / non-ready triage / unknown — ask before spawn.
+ * HITL list: wayfinder / non-ready triage / unknown.
+ * Wayfinder is Enter-startable (not auto); human/unknown still ask before spawn.
  */
 
 function compareIssueNumbers(left, right) {

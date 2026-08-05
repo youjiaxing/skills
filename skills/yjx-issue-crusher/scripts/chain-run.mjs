@@ -379,11 +379,29 @@ export function createChainRun({
   }
 
   /**
-   * Resolve an auto-ready impl by id (or frontier default when id is null/omitted).
+   * Wayfinder tickets openable by manual Enter (not human/unknown HITL).
+   * Sorted as tracker returns (number order via selectHitlCandidates).
+   */
+  async function listWayfinderStartCandidates() {
+    if (typeof tracker.listHitlCandidates !== 'function') return [];
+    const list = await tracker.listHitlCandidates();
+    if (!Array.isArray(list)) return [];
+    return list.filter((item) => resolveEntryClass(item?.entryClass, item) === 'wayfinder');
+  }
+
+  /**
+   * Resolve a ticket for explicit operator start (Enter).
+   * Default (no id): auto-ready impl first, else first open wayfinder.
+   * With id: auto impl or wayfinder HITL candidate; human/unknown stay confirm-only.
    */
   async function resolveStartIssue(issueId) {
     if (issueId == null || issueId === '') {
-      return tracker.recommendNext();
+      const auto = typeof tracker.recommendNext === 'function'
+        ? await tracker.recommendNext()
+        : null;
+      if (auto) return auto;
+      const wayfinders = await listWayfinderStartCandidates();
+      return wayfinders[0] ?? null;
     }
     const wanted = String(issueId);
     if (typeof tracker.listAutoCandidates === 'function') {
@@ -393,21 +411,29 @@ export function createChainRun({
         : null;
       if (hit) return hit;
     }
-    // Fallback: recommendNext only matches when it is the wanted id.
-    const next = await tracker.recommendNext();
+    const next = typeof tracker.recommendNext === 'function'
+      ? await tracker.recommendNext()
+      : null;
     if (next && next.id === wanted) return next;
+
+    const wayfinders = await listWayfinderStartCandidates();
+    const wayfinderHit = wayfinders.find((item) => item && item.id === wanted);
+    if (wayfinderHit) return wayfinderHit;
     return null;
   }
 
   /**
-   * Explicit operator start (Enter): spawn one ready impl into an empty slot.
+   * Explicit operator start (Enter): spawn one executable ticket into an empty slot.
+   * Includes ordinary ready impl and wayfinder (Type:) tickets — no second confirm.
+   * Human/unknown still use confirmHitl, not this path.
    * Bypasses autoAdvance gate. On a clean path (user never s-off'd), first
-   * successful start opens autoAdvance so Closed∧exit handoffs can AFK.
+   * successful start opens autoAdvance so Closed∧exit handoffs can AFK
+   * (auto still only spawns ready impl on step).
    * After user toggleAutoAdvance → off, start still spawns one but leaves
    * autoAdvance off — only another s (or set/toggle on) re-enables it.
    *
    * @param {string | null | undefined} issueId
-   *   When set, spawn that auto-ready id; otherwise board default (recommendNext).
+   *   When set, spawn that executable id; otherwise default = impl then wayfinder.
    */
   async function startIssue(issueId) {
     if (stopped) {
@@ -752,9 +778,9 @@ export function createChainRun({
      * - If a slot is held, release it only when dual conditions are met.
      * - If autoAdvance is false, reclassify/release only — no auto reap of a
      *   still-live Closed worker, no auto spawn / HITL offer.
-     * - Then spawn at most one auto candidate into an empty slot (single slot).
-     * - If no auto candidate but a HITL candidate exists, emit needs-confirmation
-     *   and do not spawn until confirmHitl.
+     * - Then spawn at most one auto ready-impl candidate into an empty slot.
+     * - Wayfinder is never auto-spawned; operator uses startIssue/Enter.
+     * - human/unknown HITL: emit needs-confirmation until confirmHitl.
      * - Spawn pins the then-effective mode onto the worker slot.
      */
     async step() {
@@ -857,6 +883,20 @@ export function createChainRun({
 
       const hitl = await recommendHitl();
       if (hitl) {
+        const hitlClass = resolveEntryClass(hitl.entryClass, hitl);
+        // Wayfinder is Enter-startable; do not park auto-step on needs-confirmation.
+        // Auto step never spawns wayfinder — only ready impl (above) or human/unknown ask.
+        if (hitlClass === 'wayfinder') {
+          nextIssue = hitl;
+          status = 'idle';
+          return {
+            spawned: false,
+            advanced: true,
+            reason: 'wayfinder-manual-start',
+            next: hitl,
+            status,
+          };
+        }
         const offer = buildHitlOffer(hitl);
         pendingHitl = offer;
         nextIssue = hitl;

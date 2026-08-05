@@ -63,6 +63,9 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
           blockedBy: Array.isArray(issue.blockedBy) ? [...issue.blockedBy] : [],
           unlocks: Array.isArray(issue.unlocks) ? [...issue.unlocks] : [],
           status: issue.status ?? issue.statusRole ?? issue.type ?? null,
+          type: issue.type ?? null,
+          entryClass: issue.entryClass ?? null,
+          workflow: issue.workflow ?? null,
         }))
         : [],
     };

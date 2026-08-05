@@ -25,6 +25,41 @@ test('listExecutableIssueIds: only unblocked open ready tickets', () => {
   assert.deepEqual(listExecutableIssueIds(issues), ['02-b.md']);
 });
 
+test('listExecutableIssueIds: includes open wayfinder / grilling; excludes human triage', () => {
+  const issues = [
+    {
+      id: '01-grill.md',
+      closed: false,
+      blockedBy: [],
+      status: 'open',
+      type: 'grilling',
+      entryClass: 'wayfinder',
+    },
+    {
+      id: '02-human.md',
+      closed: false,
+      blockedBy: [],
+      status: 'ready-for-human',
+      entryClass: 'human',
+    },
+    {
+      id: '03-blocked-grill.md',
+      closed: false,
+      blockedBy: ['01-grill.md'],
+      status: 'open',
+      type: 'grilling',
+      entryClass: 'wayfinder',
+    },
+    {
+      id: '04-impl.md',
+      closed: false,
+      blockedBy: [],
+      status: 'ready-for-agent',
+    },
+  ];
+  assert.deepEqual(listExecutableIssueIds(issues), ['01-grill.md', '04-impl.md']);
+});
+
 test('issueMark: closed / slot / executable / blocked', () => {
   assert.equal(issueMark({ closed: true, id: '01.md' }), '✓');
   assert.equal(issueMark({ closed: false, id: '01.md', slotIssueId: '01.md' }), '▶');

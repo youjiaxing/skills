@@ -952,14 +952,14 @@ test('handleFullscreenKey r resumes needs-resume with recorded session id', asyn
   assert.equal(launcher.launches[1].sessionId, 'sess-fs-resume');
 });
 
-test('handleFullscreenKey y/n match HITL confirm/reject surface semantics', async () => {
-  const wayfinder = candidate('01-wayfinder.md', {
-    entryClass: 'wayfinder',
-    type: 'research',
+test('handleFullscreenKey y/n match HITL confirm/reject for human tickets', async () => {
+  const human = candidate('05-human.md', {
+    entryClass: 'human',
+    statusRole: 'ready-for-human',
   });
   const { launcher, surface } = makeSurface({
     candidates: [],
-    hitlCandidates: [wayfinder],
+    hitlCandidates: [human],
   });
 
   await surface.tick();
@@ -974,7 +974,32 @@ test('handleFullscreenKey y/n match HITL confirm/reject surface semantics', asyn
   const confirmed = await handleFullscreenKey(surface, 'y');
   assert.match(confirmed.message || '', /同意|Worker|开/);
   assert.equal(launcher.launches.length, 1);
+  assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
+  assert.doesNotMatch(launcher.launches[0].initialPrompt, /\/implement\b/);
+});
+
+test('handleFullscreenKey Enter starts wayfinder with /wayfinder prompt', async () => {
+  const wayfinder = candidate('01-wayfinder.md', {
+    entryClass: 'wayfinder',
+    type: 'grilling',
+  });
+  const { launcher, surface } = makeSurface({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+    autoAdvance: false,
+  });
+
+  await surface.refresh();
+  assert.equal(surface.snapshot().status, 'idle');
+
+  const started = await handleFullscreenKey(surface, '\r', {
+    selectedIssueId: '01-wayfinder.md',
+  });
+  assert.equal(started.ok, true);
+  assert.equal(started.spawned, true);
+  assert.equal(launcher.launches.length, 1);
   assert.match(launcher.launches[0].initialPrompt, /\/wayfinder\b/);
+  assert.equal(launcher.launches[0].issue.id, '01-wayfinder.md');
 });
 
 test('handleFullscreenKey s toggles autoAdvance; q stops and signals quit', async () => {

@@ -36,8 +36,20 @@ export function openBlockersById(issues) {
   return result;
 }
 
+/** Human-triage roles: visible on board but not Enter-startable. */
+const HUMAN_STATUS = new Set(['ready-for-human', 'needs-info', 'needs-triage']);
+
+/** Wayfinder Status values that mean unfinished (not resolved). */
+const WAYFINDER_OPEN_STATUS = new Set(['open', 'claimed', 'ready-for-agent']);
+
+/** Type labels sometimes surface as board status when role is missing. */
+const WAYFINDER_TYPE_AS_STATUS = new Set(['research', 'prototype', 'grilling', 'task']);
+
 /**
- * "现在可执行": not closed, no open blockers, ready-for-agent or empty status.
+ * "现在可执行": not closed, no open blockers, and either
+ * - ordinary impl ready (empty / ready-for-agent status), or
+ * - unfinished wayfinder frontier (open/claimed/… or Type/entryClass wayfinder).
+ * Human triage / needs-info stays out — still ask before spawn.
  * @param {Array<object>} issues
  * @returns {string[]}
  */
@@ -48,7 +60,21 @@ export function listExecutableIssueIds(issues) {
       if (issue.closed) return false;
       if ((openMap.get(issue.id) || []).length > 0) return false;
       const status = issue.status ?? issue.statusRole ?? null;
+      if (HUMAN_STATUS.has(status)) return false;
+      // Ordinary impl: ready or empty status.
       if (status == null || status === '' || status === 'ready-for-agent') return true;
+      // Wayfinder frontier statuses (local-md Status: open / claimed).
+      if (WAYFINDER_OPEN_STATUS.has(status)) return true;
+      // Board projection sometimes puts Type in status when role is absent.
+      if (WAYFINDER_TYPE_AS_STATUS.has(status)) return true;
+      // Explicit wayfinder classification from tracker/board enrichment.
+      if (
+        issue.entryClass === 'wayfinder'
+        || issue.workflow === 'wayfinder'
+        || (issue.type && String(issue.type).trim() !== '')
+      ) {
+        return true;
+      }
       return false;
     })
     .map((issue) => issue.id);

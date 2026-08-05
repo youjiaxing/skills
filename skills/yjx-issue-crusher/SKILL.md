@@ -99,7 +99,7 @@ Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门�
 - **可选：** `model`、`effort`（见上 subsequent 初值；省略则不传 flag，用运行时产品默认）  
 - **标题：** `<feature>/<NN>-<slug>`；Claude `-n`；Grok **进程外**写 `summary.json`（**不要**把 `/rename` 放进初始 prompt：行首会空启动，行内只当纯文本）  
 - **impl 入口：** `/implement <票相对路径>`（路径引用，不贴全文；prompt **以 skill 斜杠开头**）  
-- **Wayfinder 入口：** `/wayfinder <票相对路径>`（须 HITL 同意后）  
+- **Wayfinder 入口：** `/wayfinder <票相对路径>`（人手 Enter 直接开；**不**进自动接力）  
 - 每票**全新顶层会话**；可恢复路径禁止关闭 session 持久化  
 - **`r` / resume（仅 `needs-resume`）：** 用已记 session id 开 **同一会话**（`--resume <id>`），挂回完整历史；**不是**开下一张 ready 票；**不**重塞 skill 入口。无 session id → 动作不可用 / `no-session-id`，禁止静默空窗。历史是否非空可用 Grok `chat_history.jsonl` 探针（须含真实 `user_query`，仅 skills system-reminder 算空白）
 
@@ -113,7 +113,7 @@ closed == false
 && dependencyCycle 为空
 ```
 
-编号升序。Wayfinder（有 `Type:`）/ 非 ready / 未知类：**先问人**，不自动 spawn。
+编号升序。Wayfinder（有 `Type:`）：**不**自动 spawn，但全屏 **Enter 可直接开**（`/wayfinder <path>`，无二次确认）；human / 未知类仍 **先问人** 再 spawn。
 
 ### 一期明确不做
 
@@ -164,7 +164,7 @@ closed == false
 - **mode** 解析与仓文件写回  
 - **subsequent model/effort** 初值（CLI → 仓分桶 → 空）与 `setModelEffort` 写仓  
 - **全屏 `o`**：model→effort 事务选单；Grok 可注入 model 发现（`grok models` best-effort 降级）；Claude 别名 + effort 档位提示  
-- **HITL** confirm/reject（Wayfinder / human / 未知）  
+- **HITL** confirm/reject（human / 未知；Wayfinder 改由 Enter 直接开）  
 - **CLI：** `recommend` · `probe-launch` · **`chain`**（默认命令；可选假启动器）  
 - **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏；**Enter 开始**、列表导航、自动开下一张开关、`o` model/effort）  
 - **启动期全屏选单**：缺 feature / runtime 时用 Ink 列表（`j`/`k`/方向键/数字 + Enter；`q` 取消）；**不为** model/effort 强问  

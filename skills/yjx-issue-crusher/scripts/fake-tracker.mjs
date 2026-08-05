@@ -6,7 +6,8 @@ import { toCandidate } from './select-candidates.mjs';
  * Completions are mutable so dual-condition handoff can close tickets mid-run.
  *
  * Auto candidates = ready-for-agent ordinary impl (auto spawn).
- * HITL candidates = wayfinder / human / unknown (ask before spawn).
+ * HITL candidates = wayfinder / human / unknown.
+ * Manual Enter may spawn wayfinder directly; human/unknown still confirm first.
  */
 export function createFakeTracker({
   candidates = [],
@@ -38,13 +39,22 @@ export function createFakeTracker({
   function defaultBoardIssues() {
     const rows = [];
     for (const item of [...normalized, ...normalizedHitl]) {
+      const entryClass = item.entryClass ?? 'impl';
+      let status = item.statusRole ?? item.status ?? null;
+      if (status == null || status === '') {
+        if (entryClass === 'wayfinder') status = 'open';
+        else if (item.type) status = item.type;
+        else status = entryClass === 'impl' ? 'ready-for-agent' : entryClass;
+      }
       rows.push({
         id: item.id,
         title: item.title,
         closed: false,
         blockedBy: item.blockedBy ?? [],
         unlocks: item.unlocks ?? [],
-        status: item.statusRole ?? item.type ?? item.entryClass ?? null,
+        status,
+        type: item.type ?? null,
+        entryClass,
       });
     }
     return rows;
@@ -95,6 +105,8 @@ export function createFakeTracker({
           blockedBy: Array.isArray(issue.blockedBy) ? [...issue.blockedBy] : [],
           unlocks: Array.isArray(issue.unlocks) ? [...issue.unlocks] : [],
           status: issue.status ?? issue.statusRole ?? issue.type ?? null,
+          type: issue.type ?? null,
+          entryClass: issue.entryClass ?? null,
         });
       }
       return {
