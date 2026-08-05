@@ -42,7 +42,8 @@ export async function handleDispatchCommand(surface, command) {
   if (!command) return {};
   switch (command.type) {
     case 'quit':
-      // q / Ctrl+C: turn off auto-open-next and freeze chain before leave.
+      // q / Ctrl+C: freeze session auto-open-next and chain before leave.
+      // setAutoAdvance must NOT write repo preference (preference survives restart).
       if (typeof surface.setAutoAdvance === 'function') {
         try {
           if (surface.snapshot().autoAdvance !== false) {

@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   createFileModeConfig,
   createMemoryModeConfig,
+  normalizeAutoAdvance,
   resolveSubsequentMode,
 } from '../scripts/mode-config.mjs';
 
@@ -74,6 +75,51 @@ test('memory mode config: writeCount tracks persistence calls', () => {
   config.writeMode('vibe');
   assert.equal(config.readMode(), 'vibe');
   assert.equal(config.writeCount, 1);
+});
+
+// --- autoAdvance repo preference (fullscreen dial persistence) ---
+
+test('normalizeAutoAdvance: only strict true is on', () => {
+  assert.equal(normalizeAutoAdvance(true), true);
+  assert.equal(normalizeAutoAdvance(false), false);
+  assert.equal(normalizeAutoAdvance(null), false);
+  assert.equal(normalizeAutoAdvance(undefined), false);
+  assert.equal(normalizeAutoAdvance('true'), false);
+  assert.equal(normalizeAutoAdvance(1), false);
+});
+
+test('memory autoAdvance: default false; write/read round-trip', () => {
+  const config = createMemoryModeConfig({});
+  assert.equal(config.readAutoAdvance(), false);
+  assert.equal(config.writeAutoAdvance(true), true);
+  assert.equal(config.readAutoAdvance(), true);
+  assert.equal(config.writeCount, 1);
+  assert.equal(config.writeAutoAdvance(false), false);
+  assert.equal(config.readAutoAdvance(), false);
+});
+
+test('file autoAdvance: persists under project root without clobbering mode', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'issue-crusher-auto-'));
+  try {
+    const config = createFileModeConfig({ projectRoot: root });
+    config.writeMode('vibe');
+    assert.equal(config.readAutoAdvance(), false);
+
+    config.writeAutoAdvance(true);
+    assert.equal(config.readAutoAdvance(), true);
+    assert.equal(config.readMode(), 'vibe', 'mode must survive autoAdvance write');
+
+    const raw = JSON.parse(readFileSync(config.path, 'utf8'));
+    assert.equal(raw.autoAdvance, true);
+    assert.equal(raw.mode, 'vibe');
+
+    const again = createFileModeConfig({ projectRoot: root });
+    assert.equal(again.readAutoAdvance(), true);
+    again.writeAutoAdvance(false);
+    assert.equal(config.readAutoAdvance(), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // --- 20260804-1802-tui-model-effort / 01: workers.<runtime>.{model,effort} buckets ---

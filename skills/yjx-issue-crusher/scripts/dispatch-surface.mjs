@@ -258,7 +258,7 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
     },
     /**
      * Programmatic gate: whether tick() may auto-spawn the next ready impl.
-     * Fullscreen mounts with false; --once keeps chain default true.
+     * --once / quit freeze / tests. Does **not** write repo preference.
      * Does not lock Enter→open-auto (use toggleAutoAdvance for operator s).
      */
     async setAutoAdvance(enabled) {
@@ -270,9 +270,27 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       return result;
     },
     /**
+     * Fullscreen mount: restore repo auto preference with handoff-only (no idle fire).
+     * Falls back to setAutoAdvance(false) when the chain lacks the port.
+     */
+    async applyFullscreenAutoPreference() {
+      if (typeof chain.applyFullscreenAutoPreference === 'function') {
+        const result = chain.applyFullscreenAutoPreference();
+        await buildSnapshot();
+        return result;
+      }
+      if (typeof chain.setAutoAdvance === 'function') {
+        const result = chain.setAutoAdvance(false);
+        await buildSnapshot();
+        return result;
+      }
+      return { ok: false, reason: 'no-auto-advance' };
+    },
+    /**
      * Operator dial (fullscreen `s`): flip auto-open-next.
      * Off also prevents a later Enter from reopening auto.
      * On is preference only — does not idle-spawn an empty slot.
+     * Writes repo preference when chain/modeConfig supports it.
      * Requires chain.toggleAutoAdvance — do not fake via setAutoAdvance
      * (that path would not lock Enter→open-auto and would re-enable idle spawn).
      */

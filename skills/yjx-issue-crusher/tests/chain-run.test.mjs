@@ -1270,6 +1270,70 @@ test('programmatic setAutoAdvance(false) still allows first start to open auto',
   assert.equal(chain.autoAdvance, true, 'mount gate must not suppress first-Enter open');
 });
 
+test('toggleAutoAdvance persists repo preference; setAutoAdvance does not', async () => {
+  const config = createMemoryModeConfig({ autoAdvance: false });
+  const only = candidate('01-ready.md');
+  const { chain } = makeChain({
+    candidates: [only],
+    autoAdvance: false,
+    modeConfig: config,
+  });
+
+  assert.equal(config.readAutoAdvance(), false);
+  const writesBefore = config.writeCount;
+
+  chain.setAutoAdvance(true);
+  assert.equal(chain.autoAdvance, true);
+  assert.equal(config.readAutoAdvance(), false, 'programmatic set must not write preference');
+  assert.equal(config.writeCount, writesBefore);
+
+  chain.setAutoAdvance(false);
+  chain.toggleAutoAdvance(); // on
+  assert.equal(chain.autoAdvance, true);
+  assert.equal(config.readAutoAdvance(), true);
+  assert.ok(config.writeCount > writesBefore);
+
+  chain.toggleAutoAdvance(); // off
+  assert.equal(chain.autoAdvance, false);
+  assert.equal(config.readAutoAdvance(), false);
+});
+
+test('startIssue clean open-auto writes preference true', async () => {
+  const config = createMemoryModeConfig({ autoAdvance: false });
+  const only = candidate('01-ready.md');
+  const { chain } = makeChain({
+    candidates: [only],
+    autoAdvance: false,
+    modeConfig: config,
+  });
+
+  await chain.startIssue('01-ready.md');
+  assert.equal(chain.autoAdvance, true);
+  assert.equal(config.readAutoAdvance(), true);
+});
+
+test('applyFullscreenAutoPreference restores on with handoff-only (no idle spawn)', async () => {
+  const config = createMemoryModeConfig({ autoAdvance: true });
+  const only = candidate('01-ready.md');
+  const { launcher, chain } = makeChain({
+    candidates: [only],
+    autoAdvance: true, // once default; mount must re-apply handoff-only
+    modeConfig: config,
+  });
+
+  const applied = chain.applyFullscreenAutoPreference();
+  assert.equal(applied.ok, true);
+  assert.equal(chain.autoAdvance, true);
+  assert.equal(config.readAutoAdvance(), true, 'apply must not clear preference');
+
+  const idle = await chain.step();
+  assert.equal(idle.spawned, false, 'restored on must not idle empty spawn');
+  assert.equal(launcher.launches.length, 0);
+
+  await chain.startIssue('01-ready.md');
+  assert.equal(launcher.launches.length, 1);
+});
+
 test('empty slot + toggle on does not auto-spawn (s is dial only; first needs Enter)', async () => {
   const only = candidate('01-ready.md');
   const { launcher, chain } = makeChain({

@@ -54,6 +54,16 @@ export function normalizeRuntime(raw) {
 }
 
 /**
+ * Normalize repo auto-open-next preference.
+ * Only strict boolean true is on; missing/invalid → false (fullscreen cold default).
+ * @param {unknown} raw
+ * @returns {boolean}
+ */
+export function normalizeAutoAdvance(raw) {
+  return raw === true;
+}
+
+/**
  * Resolve subsequent-ticket mode for one Chain Run process.
  *
  * Spec order at spawn:
@@ -87,10 +97,15 @@ export function resolveSubsequentMode({
 
 /**
  * In-memory ModeConfig for Chain Run tests (no filesystem).
- * @param {{ mode?: 'review'|'vibe'|null, workers?: Record<string, {model?: string|null, effort?: string|null}> }} [options]
+ * @param {{
+ *   mode?: 'review'|'vibe'|null,
+ *   autoAdvance?: boolean,
+ *   workers?: Record<string, {model?: string|null, effort?: string|null}>,
+ * }} [options]
  */
-export function createMemoryModeConfig({ mode = null, workers = {} } = {}) {
+export function createMemoryModeConfig({ mode = null, autoAdvance = false, workers = {} } = {}) {
   let current = normalizeMode(mode);
+  let currentAutoAdvance = normalizeAutoAdvance(autoAdvance);
   let writeCount = 0;
   /** @type {Record<string, {model: string|null, effort: string|null}>} */
   const buckets = {};
@@ -119,6 +134,23 @@ export function createMemoryModeConfig({ mode = null, workers = {} } = {}) {
       current = normalized;
       writeCount += 1;
       return current;
+    },
+    /**
+     * Repo preference for fullscreen auto-open-next (missing → false).
+     * @returns {boolean}
+     */
+    readAutoAdvance() {
+      return currentAutoAdvance;
+    },
+    /**
+     * Persist repo auto-open-next preference.
+     * @param {unknown} next
+     * @returns {boolean}
+     */
+    writeAutoAdvance(next) {
+      currentAutoAdvance = next === true;
+      writeCount += 1;
+      return currentAutoAdvance;
     },
     /**
      * Read the workers.<runtime> model/effort bucket.
@@ -156,7 +188,9 @@ export function createMemoryModeConfig({ mode = null, workers = {} } = {}) {
 /**
  * File-backed repo config.
  * Default path: <projectRoot>/.issue-crusher/config.json
- * Keys: `mode` (review|vibe), optional `runtime` (grok|claude) for CLI defaults.
+ * Keys: `mode` (review|vibe), optional `runtime` (grok|claude),
+ * optional `autoAdvance` (boolean; fullscreen auto-open-next preference),
+ * optional `workers.<runtime>.{model,effort}`.
  * Startup --mode must not call writeMode.
  *
  * @param {{ projectRoot: string, configPath?: string }} options
@@ -177,6 +211,11 @@ export function createFileModeConfig({ projectRoot, configPath } = {}) {
     }
   }
 
+  function writeFile(nextData) {
+    mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    writeFileSync(resolvedPath, `${JSON.stringify(nextData, null, 2)}\n`, 'utf8');
+  }
+
   return {
     path: resolvedPath,
     readMode() {
@@ -187,6 +226,25 @@ export function createFileModeConfig({ projectRoot, configPath } = {}) {
     readRuntime() {
       const data = readFile();
       return normalizeRuntime(data?.runtime);
+    },
+    /**
+     * Fullscreen auto-open-next preference. Missing/invalid → false.
+     * @returns {boolean}
+     */
+    readAutoAdvance() {
+      const data = readFile();
+      return normalizeAutoAdvance(data?.autoAdvance);
+    },
+    /**
+     * Persist auto-open-next preference; keeps mode/runtime/workers intact.
+     * @param {unknown} next
+     * @returns {boolean}
+     */
+    writeAutoAdvance(next) {
+      const value = next === true;
+      const existing = readFile() || {};
+      writeFile({ ...existing, autoAdvance: value });
+      return value;
     },
     /**
      * Read the workers.<runtime> model/effort bucket for this repo config.
@@ -249,8 +307,7 @@ export function createFileModeConfig({ projectRoot, configPath } = {}) {
       if (Object.keys(workers).length === 0) {
         delete nextData.workers;
       }
-      mkdirSync(path.dirname(resolvedPath), { recursive: true });
-      writeFileSync(resolvedPath, `${JSON.stringify(nextData, null, 2)}\n`, 'utf8');
+      writeFile(nextData);
       return { ...normalized };
     },
     writeMode(next) {
@@ -259,9 +316,7 @@ export function createFileModeConfig({ projectRoot, configPath } = {}) {
         throw new Error(`invalid mode: ${next}`);
       }
       const existing = readFile() || {};
-      const nextData = { ...existing, mode: normalized };
-      mkdirSync(path.dirname(resolvedPath), { recursive: true });
-      writeFileSync(resolvedPath, `${JSON.stringify(nextData, null, 2)}\n`, 'utf8');
+      writeFile({ ...existing, mode: normalized });
       return normalized;
     },
   };

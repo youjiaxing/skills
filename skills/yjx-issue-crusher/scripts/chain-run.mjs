@@ -20,6 +20,8 @@
  *   after explicit off, manual start must not reopen autoAdvance;
  *   s is dial-only: idle empty tick must not spawn (first needs Enter);
  *   handoff after dual-gate release still auto-spawns when auto is on.
+ * autoAdvance repo preference: s + Enter-open-auto write modeConfig;
+ *   fullscreen mount restores preference with handoff-only; quit freeze does not write.
  * 20260805-1244/01: Closed ∧ autoAdvance on ∧ live slot worker → short
  *   reconfirm then safe-reap this slot only, then dual-gate opens next;
  *   never kill when not Closed / auto off / HITL / empty / other slot;
@@ -151,6 +153,33 @@ export function createChainRun({
    * }}
    */
   let slot = null;
+
+  /**
+   * Persist auto-open-next preference when a modeConfig write port exists.
+   * Best-effort: missing port is a no-op (tests without config).
+   * @param {boolean} enabled
+   */
+  function persistAutoAdvancePreference(enabled) {
+    if (!modeConfig || typeof modeConfig.writeAutoAdvance !== 'function') return;
+    try {
+      modeConfig.writeAutoAdvance(Boolean(enabled));
+    } catch {
+      // Preference write must not block spawn / dial UX.
+    }
+  }
+
+  /**
+   * Read repo auto-open-next preference. Missing port / invalid → false.
+   * @returns {boolean}
+   */
+  function readAutoAdvancePreference() {
+    if (!modeConfig || typeof modeConfig.readAutoAdvance !== 'function') return false;
+    try {
+      return modeConfig.readAutoAdvance() === true;
+    } catch {
+      return false;
+    }
+  }
 
   function displayModel() {
     return subsequentModel == null || subsequentModel === ''
@@ -423,6 +452,8 @@ export function createChainRun({
     // Clean first-success path only: do not sneak auto back on after user s-off.
     if (openAutoOnManualStart) {
       autoAdvance = true;
+      // Dial became on → persist repo preference (same as explicit s-on).
+      persistAutoAdvancePreference(true);
     }
     return {
       ...result,
@@ -490,15 +521,26 @@ export function createChainRun({
     },
     /**
      * Allow or forbid auto spawn on subsequent step()/tick cycles.
-     * Programmatic only (fullscreen mount / tests / once path).
+     * Programmatic only (tests / once path / quit freeze).
      * Does not lock out Enter→open-auto; does not clear the live slot; not stop().
      * Off also arms handoff-only mode (no idle empty auto-spawn); on clears it.
+     * Does **not** write repo preference — use toggle / Enter-open / explicit persist.
      */
     setAutoAdvance(enabled) {
       autoAdvance = Boolean(enabled);
-      // Fullscreen mount sets false → s dial must not cold-fire empty slots.
       // --once / tests set true → restore idle empty auto-spawn seam.
+      // false → handoff-only (quit freeze / once off).
       autoSpawnRequiresHandoff = !autoAdvance;
+      return { ok: true, autoAdvance };
+    },
+    /**
+     * Fullscreen mount: restore repo auto preference with handoff-only gate.
+     * Never enables idle empty auto-spawn (cold start must not fire Worker).
+     * Does not write repo (read-only apply).
+     */
+    applyFullscreenAutoPreference() {
+      autoAdvance = readAutoAdvancePreference();
+      autoSpawnRequiresHandoff = true;
       return { ok: true, autoAdvance };
     },
     /**
@@ -506,6 +548,7 @@ export function createChainRun({
      * Turning off also locks Enter so a later manual start will not reopen auto.
      * Turning on arms AFK handoff only — does not idle-spawn an empty slot
      * (first / empty start still needs Enter / startIssue).
+     * Persists repo preference immediately when a write port exists.
      */
     toggleAutoAdvance() {
       autoAdvance = !autoAdvance;
@@ -513,6 +556,7 @@ export function createChainRun({
         openAutoOnManualStart = false;
       }
       // Never touches autoSpawnRequiresHandoff — s is preference, not a fire command.
+      persistAutoAdvancePreference(autoAdvance);
       return { ok: true, autoAdvance };
     },
     /**

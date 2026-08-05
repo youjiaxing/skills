@@ -508,6 +508,30 @@ test('surface.start while slot occupied rejects without second spawn', async () 
 
 // --- dispatch-tui-start-and-polish / 03: toggle autoAdvance ---
 
+test('surface toggle writes preference; setAutoAdvance and stop do not', async () => {
+  const modeConfig = createMemoryModeConfig({ autoAdvance: false });
+  const only = candidate('01-ready.md');
+  const { surface, modeConfig: cfg } = makeSurface({
+    candidates: [only],
+    autoAdvance: false,
+    modeConfig,
+  });
+  await surface.refresh();
+
+  const before = cfg.writeCount;
+  await surface.setAutoAdvance(true);
+  assert.equal(cfg.readAutoAdvance(), false, 'setAutoAdvance must not write repo');
+  assert.equal(cfg.writeCount, before);
+
+  await surface.setAutoAdvance(false);
+  await surface.toggleAutoAdvance(); // session was false → on + write true
+  assert.equal(surface.snapshot().autoAdvance, true);
+  assert.equal(cfg.readAutoAdvance(), true);
+
+  await surface.stop();
+  assert.equal(cfg.readAutoAdvance(), true, 'stop must not clear preference');
+});
+
 test('surface.toggleAutoAdvance flips projection; on alone does not idle-spawn; handoff still works', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');

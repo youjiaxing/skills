@@ -66,6 +66,7 @@ Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门�
 - 仓级路径：产品仓根 **`.issue-crusher/config.json`**  
   - 键 **`mode`**：`"review"` \| `"vibe"`  
   - 键 **`runtime`**（可选）：`"grok"` \| `"claude"`，供 CLI 省略 `--runtime` 时使用  
+  - 键 **`autoAdvance`**（可选布尔）：全屏「自动开下一张」偏好；缺省 / 非 `true` = **关**；`s` 与干净 Enter 开自动时写仓；`q` 退出**不**抹掉  
   - 键 **`workers.<runtime>.{model,effort}`**（可选）：按 runtime 分桶的 subsequent 模型/强度；空或省略 = 不传 flag  
 - 调度 TUI 拨杆：立即写仓，只影响**后续** spawn；当前 Worker 在 spawn 时**钉死** mode  
 - 切到 vibe：一行后果提示（将自动 commit/关票）  
@@ -130,16 +131,17 @@ closed == false
 
 | 规则 | 约定 |
 |------|------|
-| 刚进全屏 | **不**自动弹 Worker；**自动开下一张 = 关** |
+| 刚进全屏 | **不**自动弹 Worker；**自动开下一张** 读仓偏好（缺省 **关**）；即使为开也 **handoff-only**（空槽不冷启动） |
 | 列表导航 | `j` / `k`、**方向键 ↑↓**、`1–9`：只移动「现在可执行」高亮 |
 | **Enter** | 开 **一张**：有高亮 → 该票；无高亮 → 看板默认下一张（与自动候选同一套 frontier 规则） |
 | 第一次成功 Enter 开票 | 同时把 **自动开下一张** 打开（此后可 AFK） |
 | 自动开着时 | 条件满足（`Closed` ∧（退出 ∨ 强制推进 ∨ **Closed 后对本槽安全收尾**））后按 **看板** 开后续 ready 票，**忽略** 高亮 |
 | 自动开着且槽空（未在接力收尾中） | **不**因 poll/tick 自动开；须 **Enter** 开工；`s` 只拨杆 |
-| **`s`** | **切换**「自动开下一张」开 / 关（**纯拨杆**；不立即 spawn） |
-| 用 `s` 关掉之后 | 再 Enter **只开一张**，**不**把自动开回来；恢复自动只能再按 `s` |
+| **`s`** | **切换**「自动开下一张」开 / 关（**纯拨杆**；不立即 spawn；**立即写仓**） |
+| 用 `s` 关掉之后 | 再 Enter **只开一张**，**不**把自动开回来；恢复自动只能再按 `s`（本会话锁；仓偏好已为关） |
 | 空槽且 `s` 拨到开 | **不**自动开票；第一张 / 空槽开工仍须 **Enter**；自动只在当前票可收尾后接力 |
-| **`q`** / Ctrl+C | 关掉自动并退出全屏 |
+| 干净路径第一次成功 Enter 开自动 | 同时 **写仓** `autoAdvance: true`（与顶栏一致） |
+| **`q`** / Ctrl+C | 本进程关掉自动并退出全屏；**不**把关写回仓（偏好跨重启保留） |
 
 顶栏须可读展示「自动开下一张：开/关」，并让操作者分清边沿状态：`awaiting-worker-exit`（自动开着时可自动收尾；关掉时提示按 `f`）、`needs-resume`（有 id 提示按 `r`；无 session id 明示不可静默空窗）。AFK 接力靠 **Closed ∧（退出 ∨ `f` ∨ 自动安全收尾）**，**不是**「仅靠 Agent 自己 quit」。UI/文档宜用直白用语，避免只写「停链」让人不知能否再开。
 
@@ -252,6 +254,7 @@ Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 *
 {
   "mode": "vibe",
   "runtime": "claude",
+  "autoAdvance": true,
   "workers": {
     "grok": { "model": "grok-4", "effort": "high" },
     "claude": { "model": "opus", "effort": "max" }
@@ -262,6 +265,7 @@ Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 *
 解析：  
 - **runtime**：`--runtime` → 仓 `runtime` → **交互 dual-TTY 全屏选单**（`grok` / `claude`）；非交互/脚本/`--once` 须显式指定（`--fake-launcher` 冒烟缺省时默认 grok）  
 - **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（全屏拨杆 `m` 仍会写回仓 `mode`）  
+- **autoAdvance**：仓 `autoAdvance === true` 时全屏进门拨杆为开（仍不冷启动 Worker）；否则关；`s` / 干净 Enter 开自动写仓；`q` 不写关  
 - **model / effort**：`--model`/`--effort` → 仓 `workers.<当前 runtime>` → 空（不传 flag）；提交 subsequent 后静默写回当前 runtime 分桶  
 - **feature**：位置参数 → 否则 dual-TTY **全屏列出** `.scratch` 下 feature 选取；非交互须显式给出
 
@@ -319,7 +323,7 @@ Enter               开一张：有高亮 → 该票；无高亮 → 看板默�
                      若刚用 s 关掉自动：只开一张，不把自动开回来）
 j / k 或 ↓ / ↑     「现在可执行」高亮下一项 / 上一项（只改高亮）
 1–9                 高亮对应可执行项（只改高亮）
-s                   切换「自动开下一张」开 ↔ 关（纯拨杆，空槽不立刻开票）
+s                   切换「自动开下一张」开 ↔ 关（纯拨杆，空槽不立刻开票；写仓）
 m                   mode 拨杆：review ↔ vibe（写仓；切 vibe 一行提示；只影响后续 spawn）
 o                   model → effort 两级选单（整次事务确认后写 subsequent + 仓分桶；
                     只影响之后新开的 Worker；q/Esc 取消不写）

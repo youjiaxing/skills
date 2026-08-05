@@ -203,7 +203,7 @@ test('runFullscreenDispatch starts shell and quits cleanly on q', async () => {
 test('fullscreen mount: autoAdvance off; ready board + multi tick/poll → zero spawn', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  // Default chain autoAdvance is on (once seam); fullscreen mount must force it off.
+  // Default chain autoAdvance is on (once seam); fullscreen mount applies preference (default off).
   const { launcher, surface } = makeSurface({ candidates: [first, second] });
 
   const stdin = fakeStdin();
@@ -246,6 +246,65 @@ test('fullscreen mount: autoAdvance off; ready board + multi tick/poll → zero 
   ]);
   assert.equal(result.mode, 'fullscreen');
   assert.equal(launcher.launches.length, 0);
+});
+
+test('fullscreen mount: repo autoAdvance true restores dial on without idle spawn', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const modeConfig = createMemoryModeConfig({ autoAdvance: true });
+  const { launcher, surface, modeConfig: cfg } = makeSurface({
+    candidates: [first, second],
+    modeConfig,
+  });
+
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: true,
+    pollIntervalMs: 250,
+    alternateScreen: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 700));
+
+  assert.equal(surface.snapshot().autoAdvance, true, 'mount must restore repo preference on');
+  assert.equal(surface.snapshot().slot, null);
+  assert.equal(launcher.launches.length, 0, 'restored on must not cold-spawn');
+  assert.equal(cfg.readAutoAdvance(), true, 'quit freeze must not wipe preference during run');
+
+  stdin.write('q');
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('fullscreen restore-on test did not exit')), 3000);
+    }),
+  ]);
+  // quit freezes session auto off but must not write preference
+  assert.equal(cfg.readAutoAdvance(), true, 'q must not persist auto off');
+});
+
+test('fullscreen s toggle writes repo preference; survives re-mount', async () => {
+  const only = candidate('01-ready.md');
+  const modeConfig = createMemoryModeConfig({ autoAdvance: false });
+  // Match fullscreen-style start: session auto off before operator dials s.
+  const first = makeSurface({ candidates: [only], modeConfig, autoAdvance: false });
+
+  await first.surface.refresh();
+  await handleFullscreenKey(first.surface, 's');
+  assert.equal(first.surface.snapshot().autoAdvance, true);
+  assert.equal(modeConfig.readAutoAdvance(), true);
+
+  // Simulate next process: new chain/surface, same repo config.
+  const second = makeSurface({ candidates: [only], modeConfig, autoAdvance: false });
+  const applied = await second.surface.applyFullscreenAutoPreference();
+  assert.equal(applied.autoAdvance, true);
+  assert.equal(second.surface.snapshot().autoAdvance, true);
+
+  await second.surface.tick();
+  assert.equal(second.launcher.launches.length, 0, 're-mount on still needs Enter');
 });
 
 // --- 20260804-1006-fix-fullscreen-cold-start / 01: cold start zero slot ---
