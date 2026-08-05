@@ -508,7 +508,7 @@ test('surface.start while slot occupied rejects without second spawn', async () 
 
 // --- dispatch-tui-start-and-polish / 03: toggle autoAdvance ---
 
-test('surface.toggleAutoAdvance flips projection; off blocks tick; on restores', async () => {
+test('surface.toggleAutoAdvance flips projection; on alone does not idle-spawn; handoff still works', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, surface } = makeSurface({
@@ -524,17 +524,28 @@ test('surface.toggleAutoAdvance flips projection; off blocks tick; on restores',
   assert.equal(surface.snapshot().autoAdvance, true);
 
   await surface.tick();
+  assert.equal(launcher.launches.length, 0, 's-on must not idle-spawn; first needs start/Enter');
+  assert.equal(surface.snapshot().slot, null);
+
+  await surface.start('01-first.md');
   assert.equal(launcher.launches.length, 1);
   assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+  assert.equal(surface.snapshot().autoAdvance, true);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await surface.tick();
+  assert.equal(launcher.launches.length, 2, 'auto on + Closed handoff must spawn next');
+  assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
 
   const off = await surface.toggleAutoAdvance();
   assert.equal(off.ok, true);
   assert.equal(surface.snapshot().autoAdvance, false);
 
-  tracker.setCompletion('01-first.md', true);
+  tracker.setCompletion('02-second.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
-  assert.equal(launcher.launches.length, 1, 's-off must block auto handoff spawn');
+  assert.equal(launcher.launches.length, 2, 's-off must block auto handoff spawn');
   assert.equal(surface.snapshot().slot, null);
 });
 

@@ -17,7 +17,9 @@
  * dispatch-tui-start-and-polish/02: startIssue / startNext for Enter;
  *   first successful manual start opens autoAdvance for AFK handoff.
  * dispatch-tui-start-and-polish/03: toggleAutoAdvance (user s dial);
- *   after explicit off, manual start must not reopen autoAdvance.
+ *   after explicit off, manual start must not reopen autoAdvance;
+ *   s is dial-only: idle empty tick must not spawn (first needs Enter);
+ *   handoff after dual-gate release still auto-spawns when auto is on.
  * 20260805-1244/01: Closed ∧ autoAdvance on ∧ live slot worker → short
  *   reconfirm then safe-reap this slot only, then dual-gate opens next;
  *   never kill when not Closed / auto off / HITL / empty / other slot;
@@ -106,6 +108,16 @@ export function createChainRun({
   let stopped = false;
   /** @type {boolean} */
   let autoAdvance = Boolean(autoAdvanceOption);
+  /**
+   * When true, step() may auto-spawn only after releasing a slot this cycle
+   * (Closed handoff). Idle empty auto-spawn is blocked — fullscreen dial
+   * and cold start need Enter for the first ticket.
+   * When false, empty + autoAdvance may spawn (--once / default chain).
+   * Initial: mirrors !autoAdvanceOption. setAutoAdvance(false) arms this
+   * (fullscreen mount); setAutoAdvance(true) clears it (once seam).
+   * toggleAutoAdvance never changes this flag.
+   */
+  let autoSpawnRequiresHandoff = !Boolean(autoAdvanceOption);
   /**
    * When false, successful startIssue/startNext must not flip autoAdvance on.
    * Set only by user toggleAutoAdvance → off (fullscreen `s`), not by
@@ -480,21 +492,27 @@ export function createChainRun({
      * Allow or forbid auto spawn on subsequent step()/tick cycles.
      * Programmatic only (fullscreen mount / tests / once path).
      * Does not lock out Enter→open-auto; does not clear the live slot; not stop().
+     * Off also arms handoff-only mode (no idle empty auto-spawn); on clears it.
      */
     setAutoAdvance(enabled) {
       autoAdvance = Boolean(enabled);
+      // Fullscreen mount sets false → s dial must not cold-fire empty slots.
+      // --once / tests set true → restore idle empty auto-spawn seam.
+      autoSpawnRequiresHandoff = !autoAdvance;
       return { ok: true, autoAdvance };
     },
     /**
      * Operator dial (fullscreen `s`): flip auto-open-next.
      * Turning off also locks Enter so a later manual start will not reopen auto.
-     * Turning on allows tick/poll auto spawn (empty slot needs no Enter).
+     * Turning on arms AFK handoff only — does not idle-spawn an empty slot
+     * (first / empty start still needs Enter / startIssue).
      */
     toggleAutoAdvance() {
       autoAdvance = !autoAdvance;
       if (!autoAdvance) {
         openAutoOnManualStart = false;
       }
+      // Never touches autoSpawnRequiresHandoff — s is preference, not a fire command.
       return { ok: true, autoAdvance };
     },
     /**
@@ -707,6 +725,7 @@ export function createChainRun({
         };
       }
 
+      let releasedThisStep = false;
       if (slot) {
         // AFK path: Closed + auto on + live this-slot worker → reap then gate.
         await safeReapClosedSlotWorker();
@@ -723,6 +742,7 @@ export function createChainRun({
         }
         slot = null;
         status = 'idle';
+        releasedThisStep = true;
       }
 
       // Fullscreen default / manual-start gate: tick may refresh but must not fire.
@@ -742,6 +762,28 @@ export function createChainRun({
           spawned: false,
           advanced: false,
           reason: 'auto-advance-off',
+          next: nextIssue,
+          status,
+        };
+      }
+
+      // s dial / fullscreen mount: auto on enables handoff only, not cold empty fire.
+      if (!releasedThisStep && autoSpawnRequiresHandoff) {
+        if (pendingHitl) {
+          status = 'needs-confirmation';
+          return {
+            spawned: false,
+            advanced: false,
+            reason: 'awaiting-manual-start',
+            next: pendingHitl.issue,
+            status,
+          };
+        }
+        status = 'idle';
+        return {
+          spawned: false,
+          advanced: false,
+          reason: 'awaiting-manual-start',
           next: nextIssue,
           status,
         };

@@ -929,15 +929,20 @@ test('handleFullscreenKey s toggles autoAdvance; q stops and signals quit', asyn
   await surface.refresh();
   assert.equal(surface.snapshot().autoAdvance, false);
 
-  // s on → empty slot may auto-spawn without Enter
+  // s on → dial only; empty slot must not auto-spawn without Enter
   const turnedOn = await handleFullscreenKey(surface, 's');
   assert.match(turnedOn.message || '', /自动开下一张.*开/);
   assert.equal(surface.snapshot().autoAdvance, true);
   assert.equal(surface.snapshot().stopped, false);
 
   await surface.tick();
+  assert.equal(launcher.launches.length, 0, 's-on must not idle-spawn');
+  assert.equal(surface.snapshot().slot, null);
+
+  await handleFullscreenKey(surface, '\r', { selectedIssueId: '01-first.md' });
   assert.equal(launcher.launches.length, 1);
   assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
+  assert.equal(surface.snapshot().autoAdvance, true);
 
   // s off → no auto handoff
   const turnedOff = await handleFullscreenKey(surface, 's');
@@ -1279,7 +1284,7 @@ test('after s-off, Enter opens one ticket but does not reopen autoAdvance', asyn
   assert.equal(surface.snapshot().autoAdvance, false, 'Enter after s-off must not reopen auto');
 });
 
-test('s on with empty slot auto-spawns on tick without Enter', async () => {
+test('s on with empty slot does not auto-spawn on tick (Enter still required)', async () => {
   const only = candidate('01-ready.md');
   const { launcher, surface } = makeSurface({
     candidates: [only],
@@ -1292,6 +1297,10 @@ test('s on with empty slot auto-spawns on tick without Enter', async () => {
   assert.equal(surface.snapshot().autoAdvance, true);
 
   await surface.tick();
+  assert.equal(launcher.launches.length, 0, 's is dial only on empty slot');
+  assert.equal(surface.snapshot().slot, null);
+
+  await handleFullscreenKey(surface, '\r', { selectedIssueId: '01-ready.md' });
   assert.equal(launcher.launches.length, 1);
   assert.equal(surface.snapshot().slot?.issueId, '01-ready.md');
 });
@@ -1631,13 +1640,13 @@ test('regression 03: s toggle; Enter after s-off keeps auto off; s-on restores A
   assert.equal(launcher.launches.length, 2);
   assert.equal(surface.snapshot().autoAdvance, false);
 
-  // s on again restores AFK: after release, tick auto-spawns remaining ready (03).
+  // s on while slot still held, then tick = handoff release + auto-spawn (not idle empty fire).
   tracker.setCompletion('02-second.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await handleFullscreenKey(surface, 's');
   assert.equal(surface.snapshot().autoAdvance, true);
   await surface.tick();
-  assert.equal(launcher.launches.length, 3, 's-on must restore auto-spawn of board next');
+  assert.equal(launcher.launches.length, 3, 'auto on at handoff must spawn board next');
   assert.equal(surface.snapshot().slot?.issueId, '03-third.md');
 });
 

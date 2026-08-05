@@ -1270,7 +1270,7 @@ test('programmatic setAutoAdvance(false) still allows first start to open auto',
   assert.equal(chain.autoAdvance, true, 'mount gate must not suppress first-Enter open');
 });
 
-test('empty slot + toggle on allows step auto-spawn without prior Enter', async () => {
+test('empty slot + toggle on does not auto-spawn (s is dial only; first needs Enter)', async () => {
   const only = candidate('01-ready.md');
   const { launcher, chain } = makeChain({
     candidates: [only],
@@ -1284,11 +1284,37 @@ test('empty slot + toggle on allows step auto-spawn without prior Enter', async 
   assert.equal(chain.autoAdvance, true);
 
   const result = await chain.step();
-  assert.equal(result.spawned, true);
-  assert.equal(launcher.launches.length, 1);
+  assert.equal(result.spawned, false, 's-on must not fire idle empty auto-spawn');
+  assert.equal(result.reason, 'awaiting-manual-start');
+  assert.equal(launcher.launches.length, 0);
+  assert.equal(chain.slot, null);
 });
 
-test('after s-off then s-on, step auto-spawns again', async () => {
+test('after idle empty s-on, startIssue still spawns; Closed handoff then auto-spawns', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  chain.toggleAutoAdvance(); // on while empty — dial only
+  await chain.step();
+  assert.equal(launcher.launches.length, 0);
+
+  await chain.startIssue('01-first.md');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(chain.autoAdvance, true);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  const handoff = await chain.step();
+  assert.equal(handoff.spawned, true, 'handoff with auto on must still auto-spawn');
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+});
+
+test('after s-off release to empty, s-on alone does not auto-spawn (need Enter)', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, chain } = makeChain({
@@ -1302,11 +1328,39 @@ test('after s-off then s-on, step auto-spawns again', async () => {
   launcher.markExited(chain.slot.pid);
   await chain.step();
   assert.equal(launcher.launches.length, 1);
+  assert.equal(chain.slot, null);
 
-  chain.toggleAutoAdvance(); // on again
-  const handoff = await chain.step();
-  assert.equal(handoff.spawned, true);
+  chain.toggleAutoAdvance(); // on again while empty
+  const idle = await chain.step();
+  assert.equal(idle.spawned, false, 's-on on empty must not start next');
+  assert.equal(launcher.launches.length, 1);
+
+  // Enter after s-off does not reopen auto — but auto is already on via s.
+  await chain.startIssue('02-second.md');
   assert.equal(launcher.launches.length, 2);
+  assert.equal(chain.autoAdvance, true);
+});
+
+test('s-on while slot still occupied then step handoff auto-spawns', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: false,
+  });
+
+  await chain.startIssue('01-first.md');
+  chain.toggleAutoAdvance(); // off during work
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  // Do not step yet — slot still held (exited + Closed).
+  chain.toggleAutoAdvance(); // on before release
+  assert.equal(chain.autoAdvance, true);
+
+  const handoff = await chain.step();
+  assert.equal(handoff.spawned, true, 'release+auto on same step is handoff, not idle empty');
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
 });
 
 // --- 20260804-1802-tui-model-effort / 01: subsequent model/effort 真源与仓分桶 ---

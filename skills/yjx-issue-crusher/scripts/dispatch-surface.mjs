@@ -272,8 +272,9 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
     /**
      * Operator dial (fullscreen `s`): flip auto-open-next.
      * Off also prevents a later Enter from reopening auto.
+     * On is preference only — does not idle-spawn an empty slot.
      * Requires chain.toggleAutoAdvance — do not fake via setAutoAdvance
-     * (that path would not lock Enter→open-auto).
+     * (that path would not lock Enter→open-auto and would re-enable idle spawn).
      */
     async toggleAutoAdvance() {
       if (typeof chain.toggleAutoAdvance !== 'function') {
