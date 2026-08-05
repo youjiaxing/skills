@@ -148,6 +148,7 @@ closed == false
 - **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽。  
 - **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`o` 事务选单与 `setModelEffort` 写仓可测。  
 - **Resume 历史探针：** `classifyGrokChatHistory` / `readGrokChatHistory` 对 `chat_history.jsonl` 做空白 vs 有历史红绿判定（不依赖「进程 spawn 成功」 alone）。  
+- **vibe 接力验收（20260805-1244）：** `tests/vibe-handoff-acceptance.test.mjs` 三阶段可重复路径（A Closed 安全收尾并开下一张 · B needs-resume 历史非空白含 blank 红信号 · C 未 Closed 不误杀）；失败信息带稳定 stage/code（`not-closed` / `no-exit` / `resume-blank` / `wrong-kill`）。也可用 `scripts/run-vibe-handoff-acceptance.mjs` 拿进程退出码（0 绿；2/3/4 对应 A/B/C）。  
 - **发现端口：** 注入假 discoverer 断言失败/超时降级；CI 不依赖真实 `grok models` 登录。  
 - 不测真 Grok/Claude 窗体内部。
 
@@ -374,11 +375,16 @@ node <skill-dir>/scripts/cli.mjs probe-launch \
 node --test skills/yjx-issue-crusher/tests/*.test.mjs
 # 或整仓
 npm test
+# vibe 接力 / needs-resume 验收子集（ticket 04）
+node --test skills/yjx-issue-crusher/tests/vibe-handoff-acceptance.test.mjs
+# 带稳定进程退出码的验收 runner（0 绿；2=A 3=B 4=C）
+node skills/yjx-issue-crusher/scripts/run-vibe-handoff-acceptance.mjs
 ```
 
 主 seam：`tests/chain-run.test.mjs`。  
 调度 / 全屏 / 启动选单：`tests/dispatch-surface.test.mjs` · `tests/dispatch-fullscreen.test.mjs` · `tests/startup-select.test.mjs` · `tests/cli-chain.test.mjs` · `tests/interactive-prompts.test.mjs`。  
 model 发现 / effort 提示：`tests/model-catalog.test.mjs`。  
+vibe 接力验收：`tests/vibe-handoff-acceptance.test.mjs` + `scripts/run-vibe-handoff-acceptance.mjs`（A/B/C；失败码 `not-closed`/`no-exit`/`resume-blank`/`wrong-kill`）。  
 local-md fixture：`empty-frontier` / `single-ready` / `mixed-board` / `hitl-only`。
 
 ---

@@ -22,6 +22,8 @@
  *   reconfirm then safe-reap this slot only, then dual-gate opens next;
  *   never kill when not Closed / auto off / HITL / empty / other slot;
  *   forceAdvance default no-kill orphan path stays independent.
+ * 20260805-1244/04: vibe-handoff-acceptance stages A/B/C pin handoff,
+ *   resume non-blank, and no mis-kill with greppable failure codes.
  */
 
 import {
