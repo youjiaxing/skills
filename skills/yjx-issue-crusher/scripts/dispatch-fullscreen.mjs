@@ -159,7 +159,8 @@ export function drainPendingInput(input) {
  * Edge states must stay distinguishable without reading SKILL.md:
  * - awaiting-worker-exit → wait for natural Worker exit (never auto-kill)
  * - awaiting-worker-exit + auto off → may use f after Closed
- * - awaiting-session-end → Closed/exited but no sessionEnded success; no auto next
+ * - awaiting-session-end → Closed/wayfinder waiting end; may use f or Enter
+ * - session-interrupted → no success (death/failure/interrupted); reason summary; f
  * - handoff-countdown → seconds left; press c to cancel auto next
  * - needs-resume + r available → press r (history, not next ticket)
  * - needs-resume + no session id → explicit dead-end, no silent empty window
@@ -176,11 +177,25 @@ function statusLine(snap) {
 
   let hint = '';
   if (status === 'awaiting-worker-exit') {
+    // Closed + still alive: wait natural exit / session-end signal (never auto-kill).
     hint = snap.autoAdvance === false
-      ? '（等进程自退；可按 f 强制推进）'
-      : '（等进程自退，不强制杀）';
+      ? '（等会话结束/进程自退；可按 f 强制推进）'
+      : '（等会话结束/进程自退，不强制杀）';
   } else if (status === 'awaiting-session-end') {
     hint = '（缺会话结束信号；可按 f 或 Enter）';
+  } else if (status === 'session-interrupted') {
+    const reason = snap.interruptReason != null && String(snap.interruptReason).trim() !== ''
+      ? String(snap.interruptReason).trim()
+      : null;
+    const resume = snap.actions?.resume;
+    const rHint = resume?.available === true
+      ? '；可按 r 挂回'
+      : resume?.reason === 'no-session-id'
+        ? '；无 session id'
+        : '';
+    hint = reason
+      ? `（${reason}；可按 f${rHint}）`
+      : `（无成功结束；可按 f${rHint}）`;
   } else if (status === 'handoff-countdown') {
     const remMs = Number(snap.handoffCountdownRemainingMs);
     const sec = Number.isFinite(remMs)

@@ -45,11 +45,12 @@ function makeChain(overrides = {}) {
  * success path (session end signal + business complete). Issue 01: without
  * reportSessionEnded('success'), auto must not advance.
  */
-function closeWithSessionSuccess(chain, tracker, launcher, issueId) {
+async function closeWithSessionSuccess(chain, tracker, launcher, issueId) {
   tracker.setCompletion(issueId, true);
   if (chain.slot?.pid != null) launcher.markExited(chain.slot.pid);
-  const reported = chain.reportSessionEnded('success');
+  const reported = await chain.reportSessionEnded('success');
   assert.equal(reported.ok, true);
+  assert.equal(reported.orderOk, true);
 }
 
 test('empty frontier: Chain Run spawns nothing and becomes idle', async () => {
@@ -233,8 +234,8 @@ test('Closed still alive + autoAdvance on: never kills and does not advance', as
   assert.equal(chain.slot?.issue?.id, '01-first.md');
 });
 
-test('Closed + natural exit without session end signal: no kill, no auto next', async () => {
-  // Honest degradation: process exit alone is not sessionEnded success.
+test('Closed + natural exit without session end signal: no kill, no auto next (interrupted)', async () => {
+  // Honest degradation: process exit alone is not sessionEnded success → interrupt.
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, chain } = makeChain({
@@ -249,11 +250,184 @@ test('Closed + natural exit without session end signal: no kill, no auto next', 
 
   const result = await chain.step();
   assert.equal(result.spawned, false);
-  assert.equal(result.reason, 'awaiting-session-end');
-  assert.equal(chain.status, 'awaiting-session-end');
+  assert.equal(result.reason, 'process-exit-without-success');
+  assert.equal(chain.status, 'session-interrupted');
+  assert.match(String(result.interruptReason || ''), /进程|退出|无成功/);
   assert.equal(launcher.launches.length, 1);
   assert.equal(launcher.kills.length, 0);
   assert.equal(chain.slot?.issue?.id, '01-first.md');
+});
+
+// --- 20260806-1636 / 02: dual-gate order, interrupt reason, f/c ---
+
+test('sessionEnded success before Closed does not auto-handoff after later close+exit', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  // Premature success while ticket still open.
+  const premature = await chain.reportSessionEnded('success');
+  assert.equal(premature.ok, true);
+  assert.equal(premature.orderOk, false);
+
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, false, 'success-before-closed must not satisfy dual-gate');
+  assert.equal(chain.status, 'session-interrupted');
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('Closed then sessionEnded success (order ok) auto-handoffs after exit', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  tracker.setCompletion('01-first.md', true);
+  const reported = await chain.reportSessionEnded('success');
+  assert.equal(reported.orderOk, true);
+  // Still alive → wait natural exit, never kill.
+  const waiting = await chain.step();
+  assert.equal(waiting.spawned, false);
+  assert.equal(waiting.reason, 'awaiting-worker-exit');
+
+  launcher.markExited(chain.slot.pid);
+  const done = await chain.step();
+  assert.equal(done.spawned, true);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('sessionEnded failure: no auto next; status session-interrupted with reason summary', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.reportSessionEnded('failure', {
+    exitCode: 1,
+    failureClass: 'runtime-error',
+    lastError: 'API connection reset',
+  });
+
+  const result = await chain.step();
+  assert.equal(result.spawned, false);
+  assert.equal(chain.status, 'session-interrupted');
+  assert.equal(result.reason, 'session-failure');
+  assert.match(String(result.interruptReason), /API connection reset/);
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('sessionEnded interrupted: no auto next; interruptReason prefers lastError then class/exit', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+  });
+
+  await chain.step();
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.reportSessionEnded('interrupted', {
+    exitCode: 137,
+    failureClass: 'signal-kill',
+  });
+
+  const result = await chain.step();
+  assert.equal(result.spawned, false);
+  assert.equal(chain.status, 'session-interrupted');
+  assert.equal(result.reason, 'session-interrupted');
+  assert.match(String(result.interruptReason), /signal-kill|137/);
+  assert.equal(launcher.launches.length, 1);
+});
+
+test('forceAdvance after interrupt frees dual-gate wait without kill; then can open next', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  const oldPid = chain.slot.pid;
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(oldPid);
+  await chain.reportSessionEnded('failure', { lastError: 'boom' });
+  await chain.step();
+  assert.equal(chain.status, 'session-interrupted');
+
+  const forced = await chain.forceAdvance();
+  assert.equal(forced.ok, true);
+  assert.equal(launcher.kills.length, 0);
+
+  const result = await chain.step();
+  assert.equal(result.spawned, true);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('needs-resume r still works when not Closed (ticket 02 must not break r)', async () => {
+  const first = candidate('01-first.md');
+  const { launcher, chain } = makeChain({
+    candidates: [first],
+    launcherOptions: { sessionId: 'sess-r-keep' },
+  });
+
+  await chain.step();
+  launcher.markExited(chain.slot.pid);
+  const parked = await chain.step();
+  assert.equal(parked.reason, 'needs-resume');
+
+  const resumed = await chain.resume();
+  assert.equal(resumed.ok, true);
+  assert.equal(chain.status, 'soft-stuck');
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].kind, 'resume');
+  assert.equal(launcher.launches[1].sessionId, 'sess-r-keep');
+});
+
+test('session-interrupted with session id: r hangs back history without opening next', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    launcherOptions: { sessionId: 'sess-int-r' },
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(chain.slot.pid);
+  await chain.reportSessionEnded('failure', { lastError: 'dropped' });
+  const parked = await chain.step();
+  assert.equal(parked.spawned, false);
+  assert.equal(chain.status, 'session-interrupted');
+
+  const resumed = await chain.resume();
+  assert.equal(resumed.ok, true);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].kind, 'resume');
+  assert.equal(launcher.launches[1].sessionId, 'sess-int-r');
+  // Resume is hang-back, not next ticket.
+  assert.equal(chain.slot?.issue?.id, '01-first.md');
+  assert.notEqual(launcher.launches[1].issue?.id, '02-second.md');
 });
 
 test('wayfinder complete never auto-spawns next ready impl', async () => {
@@ -284,7 +458,7 @@ test('wayfinder complete never auto-spawns next ready impl', async () => {
   tracker.setCompletion('01-grill.md', true);
   launcher.markExited(chain.slot.pid);
   // Even with a success end signal, wayfinder must not auto-handoff.
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
 
   const result = await chain.step();
   assert.equal(result.spawned, false);
@@ -305,7 +479,7 @@ test('Closed + session success + countdown: waits handoffCountdownMs; c cancels'
   });
 
   await chain.step();
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
 
   const started = await chain.step();
   assert.equal(started.spawned, false);
@@ -340,7 +514,7 @@ test('Closed + session success + countdown elapses: auto-spawns next without kil
   });
 
   await chain.step();
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
 
   await chain.step(); // start countdown
   assert.equal(chain.status, 'handoff-countdown');
@@ -368,7 +542,7 @@ test('Closed + session success opens next ready impl exactly once with correct i
   assert.equal(launcher.launches[0].issue.id, '01-first.md');
   assert.equal(launcher.launches[0].title, 'demo/01-first');
 
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
 
   const result = await chain.step();
   assert.equal(result.spawned, true);
@@ -562,7 +736,7 @@ test('Closed + auto on + worker already exited without end signal: no kill, no a
 
   const result = await chain.step();
   assert.equal(result.spawned, false);
-  assert.equal(result.reason, 'awaiting-session-end');
+  assert.equal(result.reason, 'process-exit-without-success');
   assert.equal(launcher.launches.length, 1);
   assert.equal(launcher.kills.length, 0, 'already dead → confirm only, no kill');
 });
@@ -828,7 +1002,7 @@ test('scheduler setMode writes repo and only changes subsequent spawns, not pinn
   assert.equal(chain.mode, 'vibe', 'subsequent effective mode follows TUI write');
   assert.equal(chain.slot.mode, 'review', 'live worker stays pinned to spawn-time mode');
 
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
 
   const next = await chain.step();
   assert.equal(next.spawned, true);
@@ -899,7 +1073,7 @@ test('TUI setMode supersedes startup --mode for subsequent spawns', async () => 
   // Startup was review; after TUI choose, subsequent must follow TUI/repo not leftover startup.
   assert.equal(config.readMode(), 'vibe');
 
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
   await chain.step();
   assert.equal(launcher.launches[1].mode, 'vibe');
 });
@@ -1340,7 +1514,7 @@ test('after first start + dual-gate, step auto-spawns board next (ignores which 
   assert.equal(launcher.launches.length, 1);
   assert.equal(chain.autoAdvance, true);
 
-  closeWithSessionSuccess(chain, tracker, launcher, '02-second.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '02-second.md');
 
   const handoff = await chain.step();
   assert.equal(handoff.spawned, true);
@@ -1414,7 +1588,7 @@ test('after user toggle off, successful startIssue does not reopen autoAdvance',
   const parked = await chain.step();
   // Without session end success: no auto next; slot freeable for Enter.
   assert.equal(parked.spawned, false);
-  assert.equal(parked.reason, 'awaiting-session-end');
+  assert.equal(parked.reason, 'process-exit-without-success');
   assert.equal(launcher.launches.length, 1);
 
   // Enter frees freeable completed slot and opens one; must NOT sneak auto back on.
@@ -1539,7 +1713,7 @@ test('after idle empty s-on, startIssue still spawns; dual-gate then auto-spawns
   assert.equal(launcher.launches.length, 1);
   assert.equal(chain.autoAdvance, true);
 
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
   const handoff = await chain.step();
   assert.equal(handoff.spawned, true, 'dual-gate with auto on must still auto-spawn');
   assert.equal(launcher.launches.length, 2);
@@ -1560,7 +1734,7 @@ test('after s-off freeable complete, s-on alone does not auto-spawn (need Enter)
   launcher.markExited(chain.slot.pid);
   const parked = await chain.step();
   assert.equal(parked.spawned, false);
-  assert.equal(parked.reason, 'awaiting-session-end');
+  assert.equal(parked.reason, 'process-exit-without-success');
   assert.equal(launcher.launches.length, 1);
 
   chain.toggleAutoAdvance(); // on again while completed slot still freeable
@@ -1584,7 +1758,7 @@ test('s-on while slot still occupied then dual-gate handoff auto-spawns', async 
 
   await chain.startIssue('01-first.md');
   chain.toggleAutoAdvance(); // off during work
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
   // Do not step yet — slot still held (dual-gate ready).
   chain.toggleAutoAdvance(); // on before release
   assert.equal(chain.autoAdvance, true);
@@ -1695,7 +1869,7 @@ test('setModelEffort writes repo bucket, updates subsequent, keeps pinned slot',
   assert.equal(chain.effort, 'high');
   assert.equal(chain.slot.model, null, 'live worker stays pinned to spawn-time contract');
 
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
   const next = await chain.step();
   assert.equal(next.spawned, true);
   assert.equal(launcher.launches[1].model, 'grok-3.5');
@@ -1720,7 +1894,7 @@ test('setModelEffort empty values omit flags and clear the repo bucket', async (
   assert.equal(submitted.ok, true);
   assert.deepEqual(config.readModelEffort('grok'), { model: null, effort: null });
 
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
   await chain.step();
   assert.equal(launcher.launches[1].model, null, 'cleared subsequent omits model flag');
   assert.equal(launcher.launches[1].effort, null);
@@ -1741,7 +1915,7 @@ test('setModelEffort supersedes startup flags for subsequent spawns', async () =
   assert.equal(launcher.launches[0].model, 'grok-3.5');
 
   await chain.setModelEffort({ model: 'grok-4', effort: 'max' });
-  closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
+  await closeWithSessionSuccess(chain, tracker, launcher, '01-first.md');
   await chain.step();
   assert.equal(launcher.launches[1].model, 'grok-4');
   assert.equal(launcher.launches[1].effort, 'max');

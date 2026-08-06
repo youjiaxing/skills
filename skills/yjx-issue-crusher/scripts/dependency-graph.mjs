@@ -266,6 +266,7 @@ export function statusLabelZh(status) {
     // Base labels stay short; top-bar statusLine adds wait / countdown / f / r hints.
     'awaiting-worker-exit': '等待 Worker 退出',
     'awaiting-session-end': '等待会话结束信号',
+    'session-interrupted': '会话中断',
     'handoff-countdown': '交接倒计时',
     'needs-resume': '需恢复会话',
     'needs-confirmation': '需人工确认',

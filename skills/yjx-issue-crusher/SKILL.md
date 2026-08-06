@@ -30,12 +30,13 @@ disable-model-invocation: true
 | 概念 | 定义 | 真源 |
 |------|------|------|
 | **业务完成** | 本票在看板上已完成 | 普通 impl：issue 头 **`Closed: true`**（读侧）；Wayfinder：`Status: resolved` |
-| **会话成功结束** | 编排器收到统一结束信号 | `sessionEnded: success`（runtime 适配器映射；测试可注入）。**仅进程死亡 / 单轮 stop / 静默 N 秒不算** |
-| **可自动开下一张** | 自动路径允许 spawn 下一张 ready impl | **业务完成 ∧ `sessionEnded === success`**（顺序与中断细则见双真源后续切片），且还要过 **交接倒计时**（默认 9s，可取消）；**或** 已 Closed 下人手 **`forceAdvance`**（跳过等结束信号） |
+| **会话成功结束** | 编排器收到统一结束信号 | `sessionEnded: success`（runtime 适配器映射；测试可注入 `success` \| `failure` \| `interrupted`）。**仅进程死亡 / 单轮 stop / 静默 N 秒不算** |
+| **可自动开下一张** | 自动路径允许 spawn 下一张 ready impl | **业务完成 ∧ `sessionEnded === success` ∧ 顺序为先 Closed 再 success**，且还要过 **交接倒计时**（默认 9s，可取消）；**或** 已 Closed 下人手 **`forceAdvance`**（跳过等结束信号） |
 
 禁止把进程退出单独当成功。  
 **禁止**仅凭 Closed / `Status: resolved` 就强杀仍在跑的 Worker。**自动路径永不 `kill` 本槽进程**；未 Closed 时编排器**绝不**结束任何进程。  
-**无会话成功结束信号时**（诚实降级）：即便 `autoAdvance` 为开，也**不得**仅凭 Closed/自然退出自动 spawn 下一张；状态停在 `awaiting-session-end`（或等进程自退时的 `awaiting-worker-exit`），须人 **Enter** / **`f`**。  
+**顺序硬约束：** 必须**先**业务完成（Closed/resolved），**再** `sessionEnded: success`，才算双真源满足。结束事件先到、票未关 → 只等关票；关票后若只有「关票前的 success」→ **不算**可接力。  
+**无会话成功结束信号 / 失败 / 中断时**（诚实降级）：即便 `autoAdvance` 为开，也**不得**自动 spawn 下一张；已 Closed 且进程仍活 → `awaiting-worker-exit`；已 Closed 且进程已退或收到 `failure`/`interrupted` → `session-interrupted`（带原因摘要），须人 **Enter** / **`f`**。  
 Wayfinder（含 grilling 等）完成：**不**触发自动开下一张；进程仍活则原窗可续聊。
 
 ### 边沿状态
@@ -43,15 +44,16 @@ Wayfinder（含 grilling 等）完成：**不**触发自动开下一张；进程
 | 状态 | 条件 | 行为 |
 |------|------|------|
 | `soft-stuck` | 进程存活 + 未 Closed | 禁止下一张；**绝不**杀进程 |
-| `awaiting-worker-exit` | 已 Closed + 进程未退 | 可观测（`refresh`）；**只等自退**，**绝不** auto-kill；可用 `f` 强制推进（默认 orphan） |
-| `awaiting-session-end` | 已 Closed + 进程已退 + 尚无 `sessionEnded: success` | **不杀、不自动下一张**；可 `f` 跳过等结束信号，或 Enter 腾槽开下一张 |
+| `awaiting-worker-exit` | 已 Closed + 进程未退 | 可观测（`refresh`）；**只等自退**，**绝不** auto-kill；可用 `f` 强制推进（默认 orphan）；文案可理解为「等会话结束」 |
+| `session-interrupted` | 已 Closed +（进程已退且无有效 success，或 `sessionEnded` 为 `failure`/`interrupted`，或 success 顺序无效） | **不杀、不自动下一张**；snapshot/`interruptReason` 展示原因摘要（退出码/失败类/末行错误，能取则取）；可 `f` 跳过等结束信号，或 Enter 腾槽开下一张；**有 session id 时 `r` 仍可挂回历史**（≠ 开下一张） |
+| `awaiting-session-end` | 主要保留给 wayfinder 完成等人闸「已完成但不等自动接力」 | **不**自动下一张；可 Enter 腾槽 |
 | `handoff-countdown` | 双真源已满足（或 `f` 跳过）+ 自动开着 | 倒计时（默认 **9 秒**）结束后才开下一张；**`c` 取消**倒计时（腾槽、不自动开下一张）；`f` 可跳过倒计时 |
 | `needs-resume` | 死进程 + 未 Closed | 禁止下一张；`r`/`resume` 按已记 session id + 原 runtime/cwd **挂回旧会话历史**（须非空白），**不**重塞 `/implement`/`/wayfinder`，**不**开下一张；无 session id 时 `r` 不可用（原因 `no-session-id`），不静默开空窗 |
 | 逻辑单槽 | 任意时刻 | 最多一个活 Worker；槽占用时拒绝第二次自动 spawn |
 
 **交接倒计时（自动开下一张为开）：** 仅在自动 handoff 已允许后进入 `handoff-countdown`，默认等待 **9s**（`handoffCountdownMs`，可测注入）再 spawn 下一张 ready impl。期间 **`c` 取消**只腾槽、不自动开下一张；人手 **`f`** 跳过等结束信号 / 倒计时。**自动路径永不 `kill` 本槽进程。** 旧「Closed 后 safe-reap 必杀」合同已废除。
 
-`forceAdvance`：仅 Closed 可用；默认不强杀旧进程（`killWorker: true` 为显式 opt-in）；跳过「等退出 / 等结束信号 + 倒计时」。
+`forceAdvance`（键 **`f`**）：仅 Closed 可用；默认不强杀旧进程（`killWorker: true` 为显式 opt-in）；跳过「等退出 / 等结束信号 + 倒计时」；与自动路径互不二次误杀 orphan。
 
 ### review / vibe
 
@@ -104,7 +106,7 @@ Wayfinder（含 grilling 等）完成：**不**触发自动开下一张；进程
 - **impl 入口：** `/implement <票相对路径>`（路径引用，不贴全文；prompt **以 skill 斜杠开头**）  
 - **Wayfinder 入口：** `/wayfinder <票相对路径>`（人手 Enter 直接开；**不**进自动接力）  
 - 每票**全新顶层会话**；可恢复路径禁止关闭 session 持久化  
-- **`r` / resume（仅 `needs-resume`）：** 用已记 session id 开 **同一会话**（`--resume <id>`），挂回完整历史；**不是**开下一张 ready 票；**不**重塞 skill 入口。无 session id → 动作不可用 / `no-session-id`，禁止静默空窗。历史是否非空可用 Grok `chat_history.jsonl` 探针（须含真实 `user_query`，仅 skills system-reminder 算空白）
+- **`r` / resume（`needs-resume` 或 `session-interrupted`）：** 用已记 session id 开 **同一会话**（`--resume <id>`），挂回完整历史；**不是**开下一张 ready 票；**不**重塞 skill 入口。无 session id → 动作不可用 / `no-session-id`，禁止静默空窗。历史是否非空可用 Grok `chat_history.jsonl` 探针（须含真实 `user_query`，仅 skills system-reminder 算空白）
 
 ### 自动候选（与 ralph 同向）
 
@@ -146,7 +148,7 @@ closed == false
 | 干净路径第一次成功 Enter 开自动 | 同时 **写仓** `autoAdvance: true`（与顶栏一致） |
 | **`q`** / Ctrl+C | 本进程关掉自动并退出全屏；**不**把关写回仓（偏好跨重启保留） |
 
-顶栏须可读展示「自动开下一张：开/关」，并让操作者分清边沿状态：`awaiting-worker-exit`（等进程自退、不杀；可按 `f`）、`awaiting-session-end`（缺会话结束信号；可按 `f` 或 Enter）、`handoff-countdown`（显示剩余秒数；按 `c` 取消）、`needs-resume`（有 id 提示按 `r`；无 session id 明示不可静默空窗）。AFK 接力靠 **Closed ∧ sessionEnded success ∧ 倒计时结束**（或人手 `f`），**禁止**凭 Closed 强杀进行中的 Agent，**禁止**无结束信号仍自动开下一张。UI/文档宜用直白用语。
+顶栏须可读展示「自动开下一张：开/关」，并让操作者分清边沿状态：`awaiting-worker-exit`（等进程自退/等会话结束、不杀；可按 `f`）、`session-interrupted`（会话中断 + 原因摘要；可按 `f`）、`handoff-countdown`（显示剩余秒数；按 `c` 取消）、`needs-resume`（有 id 提示按 `r`；无 session id 明示不可静默空窗）。AFK 接力靠 **Closed ∧ 顺序正确的 sessionEnded success ∧ 倒计时结束**（或人手 `f`），**禁止**凭 Closed 强杀进行中的 Agent，**禁止**无结束信号仍自动开下一张。UI/文档宜用直白用语。
 
 ### 测试 seam
 
@@ -332,7 +334,7 @@ o                   model → effort 两级选单（整次事务确认后写 sub
                     只影响之后新开的 Worker；q/Esc 取消不写）
 f                   强制推进（仅当前票 Closed 可用；跳过等退出/等结束信号/倒计时；默认不杀进程）
 c                   取消交接倒计时（仅 handoff-countdown；腾槽、不自动开下一张）
-r                   needs-resume：挂回旧 session 历史（≠ 开下一张；无 id 不可用）
+r                   needs-resume / session-interrupted：挂回旧 session 历史（≠ 开下一张；无 id 不可用）
 y / n               HITL 同意 / 拒绝
 t                   手动 tick / 刷新一次
 q                   关掉自动并退出全屏（Ctrl+C 等同）

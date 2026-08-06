@@ -26,7 +26,10 @@
  *   auto path never spawns next (honest degradation). Process exit alone is
  *   not enough. Wayfinder complete never auto-advances. forceAdvance remains
  *   the human escape (default no-kill orphan).
- * Handoff countdown (when dual-gate later allows autoHandoff): wait
+ * 20260806-1636/02: dual-gate order (Closed before success); interrupt path
+ *   (failure/interrupted/process exit without success) with reason summary;
+ *   countdown + c; f skips end wait (default orphan). needs-resume r unchanged.
+ * Handoff countdown (when dual-gate allows autoHandoff): wait
  *   handoffCountdownMs (default 9s) before releasing slot / opening next;
  *   operator may cancelHandoffCountdown (or Enter next / forceAdvance).
  * forceAdvance default no-kill orphan path stays independent; killWorker opt-in.
@@ -43,6 +46,73 @@ export const SESSION_ENDED = Object.freeze({
   FAILURE: 'failure',
   INTERRUPTED: 'interrupted',
 });
+
+/**
+ * Operator-facing interrupt reason summary (exit code / failure class / last error).
+ * Prefer lastError → message → failureClass → exitCode → outcome / process default.
+ *
+ * @param {{
+ *   sessionEnded?: string|null,
+ *   sessionEndDetail?: {
+ *     exitCode?: number|string|null,
+ *     failureClass?: string|null,
+ *     lastError?: string|null,
+ *     message?: string|null,
+ *   }|null,
+ * }|null|undefined} slot
+ * @returns {string}
+ */
+export function sessionInterruptSummary(slot) {
+  const detail = slot?.sessionEndDetail && typeof slot.sessionEndDetail === 'object'
+    ? slot.sessionEndDetail
+    : {};
+  const lastError = detail.lastError != null && String(detail.lastError).trim() !== ''
+    ? String(detail.lastError).trim()
+    : null;
+  if (lastError) return lastError;
+  const message = detail.message != null && String(detail.message).trim() !== ''
+    ? String(detail.message).trim()
+    : null;
+  if (message) return message;
+  const failureClass = detail.failureClass != null && String(detail.failureClass).trim() !== ''
+    ? String(detail.failureClass).trim()
+    : null;
+  const exitCode = detail.exitCode != null && detail.exitCode !== ''
+    ? detail.exitCode
+    : null;
+  if (failureClass && exitCode != null) return `${failureClass} (exit ${exitCode})`;
+  if (failureClass) return failureClass;
+  if (exitCode != null) return `exit ${exitCode}`;
+  if (slot?.sessionEnded === SESSION_ENDED.FAILURE) return '会话失败结束';
+  if (slot?.sessionEnded === SESSION_ENDED.INTERRUPTED) return '会话中断';
+  if (
+    slot?.sessionEnded === SESSION_ENDED.SUCCESS
+    && slot?.sessionSuccessOrderOk !== true
+  ) {
+    return 'success 早于 Closed（顺序无效）';
+  }
+  return '进程已退出（无成功结束信号）';
+}
+
+/**
+ * Normalize optional session-end detail bag for slot storage.
+ * @param {object|null|undefined} detail
+ */
+function normalizeSessionEndDetail(detail) {
+  if (!detail || typeof detail !== 'object') return null;
+  const out = {};
+  if (detail.exitCode != null && detail.exitCode !== '') out.exitCode = detail.exitCode;
+  if (detail.failureClass != null && String(detail.failureClass).trim() !== '') {
+    out.failureClass = String(detail.failureClass).trim();
+  }
+  if (detail.lastError != null && String(detail.lastError).trim() !== '') {
+    out.lastError = String(detail.lastError).trim();
+  }
+  if (detail.message != null && String(detail.message).trim() !== '') {
+    out.message = String(detail.message).trim();
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
 
 import {
   buildLaunchContract,
@@ -254,9 +324,10 @@ export function createChainRun({
    * autoHandoff — step() may release and auto-spawn next ready impl.
    *
    * Auto handoff requires business complete AND sessionEnded === success
-   * (or explicit forceAdvance). Process death alone is not enough.
-   * Auto path never kills a live worker.
+   * with Closed-before-success order (or explicit forceAdvance).
+   * Process death alone is not enough. Auto path never kills a live worker.
    * Wayfinder complete never sets autoHandoff.
+   * Closed + dead without valid success → session-interrupted (+ reason).
    */
   async function classifyOccupiedSlot() {
     if (!slot) {
@@ -293,6 +364,7 @@ export function createChainRun({
     }
 
     // Business complete — never auto-kill a still-live worker.
+    // Closed + still alive = 等会话结束/等进程自退 (not interrupt yet).
     if (alive && !slot.forceAdvanceRequested) {
       return {
         ok: false,
@@ -315,12 +387,15 @@ export function createChainRun({
     }
 
     // Worker not alive (natural exit / already dead). Freeable for Enter;
-    // auto path only with sessionEnded success and non-wayfinder.
+    // auto path only with ordered sessionEnded success and non-wayfinder.
     const entryClass = resolveEntryClass(slot.issue?.entryClass, slot.issue);
     const isWayfinder = entryClass === 'wayfinder';
-    const sessionSuccess = slot.sessionEnded === SESSION_ENDED.SUCCESS;
+    const sessionSuccess =
+      slot.sessionEnded === SESSION_ENDED.SUCCESS
+      && slot.sessionSuccessOrderOk === true;
 
     if (isWayfinder) {
+      // Human-gate complete: freeable, never auto next (not an "interrupt").
       return {
         ok: false,
         freeable: true,
@@ -331,13 +406,23 @@ export function createChainRun({
     }
 
     if (!sessionSuccess) {
-      // Honest degradation: no session-end success → no auto spawn.
+      const interruptReason = sessionInterruptSummary(slot);
+      let reason = 'process-exit-without-success';
+      if (slot.sessionEnded === SESSION_ENDED.FAILURE) reason = 'session-failure';
+      else if (slot.sessionEnded === SESSION_ENDED.INTERRUPTED) reason = 'session-interrupted';
+      else if (
+        slot.sessionEnded === SESSION_ENDED.SUCCESS
+        && slot.sessionSuccessOrderOk !== true
+      ) {
+        reason = 'session-success-order-invalid';
+      }
       return {
         ok: false,
         freeable: true,
         autoHandoff: false,
-        reason: 'awaiting-session-end',
-        status: 'awaiting-session-end',
+        reason,
+        status: 'session-interrupted',
+        interruptReason,
       };
     }
 
@@ -432,6 +517,10 @@ export function createChainRun({
       forceAdvanceRequested: false,
       /** @type {null | 'success' | 'failure' | 'interrupted'} */
       sessionEnded: null,
+      /** True only when success was reported while issue already Closed. */
+      sessionSuccessOrderOk: false,
+      /** @type {null | { exitCode?: *, failureClass?: string, lastError?: string, message?: string }} */
+      sessionEndDetail: null,
     };
     status = 'soft-stuck';
     pendingHitl = null;
@@ -777,10 +866,19 @@ export function createChainRun({
     },
     /**
      * Record a unified session-end outcome on the current slot.
-     * success | failure | interrupted. Auto path only auto-handoffs on success
-     * (and only after business complete; order fully enforced in later tickets).
+     * success | failure | interrupted.
+     * Auto path only auto-handoffs on success **and** only when the issue was
+     * already Closed at report time (Closed-before-success order).
+     *
+     * @param {'success'|'failure'|'interrupted'} outcome
+     * @param {{
+     *   exitCode?: number|string|null,
+     *   failureClass?: string|null,
+     *   lastError?: string|null,
+     *   message?: string|null,
+     * }} [detail]
      */
-    reportSessionEnded(outcome) {
+    async reportSessionEnded(outcome, detail = {}) {
       if (!slot) {
         return { ok: false, reason: 'empty-slot' };
       }
@@ -792,8 +890,19 @@ export function createChainRun({
       if (!allowed.has(outcome)) {
         return { ok: false, reason: 'invalid-outcome' };
       }
-      slot = { ...slot, sessionEnded: outcome };
-      return { ok: true, sessionEnded: outcome };
+      const sessionEndDetail = normalizeSessionEndDetail(detail);
+      let orderOk = false;
+      if (outcome === SESSION_ENDED.SUCCESS) {
+        const completion = await tracker.getCompletion(slot.issue.id);
+        orderOk = Boolean(completion?.closed);
+      }
+      slot = {
+        ...slot,
+        sessionEnded: outcome,
+        sessionEndDetail,
+        sessionSuccessOrderOk: orderOk,
+      };
+      return { ok: true, sessionEnded: outcome, orderOk };
     },
     /**
      * Cancel an in-progress handoff countdown: free the completed slot without
@@ -836,21 +945,24 @@ export function createChainRun({
       return { ok: true, spawned: false };
     },
     /**
-     * One-shot resume of the recorded session after needs-resume.
-     * Same logical slot; does not open the next ticket; does not re-inject skill entry.
-     * Resume keeps the spawn-pinned mode (no hot switch).
+     * One-shot resume of the recorded session after needs-resume or
+     * session-interrupted (same id history hang-back). Does not open the next
+     * ticket; does not re-inject skill entry. Keeps spawn-pinned mode.
      */
     async resume() {
       if (!slot) {
         return { ok: false, reason: 'no-slot' };
       }
       const gate = await classifyOccupiedSlot();
-      if (gate.reason !== 'needs-resume') {
+      const resumable =
+        gate.reason === 'needs-resume'
+        || gate.status === 'session-interrupted';
+      if (!resumable) {
         if (!stopped) status = gate.status;
         return { ok: false, reason: gate.reason };
       }
       if (!slot.sessionId) {
-        if (!stopped) status = 'needs-resume';
+        if (!stopped) status = gate.status;
         return { ok: false, reason: 'no-session-id' };
       }
 
@@ -872,7 +984,16 @@ export function createChainRun({
         pid: result.pid,
         sessionId: result.sessionId ?? slot.sessionId,
         forceAdvanceRequested: false,
+        // Fresh worker life: prior end/interrupt no longer applies.
+        sessionEnded: null,
+        sessionSuccessOrderOk: false,
+        sessionEndDetail: null,
       };
+      // Drop countdown marker if any (should not be active in needs-resume).
+      if (slot.handoffCountdownStartedAt != null) {
+        const { handoffCountdownStartedAt: _drop, ...rest } = slot;
+        slot = rest;
+      }
       status = stopped ? 'stopped' : 'soft-stuck';
       // history: optional blank/non-blank probe from real launcher (Grok);
       // fake launcher omits it. Acceptance must not treat spawn alone as proof.
@@ -926,15 +1047,16 @@ export function createChainRun({
         status: gate.status,
         reason: gate.reason,
         remainingMs: countdownRemainingMs(),
+        interruptReason: gate.interruptReason ?? null,
       };
     },
     /**
      * One evaluation cycle:
      * - If stopped, never auto-spawn or open HITL offers.
      * - Never auto-kill a live worker (Closed alone → awaiting-worker-exit).
-     * - Auto handoff only when classify.autoHandoff (sessionEnded success or
-     *   forceAdvance). Closed ∧ natural exit without end signal → stay
-     *   awaiting-session-end (no kill, no auto next).
+     * - Auto handoff only when classify.autoHandoff (ordered sessionEnded
+     *   success or forceAdvance). Closed ∧ natural exit without success →
+     *   session-interrupted (no kill, no auto next).
      * - Wayfinder complete never auto-handoffs.
      * - When autoHandoff + autoAdvance + countdown > 0 → handoff-countdown.
      * - Then spawn at most one auto ready-impl candidate into an empty slot.
@@ -968,6 +1090,7 @@ export function createChainRun({
               reason: gate.reason,
               next: nextIssue,
               status,
+              interruptReason: gate.interruptReason ?? null,
             };
           }
           const remainingMs = countdownRemainingMs() ?? 0;
@@ -997,6 +1120,7 @@ export function createChainRun({
               reason: gate.reason,
               next: nextIssue,
               status,
+              interruptReason: gate.interruptReason ?? null,
             };
           }
 

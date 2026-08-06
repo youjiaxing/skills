@@ -77,9 +77,9 @@ test('dispatch snapshot shows effective mode and empty-slot status', async () =>
   assert.equal(snap.actions.stop.available, true);
 });
 
-test('dispatch snapshot updates slot state as chain migrates soft-stuck → await exit → awaiting-session-end', async () => {
+test('dispatch snapshot updates slot state as chain migrates soft-stuck → await exit → session-interrupted', async () => {
   // Closed + live worker: never kill; stay awaiting-worker-exit.
-  // Natural exit without session end: awaiting-session-end (no auto next).
+  // Natural exit without session end: session-interrupted (no auto next).
   // forceAdvance is the human escape to open next.
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
@@ -114,7 +114,9 @@ test('dispatch snapshot updates slot state as chain migrates soft-stuck → awai
   launcher.markExited(oldPid);
   await surface.tick();
   snap = surface.snapshot();
-  assert.equal(snap.status, 'awaiting-session-end');
+  assert.equal(snap.status, 'session-interrupted');
+  assert.match(String(snap.interruptReason || ''), /进程|退出|无成功/);
+  assert.equal(snap.actions.forceAdvance.available, true);
   assert.equal(snap.slot?.issueId, '01-first.md');
   assert.equal(launcher.kills.length, 0);
   assert.equal(launcher.launches.length, 1);
@@ -126,6 +128,37 @@ test('dispatch snapshot updates slot state as chain migrates soft-stuck → awai
   assert.equal(snap.status, 'soft-stuck');
   assert.equal(snap.slot?.issueId, '02-second.md');
   assert.equal(launcher.kills.length, 0);
+});
+
+test('surface projects session-interrupted + interruptReason from failure end signal', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, surface, chain } = makeSurface({
+    candidates: [first, second],
+    launcherOptions: { sessionId: 'sess-int-surface' },
+  });
+
+  await surface.tick();
+  tracker.setCompletion('01-first.md', true);
+  launcher.markExited(surface.snapshot().slot.pid);
+  await chain.reportSessionEnded('failure', {
+    exitCode: 2,
+    lastError: 'provider timeout',
+  });
+  await surface.tick();
+  const snap = surface.snapshot();
+  assert.equal(snap.status, 'session-interrupted');
+  assert.equal(snap.sessionEnded, 'failure');
+  assert.match(String(snap.interruptReason), /provider timeout/);
+  assert.equal(snap.actions.forceAdvance.available, true);
+  assert.equal(snap.actions.resume.available, true, 'interrupt + session id → r');
+  assert.equal(launcher.launches.length, 1);
+
+  const resumed = await surface.resume();
+  assert.equal(resumed.ok, true);
+  assert.equal(launcher.launches.length, 2);
+  assert.equal(launcher.launches[1].kind, 'resume');
+  assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
 });
 
 test('read-only board projection exposes dependencies; surface has no graph dispatch action', async () => {
@@ -193,7 +226,7 @@ test('mode dial writes repo, emits vibe tip, only affects subsequent tickets', a
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(snap.slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
   await surface.tick();
   assert.equal(surface.snapshot().slot.mode, 'vibe');
 });
@@ -418,7 +451,7 @@ test('interactive TUI auto-poll advances after dual-gate without manual tick', a
   // Dual-gate (Closed + session end success) without typing `t`.
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
 
   // Wait for auto-poll to open second ticket.
   let advanced = false;
@@ -599,7 +632,7 @@ test('surface.toggleAutoAdvance flips projection; on alone does not idle-spawn; 
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
   await surface.tick();
   assert.equal(launcher.launches.length, 2, 'auto on + dual-gate handoff must spawn next');
   assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
@@ -613,7 +646,7 @@ test('surface.toggleAutoAdvance flips projection; on alone does not idle-spawn; 
   await surface.tick();
   assert.equal(launcher.launches.length, 2, 's-off must block auto handoff spawn');
   // Without session end / force: freeable but not auto-released.
-  assert.equal(surface.snapshot().status, 'awaiting-session-end');
+  assert.equal(surface.snapshot().status, 'session-interrupted');
 });
 
 test('surface: after toggle off, start succeeds but autoAdvance stays off', async () => {
@@ -634,7 +667,7 @@ test('surface: after toggle off, start succeeds but autoAdvance stays off', asyn
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
-  assert.equal(surface.snapshot().status, 'awaiting-session-end');
+  assert.equal(surface.snapshot().status, 'session-interrupted');
 
   const result = await surface.start('02-second.md');
   assert.equal(result.ok, true);
@@ -684,7 +717,7 @@ test('surface setModelEffort writes repo, updates snapshot, next launch carries 
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(snap.slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
   await surface.tick();
   const nextSnap = surface.snapshot();
   assert.equal(nextSnap.slot.issueId, '02-second.md');

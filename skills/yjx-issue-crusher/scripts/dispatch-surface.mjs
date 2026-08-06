@@ -5,6 +5,8 @@
  * and routes human events. Graph/board is display-only: no claim/dispatch via graph.
  */
 
+import { sessionInterruptSummary } from './chain-run.mjs';
+
 /**
  * @param {{
  *   chain: object,
@@ -83,7 +85,9 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
   }
 
   function buildActions({ closed, status, stopped }) {
-    const needsResume = status === 'needs-resume';
+    // r: hang back history on needs-resume or session-interrupted (with id).
+    const resumeEligible =
+      status === 'needs-resume' || status === 'session-interrupted';
     const needsConfirmation = status === 'needs-confirmation' && Boolean(chain.pendingHitl);
     return {
       setMode: {
@@ -113,10 +117,10 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
             : 'no-countdown',
       },
       resume: {
-        available: needsResume && Boolean(chain.slot?.sessionId),
-        reason: needsResume
+        available: resumeEligible && Boolean(chain.slot?.sessionId),
+        reason: resumeEligible
           ? (chain.slot?.sessionId ? null : 'no-session-id')
-          : 'not-needs-resume',
+          : 'not-resumable',
       },
       confirmHitl: {
         available: !stopped && needsConfirmation,
@@ -166,6 +170,8 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
         model: chain.slot.model ?? null,
         effort: chain.slot.effort ?? null,
         closed,
+        sessionEnded: chain.slot.sessionEnded ?? null,
+        sessionEndDetail: chain.slot.sessionEndDetail ?? null,
       }
       : null;
     const pending = chain.pendingHitl
@@ -178,6 +184,11 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
         effort: chain.pendingHitl.effort ?? null,
         mode: chain.pendingHitl.mode ?? null,
       }
+      : null;
+
+    // Interrupt projection: only when chain is in session-interrupted.
+    const interruptReason = status === 'session-interrupted' && chain.slot
+      ? sessionInterruptSummary(chain.slot)
       : null;
 
     lastSnapshot = {
@@ -193,6 +204,8 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       autoAdvance,
       handoffCountdownRemainingMs: remainingMs,
       handoffCountdownMs: countdownTotalMs,
+      sessionEnded: slot?.sessionEnded ?? null,
+      interruptReason,
       slot,
       pendingHitl: pending,
       board,

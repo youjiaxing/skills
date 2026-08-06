@@ -202,7 +202,7 @@ test('acceptance A: Closed never kills; natural exit without session end does no
 
   assertStage(
     result.spawned === false
-      && result.reason === 'awaiting-session-end'
+      && result.reason === 'process-exit-without-success'
       && launcher.launches.length === 1
       && chain.slot?.issue?.id === '01-first.md',
     stage,

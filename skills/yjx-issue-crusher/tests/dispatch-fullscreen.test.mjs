@@ -911,7 +911,7 @@ test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
   await surface.tick();
   assert.equal(surface.snapshot().slot.mode, 'vibe');
 });
@@ -1286,7 +1286,7 @@ test('first Enter opens auto; dual-gate + tick auto-spawns board next ignoring h
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
 
   // Highlight deliberately parked on third; auto path must still take board next (02)
   await surface.tick();
@@ -1357,7 +1357,7 @@ test('after s-off, Enter opens one ticket but does not reopen autoAdvance', asyn
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
   // Without session end: no auto free; freeable for Enter.
-  assert.equal(surface.snapshot().status, 'awaiting-session-end');
+  assert.equal(surface.snapshot().status, 'session-interrupted');
   assert.equal(launcher.launches.length, 1);
 
   const started = await handleFullscreenKey(surface, '\r', {
@@ -1713,7 +1713,7 @@ test('regression 03: s toggle; Enter after s-off keeps auto off; s-on restores A
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
-  assert.equal(surface.snapshot().status, 'awaiting-session-end');
+  assert.equal(surface.snapshot().status, 'session-interrupted');
   assert.equal(launcher.launches.length, 1, 's-off must block auto handoff');
 
   // Enter frees freeable slot, opens exactly one and must not reopen auto.
@@ -1727,7 +1727,7 @@ test('regression 03: s toggle; Enter after s-off keeps auto off; s-on restores A
   // s on while slot still held, then dual-gate = handoff release + auto-spawn.
   tracker.setCompletion('02-second.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
   await handleFullscreenKey(surface, 's');
   assert.equal(surface.snapshot().autoAdvance, true);
   await surface.tick();
@@ -1904,6 +1904,30 @@ test('renderTopBar shows handoff-countdown remaining seconds and cancel hint', (
   assert.match(text, /交接倒计时|倒计时/);
   assert.match(text, /9s|8s|秒/);
   assert.match(text, /按\s*c|取消/);
+});
+
+test('renderTopBar distinguishes session-interrupted reason summary from countdown/await exit', () => {
+  const text = renderTopBar(snapWithBoard({
+    status: 'session-interrupted',
+    autoAdvance: true,
+    interruptReason: 'API connection reset',
+    slot: {
+      issueId: '01-first.md',
+      pid: 11,
+      mode: 'vibe',
+      closed: true,
+      sessionId: 'sess-x',
+    },
+    actions: {
+      forceAdvance: { available: true, reason: null },
+      resume: { available: true, reason: null },
+    },
+  }));
+  assert.match(text, /会话中断|中断/);
+  assert.match(text, /API connection reset/);
+  assert.match(text, /按\s*f|强制推进/);
+  assert.match(text, /按\s*r/);
+  assert.doesNotMatch(text, /交接倒计时|按\s*c/);
 });
 
 test('renderTopBar distinguishes needs-resume (press r) vs no session id', () => {
@@ -2121,7 +2145,7 @@ test('model→effort menu: both confirms submit; cancel leaves subsequent+repo u
   // Next spawn carries subsequent contract (dual-gate success required for auto).
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
-  chain.reportSessionEnded('success');
+  await chain.reportSessionEnded('success');
   await surface.tick();
   assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
   assert.equal(surface.snapshot().slot?.model, 'grok-3.5');
