@@ -308,6 +308,90 @@ test('Closed then sessionEnded success (order ok) auto-handoffs after exit', asy
   assert.equal(launcher.kills.length, 0);
 });
 
+test('impl + autoAdvance spawn uses observable morph; launcher session-end feeds dual-gate', async () => {
+  const first = candidate('01-first.md');
+  const second = candidate('02-second.md');
+  const { tracker, launcher, chain } = makeChain({
+    candidates: [first, second],
+    autoAdvance: true,
+  });
+
+  await chain.step();
+  assert.equal(launcher.launches[0].morph, 'observable');
+  assert.equal(chain.slot.morph, 'observable');
+  assert.equal(chain.slot.sessionEndCapable, true);
+
+  tracker.setCompletion('01-first.md', true);
+  // Adapter path (not hand-rolled reportSessionEnded): fake stream end.
+  await launcher.emitSessionEnded(chain.slot.pid, 'success', {
+    stopReason: 'end_turn',
+  });
+  assert.equal(chain.slot.sessionEnded, 'success');
+  assert.equal(chain.slot.sessionSuccessOrderOk, true);
+
+  launcher.markExited(chain.slot.pid);
+  const done = await chain.step();
+  assert.equal(done.spawned, true);
+  assert.equal(launcher.launches[1].issue.id, '02-second.md');
+  // Auto handoff next impl also observable while auto is on.
+  assert.equal(launcher.launches[1].morph, 'observable');
+  assert.equal(launcher.kills.length, 0);
+});
+
+test('clean first Enter opens auto and first impl is already observable', async () => {
+  // Fullscreen-like: auto off, openAutoOnManualStart true (default).
+  // First Enter must spawn observable so dual-gate can AFK after this ticket.
+  const { launcher, chain } = makeChain({
+    candidates: [candidate('01-first.md'), candidate('02-second.md')],
+    autoAdvance: false,
+  });
+  assert.equal(chain.autoAdvance, false);
+  const started = await chain.startIssue();
+  assert.equal(started.spawned, true);
+  assert.equal(chain.autoAdvance, true);
+  assert.equal(launcher.launches[0].morph, 'observable');
+  assert.equal(chain.slot.sessionEndCapable, true);
+});
+
+test('autoAdvance-off impl and wayfinder stay interactive (no AFK morph)', async () => {
+  // Manual impl start after user s-off (openAutoOnManualStart false) → interactive
+  const { launcher: launcherOff, chain: chainOff } = makeChain({
+    candidates: [candidate('01-first.md')],
+    autoAdvance: false,
+  });
+  await chainOff.toggleAutoAdvance(); // on
+  await chainOff.toggleAutoAdvance(); // off → locks openAutoOnManualStart
+  assert.equal(chainOff.autoAdvance, false);
+  await chainOff.startIssue();
+  assert.equal(launcherOff.launches[0].morph, 'interactive');
+  assert.equal(chainOff.slot.sessionEndCapable, false);
+
+  // Wayfinder Enter with auto on still interactive (never AFK morph)
+  const wayfinder = candidate('01-grill.md', {
+    entryClass: 'wayfinder',
+    type: 'grilling',
+  });
+  const launcherWay = createFakeLauncher();
+  const trackerWay = createFakeTracker({
+    candidates: [],
+    hitlCandidates: [wayfinder],
+  });
+  const chainWay = createChainRun({
+    tracker: trackerWay,
+    launcher: launcherWay,
+    feature: 'demo',
+    cwd: '/tmp/project',
+    runtime: 'claude',
+    autoAdvance: true,
+    handoffCountdownMs: 0,
+  });
+  const started = await chainWay.startIssue(wayfinder.id);
+  assert.equal(started.spawned, true);
+  assert.equal(launcherWay.launches[0].morph, 'interactive');
+  assert.equal(launcherWay.launches[0].entryClass, 'wayfinder');
+  assert.equal(chainWay.slot.sessionEndCapable, false);
+});
+
 test('sessionEnded failure: no auto next; status session-interrupted with reason summary', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');

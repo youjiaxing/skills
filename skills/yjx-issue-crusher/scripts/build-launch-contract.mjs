@@ -152,6 +152,15 @@ export function normalizeOptionalFlag(value) {
 }
 
 /**
+ * Normalize worker morph: interactive (default) | observable (AFK end-events).
+ * @param {unknown} morph
+ * @returns {'interactive'|'observable'}
+ */
+export function resolveMorph(morph) {
+  return morph === 'observable' ? 'observable' : 'interactive';
+}
+
+/**
  * @param {object} input
  * @param {'grok'|'claude'} input.runtime
  * @param {string} input.feature
@@ -159,6 +168,7 @@ export function normalizeOptionalFlag(value) {
  * @param {{ id: string, path: string, number?: string, title?: string, entryClass?: string, type?: string, workflow?: string, statusRole?: string }} input.issue
  * @param {'review'|'vibe'} [input.mode]
  * @param {'impl'|'wayfinder'|'human'|'unknown'} [input.entryClass]
+ * @param {'interactive'|'observable'} [input.morph] default interactive
  * @param {string|null} [input.model] omitted → runtime product default (no CLI flag)
  * @param {string|null} [input.effort] omitted → runtime product default (no CLI flag)
  */
@@ -169,6 +179,7 @@ export function buildLaunchContract({
   issue,
   mode,
   entryClass,
+  morph,
   model = null,
   effort = null,
 } = {}) {
@@ -202,6 +213,7 @@ export function buildLaunchContract({
     title,
     mode: effectiveMode,
     entryClass: resolvedEntry,
+    morph: resolveMorph(morph),
     model: normalizeOptionalFlag(model),
     effort: normalizeOptionalFlag(effort),
     initialPrompt: lines.join('\n'),
@@ -242,6 +254,8 @@ export function buildResumeContract({
     title: resolvedTitle,
     sessionId,
     mode: effectiveMode,
+    // Resume is always human-intervenable foreground (never AFK morph).
+    morph: 'interactive',
     model: normalizeOptionalFlag(model),
     effort: normalizeOptionalFlag(effort),
     // Empty / neutral prompt: continue the existing session, no fresh skill entry.

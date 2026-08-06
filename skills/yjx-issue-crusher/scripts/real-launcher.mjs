@@ -23,13 +23,19 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
-import { normalizeOptionalFlag } from './build-launch-contract.mjs';
+import { normalizeOptionalFlag, resolveMorph } from './build-launch-contract.mjs';
+import { attachSessionEndWatcher } from './session-end-adapters.mjs';
 
 /** Flags never allowed on the default foreground / resumable Worker path. */
-const FORBIDDEN_WORKER_FLAGS = new Set([
+const FORBIDDEN_INTERACTIVE_FLAGS = new Set([
   '-p',
   '--print',
   '--single',
+  '--no-session-persistence',
+]);
+
+/** Always forbidden — session must stay resumable. */
+const FORBIDDEN_ALWAYS_FLAGS = new Set([
   '--no-session-persistence',
 ]);
 
@@ -60,6 +66,7 @@ export function resolveCommand(runtime, commands = {}) {
  *   title: string|null,
  *   runtime: string,
  *   kind: string,
+ *   morph: 'interactive'|'observable',
  *   sessionId: string|null,
  *   sessionIdStatus: 'preallocated'|'provided'|'unavailable',
  *   sessionIdNote: string|null,
@@ -81,6 +88,9 @@ export function buildWorkerInvocation(request = {}, options = {}) {
   if (!request.cwd) throw new Error('cwd is required');
 
   const kind = request.kind === 'resume' ? 'resume' : 'initial';
+  // Resume / wayfinder path stays interactive; only explicit observable morph
+  // may use headless stream flags (impl AFK auto path).
+  const morph = kind === 'resume' ? 'interactive' : resolveMorph(request.morph);
   const model = normalizeOptionalFlag(request.model);
   const effort = normalizeOptionalFlag(request.effort);
   const title = request.title ?? null;
@@ -119,6 +129,16 @@ export function buildWorkerInvocation(request = {}, options = {}) {
         + '(preallocateSessionId=false); needs-resume cannot auto-fulfill until an id is recorded';
     }
 
+    // AFK observable morph: headless + streamable JSON so adapters can map end.
+    if (morph === 'observable') {
+      if (runtime === 'grok') {
+        args.push('-p', '--output-format', 'streaming-json');
+      } else {
+        // stream-json keeps NDJSON lines for the watcher; result envelope still maps.
+        args.push('-p', '--output-format', 'stream-json');
+      }
+    }
+
     if (runtime === 'grok') {
       args.push('--cwd', request.cwd);
       if (sessionId) {
@@ -141,7 +161,7 @@ export function buildWorkerInvocation(request = {}, options = {}) {
     }
   }
 
-  assertNoForbiddenFlags(args);
+  assertNoForbiddenFlags(args, morph);
 
   return {
     command,
@@ -150,6 +170,7 @@ export function buildWorkerInvocation(request = {}, options = {}) {
     title,
     runtime,
     kind,
+    morph,
     sessionId,
     sessionIdStatus,
     sessionIdNote,
@@ -172,12 +193,37 @@ function appendModelEffort(runtime, args, model, effort) {
   }
 }
 
-function assertNoForbiddenFlags(args) {
+function assertNoForbiddenFlags(args, morph = 'interactive') {
   for (const arg of args) {
-    if (FORBIDDEN_WORKER_FLAGS.has(arg)) {
+    if (FORBIDDEN_ALWAYS_FLAGS.has(arg)) {
+      throw new Error(`refusing to launch with forbidden flag: ${arg}`);
+    }
+    if (morph !== 'observable' && FORBIDDEN_INTERACTIVE_FLAGS.has(arg)) {
       throw new Error(`refusing to launch with forbidden flag: ${arg}`);
     }
   }
+}
+
+/**
+ * Spawn a Worker whose stdout can be observed for session-end events.
+ * Not a new OS window — piped stdio so adapters can map the stream.
+ */
+export function spawnObservableWorker(command, args, options = {}) {
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: options.env ?? process.env,
+    detached: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    shell: false,
+  });
+  child.on('error', () => {
+    // Liveness checks will observe a dead/missing pid; avoid unhandled error.
+  });
+  if (child.pid == null) {
+    throw new Error(`failed to spawn observable ${command}: no pid`);
+  }
+  return { pid: child.pid, child };
 }
 
 /**
@@ -629,6 +675,8 @@ export function defaultKillProcess(pid) {
 export function createRealLauncher(options = {}) {
   const {
     spawnWorker = defaultSpawnWorker,
+    // When tests inject only spawnWorker, reuse it for observable path too.
+    spawnObservable = options.spawnWorker || spawnObservableWorker,
     isProcessAlive = defaultIsProcessAlive,
     killProcess = defaultKillProcess,
     generateSessionId = randomUUID,
@@ -652,12 +700,15 @@ export function createRealLauncher(options = {}) {
     kills,
     /**
      * @param {object} request
+     * @param {(outcome: string, detail: object) => void|Promise<void>} [request.onSessionEnded]
      * @returns {Promise<{
      *   pid: number,
      *   sessionId: string|null,
      *   sessionIdStatus: string,
      *   sessionIdNote: string|null,
      *   invocation: object,
+     *   morph: 'interactive'|'observable',
+     *   sessionEndCapable: boolean,
      * }>}
      */
     async launch(request) {
@@ -666,16 +717,41 @@ export function createRealLauncher(options = {}) {
         preallocateSessionId,
         commands,
       });
+      const morph = invocation.morph;
+      const sessionEndCapable = morph === 'observable';
 
-      const spawned = spawnWorker(invocation.command, invocation.args, {
-        cwd: invocation.cwd,
-        detached: true,
-        windowsHide: false,
-        env,
-      });
+      /** @type {{ pid: number, child?: import('node:events').EventEmitter }} */
+      let spawned;
+      if (sessionEndCapable) {
+        spawned = spawnObservable(invocation.command, invocation.args, {
+          cwd: invocation.cwd,
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: false,
+          windowsHide: true,
+        });
+      } else {
+        spawned = spawnWorker(invocation.command, invocation.args, {
+          cwd: invocation.cwd,
+          detached: true,
+          windowsHide: false,
+          env,
+        });
+      }
 
       if (spawned?.pid == null) {
         throw new Error(`spawn of ${invocation.command} returned no pid`);
+      }
+
+      if (
+        sessionEndCapable
+        && spawned.child
+        && typeof request.onSessionEnded === 'function'
+      ) {
+        attachSessionEndWatcher(spawned.child, {
+          runtime: invocation.runtime,
+          onSessionEnded: request.onSessionEnded,
+        });
       }
 
       /** @type {boolean|null} */
@@ -687,6 +763,7 @@ export function createRealLauncher(options = {}) {
         && invocation.sessionId
         && request.title
         && typeof applySessionTitle === 'function'
+        // Observable headless path does not need TUI title patch; still try if session dir appears.
       ) {
         try {
           titleApplied = await applySessionTitle({
@@ -729,6 +806,8 @@ export function createRealLauncher(options = {}) {
         sessionIdStatus: invocation.sessionIdStatus,
         sessionIdNote: invocation.sessionIdNote,
         invocation,
+        morph,
+        sessionEndCapable,
         titleApplied,
         // Resume acceptance: blank vs non-blank history (not spawn-success alone).
         history,

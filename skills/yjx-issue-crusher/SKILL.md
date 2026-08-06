@@ -22,7 +22,7 @@ disable-model-invocation: true
 | 角色 | 做 | 不做 |
 |------|----|------|
 | **编排器（CLI ± Ink 全屏调度 TUI）** | 读候选/完成态；全屏下按「开始/自动开下一张」门闩 spawn Worker；盯完成闸门；按 review/vibe 与自动开关决定可否开下一张；失败/未关票停开下一张；全屏分区调度与只读图 | 不当 agent 主界面；不自动换模/effort；不把进程退出当唯一成功；**不内嵌 Worker 终端**；不做多仓总控；**全屏进门不擅自开 Worker** |
-| **Worker（Grok Build / Claude Code 独立前台窗）** | 在指定 cwd 做票；人可介入；会话可回看；与调度 TUI **分窗** | 不选下一张、不跨 feature 调度 |
+| **Worker（Grok Build / Claude Code）** | 在指定 cwd 做票；与调度 TUI **分窗**。**双形态：** impl+`autoAdvance` → **observable**（可订阅结束事件，AFK）；wayfinder/人闸/resume → **interactive** 前台可介入 | 不选下一张、不跨 feature 调度 |
 | **Tracker 适配器** | 读候选 / 完成 / 只读看板投影 | 不含编排策略、不 spawn Worker |
 
 ### 三概念与可开下一张
@@ -30,7 +30,7 @@ disable-model-invocation: true
 | 概念 | 定义 | 真源 |
 |------|------|------|
 | **业务完成** | 本票在看板上已完成 | 普通 impl：issue 头 **`Closed: true`**（读侧）；Wayfinder：`Status: resolved` |
-| **会话成功结束** | 编排器收到统一结束信号 | `sessionEnded: success`（runtime 适配器映射；测试可注入 `success` \| `failure` \| `interrupted`）。**仅进程死亡 / 单轮 stop / 静默 N 秒不算** |
+| **会话成功结束** | 编排器收到统一结束信号 | `sessionEnded: success`（**Grok/Claude 适配器**从 runtime 终态事件映射：Grok `type:end`、Claude `type:result`；测试可注入或假流）。**仅进程死亡 / 单轮 assistant stop（无会话终态信封）/ 静默 N 秒不算** |
 | **可自动开下一张** | 自动路径允许 spawn 下一张 ready impl | **业务完成 ∧ `sessionEnded === success` ∧ 顺序为先 Closed 再 success**，且还要过 **交接倒计时**（默认 9s，可取消）；**或** 已 Closed 下人手 **`forceAdvance`**（跳过等结束信号） |
 
 禁止把进程退出单独当成功。  
@@ -152,7 +152,8 @@ closed == false
 
 ### 测试 seam
 
-- **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽。  
+- **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽 / morph。  
+- **Session-end 适配 seam：** `scripts/session-end-adapters.mjs` + `tests/session-end-adapters.test.mjs` — 假 NDJSON/事件流映射 Grok/Claude → `success|failure|interrupted`；单轮 stop ≠ success；observable morph argv + watcher；**不**开真 Agent 窗。  
 - **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`o` 事务选单与 `setModelEffort` 写仓可测。  
 - **Resume 历史探针：** `classifyGrokChatHistory` / `readGrokChatHistory` 对 `chat_history.jsonl` 做空白 vs 有历史红绿判定（不依赖「进程 spawn 成功」 alone）。  
 - **vibe 接力验收（20260805-1244 起，20260806-1636 收紧）：** `tests/vibe-handoff-acceptance.test.mjs` 三阶段（A Closed 后不杀、无会话结束信号不自动下一张 · B needs-resume 历史非空白 · C 未 Closed 不误杀）；失败信息带稳定 stage/code（`not-closed` / `no-exit` / `resume-blank` / `wrong-kill`）。双真源 / 倒计时单元测在 `chain-run.test.mjs`（可注入时钟与 `reportSessionEnded`）。也可用 `scripts/run-vibe-handoff-acceptance.mjs` 拿进程退出码（0 绿；2/3/4 对应 A/B/C）。  
@@ -165,7 +166,8 @@ closed == false
 
 - **Chain Run** 测试缝与状态机（双条件、边沿、单槽、自动开下一张门闩）  
 - **local-markdown** Tracker 适配 + 只读 `getBoard()`  
-- **假 / 真** WorkerLauncher（同一 launch DTO；真启动器开 **独立前台窗**，不进调度屏）  
+- **假 / 真** WorkerLauncher（同一 launch DTO；**interactive** = 独立前台窗；**observable** = 可订阅结束事件的 AFK 形态；不进调度屏）  
+- **Session-end 适配器**（Grok streaming-json `type:end` / Claude result 信封 → 统一 `sessionEnded`）  
 - **mode** 解析与仓文件写回  
 - **subsequent model/effort** 初值（CLI → 仓分桶 → 空）与 `setModelEffort` 写仓  
 - **全屏 `o`**：model→effort 事务选单；Grok 可注入 model 发现（`grok models` best-effort 降级）；Claude 别名 + effort 档位提示  

@@ -29,6 +29,8 @@
  * 20260806-1636/02: dual-gate order (Closed before success); interrupt path
  *   (failure/interrupted/process exit without success) with reason summary;
  *   countdown + c; f skips end wait (default orphan). needs-resume r unchanged.
+ * 20260806-1636/03: Grok/Claude session-end adapters + Worker morph
+ *   (impl+autoAdvance → observable AFK; wayfinder/人闸/resume → interactive).
  * Handoff countdown (when dual-gate allows autoHandoff): wait
  *   handoffCountdownMs (default 9s) before releasing slot / opening next;
  *   operator may cancelHandoffCountdown (or Enter next / forceAdvance).
@@ -126,6 +128,7 @@ import {
   resolveSubsequentMode,
   VIBE_CONSEQUENCE_MESSAGE,
 } from './mode-config.mjs';
+import { resolveWorkerMorph } from './session-end-adapters.mjs';
 
 /** model/effort omitted → "runtime default" marker for HITL display. */
 const RUNTIME_DEFAULT = 'runtime-default';
@@ -490,20 +493,87 @@ export function createChainRun({
     });
   }
 
-  async function spawnFromIssue(issue, entryClass) {
+  /**
+   * Record unified session-end on the current slot (internal + public port).
+   * @param {'success'|'failure'|'interrupted'} outcome
+   * @param {object} [detail]
+   */
+  async function applySessionEnded(outcome, detail = {}) {
+    if (!slot) {
+      return { ok: false, reason: 'empty-slot' };
+    }
+    const allowed = new Set([
+      SESSION_ENDED.SUCCESS,
+      SESSION_ENDED.FAILURE,
+      SESSION_ENDED.INTERRUPTED,
+    ]);
+    if (!allowed.has(outcome)) {
+      return { ok: false, reason: 'invalid-outcome' };
+    }
+    const sessionEndDetail = normalizeSessionEndDetail(detail);
+    let orderOk = false;
+    if (outcome === SESSION_ENDED.SUCCESS) {
+      const completion = await tracker.getCompletion(slot.issue.id);
+      orderOk = Boolean(completion?.closed);
+    }
+    slot = {
+      ...slot,
+      sessionEnded: outcome,
+      sessionEndDetail,
+      sessionSuccessOrderOk: orderOk,
+    };
+    return { ok: true, sessionEnded: outcome, orderOk };
+  }
+
+  /**
+   * @param {object} issue
+   * @param {string} [entryClass]
+   * @param {{ autoAdvanceForMorph?: boolean }} [options]
+   *   When starting a clean Enter that will open autoAdvance, pass true so the
+   *   first impl spawn is already observable (otherwise dual-gate can never AFK).
+   */
+  async function spawnFromIssue(issue, entryClass, options = {}) {
     const spawnMode = effectiveSubsequentMode();
+    const resolvedEntry = resolveEntryClass(entryClass, issue);
+    // impl + autoAdvance → observable (AFK end events); wayfinder/人闸 → interactive.
+    const morphAuto = options.autoAdvanceForMorph != null
+      ? Boolean(options.autoAdvanceForMorph)
+      : autoAdvance;
+    const morph = resolveWorkerMorph({
+      entryClass: resolvedEntry,
+      autoAdvance: morphAuto,
+      kind: 'initial',
+    });
     const contract = buildLaunchContract({
       runtime,
       feature,
       cwd,
       issue,
       mode: spawnMode,
-      entryClass,
+      entryClass: resolvedEntry,
+      morph,
       model: subsequentModel,
       effort: subsequentEffort,
     });
-    const result = await launcher.launch(contract);
 
+    /** @type {{ outcome: string, detail: object }|null} */
+    let queuedSessionEnd = null;
+    /** @type {number|null} */
+    let spawnedPid = null;
+
+    const result = await launcher.launch({
+      ...contract,
+      onSessionEnded: (outcome, detail) => {
+        // May race: event can arrive before slot is assigned after launch returns.
+        if (spawnedPid == null || !slot || slot.pid !== spawnedPid) {
+          queuedSessionEnd = { outcome, detail };
+          return undefined;
+        }
+        return applySessionEnded(outcome, detail);
+      },
+    });
+
+    spawnedPid = result.pid;
     slot = {
       issue,
       pid: result.pid,
@@ -514,6 +584,8 @@ export function createChainRun({
       title: contract.title,
       model: contract.model,
       effort: contract.effort,
+      morph: result.morph ?? contract.morph ?? morph,
+      sessionEndCapable: Boolean(result.sessionEndCapable),
       forceAdvanceRequested: false,
       /** @type {null | 'success' | 'failure' | 'interrupted'} */
       sessionEnded: null,
@@ -525,6 +597,12 @@ export function createChainRun({
     status = 'soft-stuck';
     pendingHitl = null;
     nextIssue = issue;
+
+    if (queuedSessionEnd) {
+      const queued = queuedSessionEnd;
+      queuedSessionEnd = null;
+      await applySessionEnded(queued.outcome, queued.detail);
+    }
 
     return {
       spawned: true,
@@ -648,7 +726,13 @@ export function createChainRun({
     }
 
     pendingHitl = null;
-    const result = await spawnFromIssue(issue, resolveEntryClass(issue.entryClass, issue));
+    // If this Enter will open auto, first impl must already be observable so
+    // session-end can feed dual-gate AFK handoff (do not wait for auto flip after spawn).
+    const result = await spawnFromIssue(
+      issue,
+      resolveEntryClass(issue.entryClass, issue),
+      { autoAdvanceForMorph: autoAdvance || openAutoOnManualStart },
+    );
     // Clean first-success path only: do not sneak auto back on after user s-off.
     if (openAutoOnManualStart) {
       autoAdvance = true;
@@ -869,6 +953,7 @@ export function createChainRun({
      * success | failure | interrupted.
      * Auto path only auto-handoffs on success **and** only when the issue was
      * already Closed at report time (Closed-before-success order).
+     * Real Worker path: Grok/Claude adapters → this port (via launcher callback).
      *
      * @param {'success'|'failure'|'interrupted'} outcome
      * @param {{
@@ -879,30 +964,7 @@ export function createChainRun({
      * }} [detail]
      */
     async reportSessionEnded(outcome, detail = {}) {
-      if (!slot) {
-        return { ok: false, reason: 'empty-slot' };
-      }
-      const allowed = new Set([
-        SESSION_ENDED.SUCCESS,
-        SESSION_ENDED.FAILURE,
-        SESSION_ENDED.INTERRUPTED,
-      ]);
-      if (!allowed.has(outcome)) {
-        return { ok: false, reason: 'invalid-outcome' };
-      }
-      const sessionEndDetail = normalizeSessionEndDetail(detail);
-      let orderOk = false;
-      if (outcome === SESSION_ENDED.SUCCESS) {
-        const completion = await tracker.getCompletion(slot.issue.id);
-        orderOk = Boolean(completion?.closed);
-      }
-      slot = {
-        ...slot,
-        sessionEnded: outcome,
-        sessionEndDetail,
-        sessionSuccessOrderOk: orderOk,
-      };
-      return { ok: true, sessionEnded: outcome, orderOk };
+      return applySessionEnded(outcome, detail);
     },
     /**
      * Cancel an in-progress handoff countdown: free the completed slot without
