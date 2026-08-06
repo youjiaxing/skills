@@ -97,6 +97,7 @@ function makeSurface(overrides = {}) {
     cwd: '/tmp/project',
     runtime: 'grok',
     modeConfig,
+    handoffCountdownMs: 0,
     ...chainOptions,
   });
   const surface = createDispatchSurface({ chain, tracker });
@@ -881,7 +882,7 @@ test('handleFullscreenKey arrow keys only move highlight — never spawn', async
 test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  const { tracker, launcher, surface, modeConfig } = makeSurface({
+  const { tracker, launcher, surface, modeConfig, chain } = makeSurface({
     candidates: [first, second],
     mode: 'review',
   });
@@ -910,6 +911,7 @@ test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
+  chain.reportSessionEnded('success');
   await surface.tick();
   assert.equal(surface.snapshot().slot.mode, 'vibe');
 });
@@ -1267,11 +1269,11 @@ test('handleFullscreenKey Enter without selection spawns board default next', as
   assert.equal(launcher.launches[0].issue.id, '01-first.md');
 });
 
-test('first Enter opens auto; Closed∧exit + tick auto-spawns board next ignoring highlight', async () => {
+test('first Enter opens auto; dual-gate + tick auto-spawns board next ignoring highlight', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const third = candidate('03-third.md');
-  const { tracker, launcher, surface } = makeSurface({
+  const { tracker, launcher, surface, chain } = makeSurface({
     candidates: [first, second, third],
     autoAdvance: false,
   });
@@ -1284,6 +1286,7 @@ test('first Enter opens auto; Closed∧exit + tick auto-spawns board next ignori
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
+  chain.reportSessionEnded('success');
 
   // Highlight deliberately parked on third; auto path must still take board next (02)
   await surface.tick();
@@ -1322,14 +1325,9 @@ test('slot empty + auto on + highlight + Enter can cut in on highlighted ticket'
   await handleFullscreenKey(surface, '\r', { selectedIssueId: '01-first.md' });
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
-  // Release slot without auto-spawning by stepping once with... wait, auto is on so tick would spawn.
-  // Simulate: close+exit then manual Enter on third before poll — need empty slot first.
-  // Force release via tick would auto-spawn 02. Instead: turn auto off temporarily? Spec says
-  // auto on + empty slot + highlight + Enter cuts in. So clear slot without auto fire:
+  // Freeable completed slot (no session end): Enter frees and cuts in on highlight.
+  // Turn auto off so cut-in is explicit Enter, not dual-gate auto fire.
   await surface.setAutoAdvance(false);
-  await surface.tick(); // release only
-  assert.equal(surface.snapshot().slot, null);
-  await surface.setAutoAdvance(true);
 
   const cutIn = await handleFullscreenKey(surface, '\r', {
     selectedIssueId: '03-third.md',
@@ -1358,7 +1356,9 @@ test('after s-off, Enter opens one ticket but does not reopen autoAdvance', asyn
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
-  assert.equal(surface.snapshot().slot, null);
+  // Without session end: no auto free; freeable for Enter.
+  assert.equal(surface.snapshot().status, 'awaiting-session-end');
+  assert.equal(launcher.launches.length, 1);
 
   const started = await handleFullscreenKey(surface, '\r', {
     selectedIssueId: '02-second.md',
@@ -1696,7 +1696,7 @@ test('regression 03: s toggle; Enter after s-off keeps auto off; s-on restores A
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const third = candidate('03-third.md');
-  const { tracker, launcher, surface } = makeSurface({
+  const { tracker, launcher, surface, chain } = makeSurface({
     candidates: [first, second, third],
     autoAdvance: false,
   });
@@ -1707,16 +1707,16 @@ test('regression 03: s toggle; Enter after s-off keeps auto off; s-on restores A
   assert.equal(launcher.launches.length, 1);
   assert.equal(surface.snapshot().autoAdvance, true);
 
-  // s off while soft-stuck; complete first so slot can clear without auto handoff.
+  // s off while soft-stuck; complete first — without end signal, no auto handoff.
   await handleFullscreenKey(surface, 's');
   assert.equal(surface.snapshot().autoAdvance, false);
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
-  assert.equal(surface.snapshot().slot, null);
+  assert.equal(surface.snapshot().status, 'awaiting-session-end');
   assert.equal(launcher.launches.length, 1, 's-off must block auto handoff');
 
-  // Enter opens exactly one and must not reopen auto.
+  // Enter frees freeable slot, opens exactly one and must not reopen auto.
   const started = await handleFullscreenKey(surface, '\r', {
     selectedIssueId: '02-second.md',
   });
@@ -1724,13 +1724,14 @@ test('regression 03: s toggle; Enter after s-off keeps auto off; s-on restores A
   assert.equal(launcher.launches.length, 2);
   assert.equal(surface.snapshot().autoAdvance, false);
 
-  // s on while slot still held, then tick = handoff release + auto-spawn (not idle empty fire).
+  // s on while slot still held, then dual-gate = handoff release + auto-spawn.
   tracker.setCompletion('02-second.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
+  chain.reportSessionEnded('success');
   await handleFullscreenKey(surface, 's');
   assert.equal(surface.snapshot().autoAdvance, true);
   await surface.tick();
-  assert.equal(launcher.launches.length, 3, 'auto on at handoff must spawn board next');
+  assert.equal(launcher.launches.length, 3, 'auto on at dual-gate handoff must spawn board next');
   assert.equal(surface.snapshot().slot?.issueId, '03-third.md');
 });
 
@@ -1844,7 +1845,7 @@ test('renderTopBar shows subsequent model/effort or 运行时默认', () => {
 
 // --- 20260805-1244-vibe-handoff-and-resume / 03: status copy + key regression ---
 
-test('renderTopBar distinguishes awaiting-worker-exit (auto-reap vs manual f)', () => {
+test('renderTopBar distinguishes awaiting-worker-exit (wait natural exit vs manual f)', () => {
   const autoOn = renderTopBar(snapWithBoard({
     status: 'awaiting-worker-exit',
     autoAdvance: true,
@@ -1860,7 +1861,7 @@ test('renderTopBar distinguishes awaiting-worker-exit (auto-reap vs manual f)', 
     },
   }));
   assert.match(autoOn, /等待.*退出|Worker.*退出/);
-  assert.match(autoOn, /自动收尾|可自动/);
+  assert.match(autoOn, /自退|不强制杀/);
   assert.doesNotMatch(autoOn, /按\s*r|恢复会话/);
 
   const autoOff = renderTopBar(snapWithBoard({
@@ -1879,7 +1880,30 @@ test('renderTopBar distinguishes awaiting-worker-exit (auto-reap vs manual f)', 
   }));
   assert.match(autoOff, /等待.*退出|Worker.*退出/);
   assert.match(autoOff, /强制推进|按\s*f/);
-  assert.doesNotMatch(autoOff, /自动收尾/);
+  assert.doesNotMatch(autoOff, /不强制杀/);
+});
+
+test('renderTopBar shows handoff-countdown remaining seconds and cancel hint', () => {
+  const text = renderTopBar(snapWithBoard({
+    status: 'handoff-countdown',
+    autoAdvance: true,
+    handoffCountdownRemainingMs: 8500,
+    handoffCountdownMs: 9000,
+    slot: {
+      issueId: '01-first.md',
+      pid: 11,
+      mode: 'vibe',
+      closed: true,
+    },
+    actions: {
+      forceAdvance: { available: true, reason: null },
+      cancelHandoffCountdown: { available: true, reason: null },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  }));
+  assert.match(text, /交接倒计时|倒计时/);
+  assert.match(text, /9s|8s|秒/);
+  assert.match(text, /按\s*c|取消/);
 });
 
 test('renderTopBar distinguishes needs-resume (press r) vs no session id', () => {
@@ -2030,7 +2054,7 @@ test('renderFooter includes [o] model/effort when action available', () => {
 test('model→effort menu: both confirms submit; cancel leaves subsequent+repo unchanged', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  const { tracker, launcher, surface, modeConfig } = makeSurface({
+  const { tracker, launcher, surface, modeConfig, chain } = makeSurface({
     candidates: [first, second],
   });
   await surface.tick();
@@ -2094,9 +2118,10 @@ test('model→effort menu: both confirms submit; cancel leaves subsequent+repo u
   assert.equal(surface.snapshot().slot?.model ?? null, slotBefore.model);
   assert.equal(surface.snapshot().slot?.effort ?? null, slotBefore.effort);
 
-  // Next spawn carries subsequent contract.
+  // Next spawn carries subsequent contract (dual-gate success required for auto).
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
+  chain.reportSessionEnded('success');
   await surface.tick();
   assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
   assert.equal(surface.snapshot().slot?.model, 'grok-3.5');

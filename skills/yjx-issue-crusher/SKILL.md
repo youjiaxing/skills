@@ -29,33 +29,36 @@ disable-model-invocation: true
 
 | 概念 | 定义 | 真源 |
 |------|------|------|
-| **业务完成** | 本票在看板上已完成 | 普通 impl：issue 头 **`Closed: true`**（读侧） |
-| **会话可收尾** | 本票 Worker 进程已结束 | **进程退出**（pid）；或 Closed 后的安全收尾 / 人手强制推进 |
-| **可开下一张** | 允许 spawn 下一张 | **`Closed` ∧（进程退出 ∨ 已 Closed 下人手 `forceAdvance` ∨ 自动开下一张为开时对本槽安全收尾）** |
+| **业务完成** | 本票在看板上已完成 | 普通 impl：issue 头 **`Closed: true`**（读侧）；Wayfinder：`Status: resolved` |
+| **会话成功结束** | 编排器收到统一结束信号 | `sessionEnded: success`（runtime 适配器映射；测试可注入）。**仅进程死亡 / 单轮 stop / 静默 N 秒不算** |
+| **可自动开下一张** | 自动路径允许 spawn 下一张 ready impl | **业务完成 ∧ `sessionEnded === success`**（顺序与中断细则见双真源后续切片），且还要过 **交接倒计时**（默认 9s，可取消）；**或** 已 Closed 下人手 **`forceAdvance`**（跳过等结束信号） |
 
 禁止把进程退出单独当成功。  
-**仅 Closed 后**才允许收尾本槽旧 Worker；未 Closed 时编排器**绝不**结束任何进程。  
-Wayfinder 完成是 **`Status: resolved`**，**不进**自动 impl 接力闸门。
+**禁止**仅凭 Closed / `Status: resolved` 就强杀仍在跑的 Worker。**自动路径永不 `kill` 本槽进程**；未 Closed 时编排器**绝不**结束任何进程。  
+**无会话成功结束信号时**（诚实降级）：即便 `autoAdvance` 为开，也**不得**仅凭 Closed/自然退出自动 spawn 下一张；状态停在 `awaiting-session-end`（或等进程自退时的 `awaiting-worker-exit`），须人 **Enter** / **`f`**。  
+Wayfinder（含 grilling 等）完成：**不**触发自动开下一张；进程仍活则原窗可续聊。
 
 ### 边沿状态
 
 | 状态 | 条件 | 行为 |
 |------|------|------|
 | `soft-stuck` | 进程存活 + 未 Closed | 禁止下一张；**绝不**杀进程 |
-| `awaiting-worker-exit` | 已 Closed + 进程未退 | 可观测（`refresh`）；**自动开下一张为开**时 `step`/tick 短确认后安全收尾**本槽**再开下一张；**自动为关**时仍禁止自动下一张（可用 `f` 等人工路径） |
+| `awaiting-worker-exit` | 已 Closed + 进程未退 | 可观测（`refresh`）；**只等自退**，**绝不** auto-kill；可用 `f` 强制推进（默认 orphan） |
+| `awaiting-session-end` | 已 Closed + 进程已退 + 尚无 `sessionEnded: success` | **不杀、不自动下一张**；可 `f` 跳过等结束信号，或 Enter 腾槽开下一张 |
+| `handoff-countdown` | 双真源已满足（或 `f` 跳过）+ 自动开着 | 倒计时（默认 **9 秒**）结束后才开下一张；**`c` 取消**倒计时（腾槽、不自动开下一张）；`f` 可跳过倒计时 |
 | `needs-resume` | 死进程 + 未 Closed | 禁止下一张；`r`/`resume` 按已记 session id + 原 runtime/cwd **挂回旧会话历史**（须非空白），**不**重塞 `/implement`/`/wayfinder`，**不**开下一张；无 session id 时 `r` 不可用（原因 `no-session-id`），不静默开空窗 |
 | 逻辑单槽 | 任意时刻 | 最多一个活 Worker；槽占用时拒绝第二次自动 spawn |
 
-**Closed 后安全收尾（自动开下一张为开）：** 短确认 Closed 仍成立且进程仍属本槽 → 已自退则只确认死亡；仍活则 `kill` **仅本槽 pid**。未 Closed、自动开下一张为关、HITL/空槽/非本槽 → **不**结束进程。
+**交接倒计时（自动开下一张为开）：** 仅在自动 handoff 已允许后进入 `handoff-countdown`，默认等待 **9s**（`handoffCountdownMs`，可测注入）再 spawn 下一张 ready impl。期间 **`c` 取消**只腾槽、不自动开下一张；人手 **`f`** 跳过等结束信号 / 倒计时。**自动路径永不 `kill` 本槽进程。** 旧「Closed 后 safe-reap 必杀」合同已废除。
 
-`forceAdvance`：仅 Closed 可用；默认不强杀旧进程（`killWorker: true` 为显式 opt-in）；与自动安全收尾互不踩：人手 `f` 默认 orphan 路径不被 auto-reap 再杀一次。
+`forceAdvance`：仅 Closed 可用；默认不强杀旧进程（`killWorker: true` 为显式 opt-in）；跳过「等退出 / 等结束信号 + 倒计时」。
 
 ### review / vibe
 
 | | review（硬默认） | vibe |
 |--|------------------|------|
 | commit / 关票 | **禁止**自动；须人授权 | 合同内默认可自动 commit + `Closed: true` |
-| 可开下一张 | 同一双条件；Closed 须来自授权后的关票 | 同一双条件 |
+| 可开下一张 | 同一双真源（Closed ∧ session success 或 `f`）；Closed 须来自授权后的关票 | 同一双真源 |
 
 **选定层（仅此）：**
 
@@ -135,7 +138,7 @@ closed == false
 | 列表导航 | `j` / `k`、**方向键 ↑↓**、`1–9`：只移动「现在可执行」高亮 |
 | **Enter** | 开 **一张**：有高亮 → 该票；无高亮 → 看板默认下一张（与自动候选同一套 frontier 规则） |
 | 第一次成功 Enter 开票 | 同时把 **自动开下一张** 打开（此后可 AFK） |
-| 自动开着时 | 条件满足（`Closed` ∧（退出 ∨ 强制推进 ∨ **Closed 后对本槽安全收尾**））后按 **看板** 开后续 ready 票，**忽略** 高亮 |
+| 自动开着时 | 条件满足（`Closed` ∧（**`sessionEnded: success`** ∨ 强制推进），且成功路径已过 **交接倒计时** 或被 `c`/`f` 处理）后按 **看板** 开后续 ready 票，**忽略** 高亮；**无结束信号不得假 AFK 推进** |
 | 自动开着且槽空（未在接力收尾中） | **不**因 poll/tick 自动开；须 **Enter** 开工；`s` 只拨杆 |
 | **`s`** | **切换**「自动开下一张」开 / 关（**纯拨杆**；不立即 spawn；**立即写仓**） |
 | 用 `s` 关掉之后 | 再 Enter **只开一张**，**不**把自动开回来；恢复自动只能再按 `s`（本会话锁；仓偏好已为关） |
@@ -143,14 +146,14 @@ closed == false
 | 干净路径第一次成功 Enter 开自动 | 同时 **写仓** `autoAdvance: true`（与顶栏一致） |
 | **`q`** / Ctrl+C | 本进程关掉自动并退出全屏；**不**把关写回仓（偏好跨重启保留） |
 
-顶栏须可读展示「自动开下一张：开/关」，并让操作者分清边沿状态：`awaiting-worker-exit`（自动开着时可自动收尾；关掉时提示按 `f`）、`needs-resume`（有 id 提示按 `r`；无 session id 明示不可静默空窗）。AFK 接力靠 **Closed ∧（退出 ∨ `f` ∨ 自动安全收尾）**，**不是**「仅靠 Agent 自己 quit」。UI/文档宜用直白用语，避免只写「停链」让人不知能否再开。
+顶栏须可读展示「自动开下一张：开/关」，并让操作者分清边沿状态：`awaiting-worker-exit`（等进程自退、不杀；可按 `f`）、`awaiting-session-end`（缺会话结束信号；可按 `f` 或 Enter）、`handoff-countdown`（显示剩余秒数；按 `c` 取消）、`needs-resume`（有 id 提示按 `r`；无 session id 明示不可静默空窗）。AFK 接力靠 **Closed ∧ sessionEnded success ∧ 倒计时结束**（或人手 `f`），**禁止**凭 Closed 强杀进行中的 Agent，**禁止**无结束信号仍自动开下一张。UI/文档宜用直白用语。
 
 ### 测试 seam
 
 - **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽。  
 - **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`o` 事务选单与 `setModelEffort` 写仓可测。  
 - **Resume 历史探针：** `classifyGrokChatHistory` / `readGrokChatHistory` 对 `chat_history.jsonl` 做空白 vs 有历史红绿判定（不依赖「进程 spawn 成功」 alone）。  
-- **vibe 接力验收（20260805-1244）：** `tests/vibe-handoff-acceptance.test.mjs` 三阶段可重复路径（A Closed 安全收尾并开下一张 · B needs-resume 历史非空白含 blank 红信号 · C 未 Closed 不误杀）；失败信息带稳定 stage/code（`not-closed` / `no-exit` / `resume-blank` / `wrong-kill`）。也可用 `scripts/run-vibe-handoff-acceptance.mjs` 拿进程退出码（0 绿；2/3/4 对应 A/B/C）。  
+- **vibe 接力验收（20260805-1244 起，20260806-1636 收紧）：** `tests/vibe-handoff-acceptance.test.mjs` 三阶段（A Closed 后不杀、无会话结束信号不自动下一张 · B needs-resume 历史非空白 · C 未 Closed 不误杀）；失败信息带稳定 stage/code（`not-closed` / `no-exit` / `resume-blank` / `wrong-kill`）。双真源 / 倒计时单元测在 `chain-run.test.mjs`（可注入时钟与 `reportSessionEnded`）。也可用 `scripts/run-vibe-handoff-acceptance.mjs` 拿进程退出码（0 绿；2/3/4 对应 A/B/C）。  
 - **发现端口：** 注入假 discoverer 断言失败/超时降级；CI 不依赖真实 `grok models` 登录。  
 - 不测真 Grok/Claude 窗体内部。
 
@@ -327,7 +330,8 @@ s                   切换「自动开下一张」开 ↔ 关（纯拨杆，空�
 m                   mode 拨杆：review ↔ vibe（写仓；切 vibe 一行提示；只影响后续 spawn）
 o                   model → effort 两级选单（整次事务确认后写 subsequent + 仓分桶；
                     只影响之后新开的 Worker；q/Esc 取消不写）
-f                   强制推进（仅当前票 Closed 可用）
+f                   强制推进（仅当前票 Closed 可用；跳过等退出/等结束信号/倒计时；默认不杀进程）
+c                   取消交接倒计时（仅 handoff-countdown；腾槽、不自动开下一张）
 r                   needs-resume：挂回旧 session 历史（≠ 开下一张；无 id 不可用）
 y / n               HITL 同意 / 拒绝
 t                   手动 tick / 刷新一次

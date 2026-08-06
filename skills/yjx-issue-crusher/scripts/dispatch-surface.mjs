@@ -104,6 +104,14 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
               ? null
               : 'not-closed',
       },
+      cancelHandoffCountdown: {
+        available: !stopped && status === 'handoff-countdown',
+        reason: stopped
+          ? 'stopped'
+          : status === 'handoff-countdown'
+            ? null
+            : 'no-countdown',
+      },
       resume: {
         available: needsResume && Boolean(chain.slot?.sessionId),
         reason: needsResume
@@ -142,6 +150,12 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
     const board = await loadBoard();
     // Default true when chain omits the field (older fakes / once path).
     const autoAdvance = chain.autoAdvance !== false;
+    const remainingMs = typeof chain.handoffCountdownRemainingMs === 'number'
+      ? chain.handoffCountdownRemainingMs
+      : null;
+    const countdownTotalMs = typeof chain.handoffCountdownMs === 'number'
+      ? chain.handoffCountdownMs
+      : null;
     const slot = chain.slot
       ? {
         issueId: chain.slot.issue?.id ?? null,
@@ -177,6 +191,8 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       status,
       stopped,
       autoAdvance,
+      handoffCountdownRemainingMs: remainingMs,
+      handoffCountdownMs: countdownTotalMs,
       slot,
       pendingHitl: pending,
       board,
@@ -234,6 +250,20 @@ export function createDispatchSurface({ chain, tracker = null } = {}) {
       const result = await chain.forceAdvance(options);
       if (!result.ok && result.reason === 'not-closed') {
         pushMessage('warn', 'Force-advance is only available after Closed: true');
+      }
+      await buildSnapshot();
+      return result;
+    },
+    /**
+     * Cancel handoff countdown: free completed slot without auto-opening next.
+     */
+    async cancelHandoffCountdown() {
+      if (typeof chain.cancelHandoffCountdown !== 'function') {
+        return { ok: false, reason: 'no-countdown' };
+      }
+      const result = await chain.cancelHandoffCountdown();
+      if (result.ok) {
+        pushMessage('info', '已取消自动开下一张倒计时');
       }
       await buildSnapshot();
       return result;

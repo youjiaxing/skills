@@ -157,8 +157,10 @@ export function drainPendingInput(input) {
 /**
  * Operator-facing status line for the top bar.
  * Edge states must stay distinguishable without reading SKILL.md:
- * - awaiting-worker-exit + auto on → may auto-reap then open next
- * - awaiting-worker-exit + auto off → use f (Closed only)
+ * - awaiting-worker-exit → wait for natural Worker exit (never auto-kill)
+ * - awaiting-worker-exit + auto off → may use f after Closed
+ * - awaiting-session-end → Closed/exited but no sessionEnded success; no auto next
+ * - handoff-countdown → seconds left; press c to cancel auto next
  * - needs-resume + r available → press r (history, not next ticket)
  * - needs-resume + no session id → explicit dead-end, no silent empty window
  *
@@ -175,8 +177,18 @@ function statusLine(snap) {
   let hint = '';
   if (status === 'awaiting-worker-exit') {
     hint = snap.autoAdvance === false
-      ? '（可按 f 强制推进）'
-      : '（可自动收尾）';
+      ? '（等进程自退；可按 f 强制推进）'
+      : '（等进程自退，不强制杀）';
+  } else if (status === 'awaiting-session-end') {
+    hint = '（缺会话结束信号；可按 f 或 Enter）';
+  } else if (status === 'handoff-countdown') {
+    const remMs = Number(snap.handoffCountdownRemainingMs);
+    const sec = Number.isFinite(remMs)
+      ? Math.max(0, Math.ceil(remMs / 1000))
+      : null;
+    hint = sec != null
+      ? `（${sec}s 后开下一张；按 c 取消）`
+      : '（倒计时后开下一张；按 c 取消）';
   } else if (status === 'needs-resume') {
     // Prefer action projection (same gate as footer [r]); fall back to slot id.
     const resume = snap.actions?.resume;
@@ -430,6 +442,7 @@ export function renderFooter(snap) {
   // o opens model→effort transactional menu (subsequent only; no live hot-switch).
   if (actions.setModelEffort?.available !== false) keys.push('[o] model/effort');
   if (actions.forceAdvance?.available) keys.push('[f] 强制推进');
+  if (actions.cancelHandoffCountdown?.available) keys.push('[c] 取消倒计时');
   if (actions.resume?.available) keys.push('[r] 恢复历史');
   if (actions.confirmHitl?.available) keys.push('[y] 同意');
   if (actions.rejectHitl?.available) keys.push('[n] 拒绝');
@@ -627,6 +640,7 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
   if (lower === 's') return { type: 'toggleAutoAdvance' };
   if (lower === 't') return { type: 'tick' };
   if (lower === 'f') return { type: 'forceAdvance' };
+  if (lower === 'c') return { type: 'cancelHandoffCountdown' };
   if (lower === 'r') return { type: 'resume' };
   if (lower === 'y') return { type: 'confirmHitl' };
   if (lower === 'n') return { type: 'rejectHitl' };

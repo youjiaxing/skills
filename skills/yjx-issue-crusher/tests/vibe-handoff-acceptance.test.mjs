@@ -25,7 +25,8 @@ import {
 
 /** Stable stage ids — greppable in CI / agent logs. */
 export const STAGE = {
-  HANDOFF: 'A-closed-safe-reap-next',
+  /** 20260806-1636/01: no kill + no auto without session end signal */
+  HANDOFF: 'A-closed-no-kill-no-auto-without-end',
   RESUME: 'B-resume-nonblank',
   NO_MISKILL: 'C-not-closed-no-kill',
 };
@@ -74,6 +75,9 @@ function makeChain(overrides = {}) {
     feature: 'demo',
     cwd: '/tmp/project',
     runtime: 'grok',
+    // Stage A: no-kill + no auto without session end; countdown dual-gate
+    // covered in chain-run unit tests (injectable clock + reportSessionEnded).
+    handoffCountdownMs: 0,
     ...chainOptions,
   });
   return { tracker, launcher, chain };
@@ -126,9 +130,9 @@ const NONBLANK_GROK_HISTORY = [
   }),
 ].join('\n');
 
-// --- Stage A: Closed → safe reap this slot → open next ---
+// --- Stage A: Closed → never kill; without session end → no auto next ---
 
-test('acceptance A: Closed + autoAdvance safe-reaps this slot then opens next', async () => {
+test('acceptance A: Closed never kills; natural exit without session end does not auto-next', async () => {
   const stage = STAGE.HANDOFF;
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
@@ -163,7 +167,7 @@ test('acceptance A: Closed + autoAdvance safe-reaps this slot then opens next', 
     stage,
     FAIL.NOT_CLOSED,
     { closed, issueId: '01-first.md' },
-    '没关票: Closed gate must be true before safe-reap handoff',
+    '没关票: Closed gate must be true before handoff',
   );
 
   assertStage(
@@ -171,13 +175,36 @@ test('acceptance A: Closed + autoAdvance safe-reaps this slot then opens next', 
     stage,
     FAIL.NO_EXIT,
     { oldPid, alive: launcher.isAlive(oldPid) },
-    'vibe hang case: worker still alive after Closed (pre-reap)',
+    'vibe hang case: worker still alive after Closed',
   );
 
+  // Closed alone must NOT kill or open next.
+  const waiting = await chain.step();
+  assertStage(
+    waiting.spawned === false
+      && waiting.reason === 'awaiting-worker-exit'
+      && launcher.isAlive(oldPid) === true
+      && launcher.kills.length === 0,
+    stage,
+    FAIL.WRONG_KILL,
+    {
+      spawned: waiting.spawned,
+      reason: waiting.reason,
+      kills: [...launcher.kills],
+      oldAlive: launcher.isAlive(oldPid),
+    },
+    'Closed alone must never kill a live worker or open next',
+  );
+
+  // Natural exit without session end signal: still no auto next (honest degradation).
+  launcher.markExited(oldPid);
   const result = await chain.step();
 
   assertStage(
-    result.spawned === true,
+    result.spawned === false
+      && result.reason === 'awaiting-session-end'
+      && launcher.launches.length === 1
+      && chain.slot?.issue?.id === '01-first.md',
     stage,
     FAIL.NO_NEXT,
     {
@@ -187,40 +214,17 @@ test('acceptance A: Closed + autoAdvance safe-reaps this slot then opens next', 
       launches: launcher.launches.map((l) => l.issue?.id),
       kills: [...launcher.kills],
       oldAlive: launcher.isAlive(oldPid),
+      slotIssue: chain.slot?.issue?.id,
     },
-    'Closed handoff must spawn the next ready ticket',
+    'Closed ∧ natural exit without session end must NOT auto-spawn next',
   );
 
   assertStage(
-    launcher.launches[1]?.issue?.id === '02-second.md',
-    stage,
-    FAIL.NO_NEXT,
-    { nextId: launcher.launches[1]?.issue?.id, launches: launcher.launches.length },
-    'next spawn identity must be 02-second.md',
-  );
-
-  assertStage(
-    launcher.isAlive(oldPid) === false,
-    stage,
-    FAIL.NO_EXIT,
-    { oldPid, kills: [...launcher.kills], alive: launcher.isAlive(oldPid) },
-    '没退出: old slot worker must be reaped (dead) after Closed auto handoff',
-  );
-
-  assertStage(
-    launcher.kills.length === 1 && launcher.kills[0] === oldPid,
+    launcher.kills.length === 0,
     stage,
     FAIL.WRONG_KILL,
     { kills: [...launcher.kills], oldPid },
-    'safe-reap must kill exactly this slot pid once',
-  );
-
-  assertStage(
-    chain.slot?.issue?.id === '02-second.md',
-    stage,
-    FAIL.NO_NEXT,
-    { slotIssue: chain.slot?.issue?.id },
-    'slot must now hold the next ticket',
+    'auto path must never kill; natural exit only',
   );
 });
 
@@ -554,7 +558,7 @@ test('acceptance C: not Closed never kills (autoAdvance on or off)', async () =>
 
 test('acceptance bundle: stages A+B+C failure codes are documented', () => {
   assert.deepEqual(Object.values(STAGE).sort(), [
-    'A-closed-safe-reap-next',
+    'A-closed-no-kill-no-auto-without-end',
     'B-resume-nonblank',
     'C-not-closed-no-kill',
   ].sort());

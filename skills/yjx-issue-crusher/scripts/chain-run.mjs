@@ -22,13 +22,27 @@
  *   handoff after dual-gate release still auto-spawns when auto is on.
  * autoAdvance repo preference: s + Enter-open-auto write modeConfig;
  *   fullscreen mount restores preference with handoff-only; quit freeze does not write.
- * 20260805-1244/01: Closed ∧ autoAdvance on ∧ live slot worker → short
- *   reconfirm then safe-reap this slot only, then dual-gate opens next;
- *   never kill when not Closed / auto off / HITL / empty / other slot;
- *   forceAdvance default no-kill orphan path stays independent.
- * 20260805-1244/04: vibe-handoff-acceptance stages A/B/C pin handoff,
- *   resume non-blank, and no mis-kill with greppable failure codes.
+ * 20260806-1636/01: ban complete-state auto-kill; without sessionEnded success
+ *   auto path never spawns next (honest degradation). Process exit alone is
+ *   not enough. Wayfinder complete never auto-advances. forceAdvance remains
+ *   the human escape (default no-kill orphan).
+ * Handoff countdown (when dual-gate later allows autoHandoff): wait
+ *   handoffCountdownMs (default 9s) before releasing slot / opening next;
+ *   operator may cancelHandoffCountdown (or Enter next / forceAdvance).
+ * forceAdvance default no-kill orphan path stays independent; killWorker opt-in.
+ * 20260805-1244/04 (updated): vibe-handoff-acceptance stages pin no-kill +
+ *   no auto without end signal + resume non-blank.
  */
+
+/** Default pause after dual-gate auto handoff before opening the next ticket. */
+export const DEFAULT_HANDOFF_COUNTDOWN_MS = 9000;
+
+/** Unified session-end outcomes (Chain Run only consumes this enum). */
+export const SESSION_ENDED = Object.freeze({
+  SUCCESS: 'success',
+  FAILURE: 'failure',
+  INTERRUPTED: 'interrupted',
+});
 
 import {
   buildLaunchContract,
@@ -61,6 +75,17 @@ export function createChainRun({
    * Default true preserves --once / chain unit seams; fullscreen mount sets false.
    */
   autoAdvance: autoAdvanceOption = true,
+  /**
+   * After autoHandoff is allowed (sessionEnded success or forceAdvance path)
+   * and autoAdvance on, wait this many ms before opening the next ticket
+   * (operator can cancel). 0 disables the pause. Default 9s. Clamped to >= 0.
+   */
+  handoffCountdownMs: handoffCountdownMsOption = DEFAULT_HANDOFF_COUNTDOWN_MS,
+  /**
+   * Clock injection for countdown tests (deterministic). Defaults to Date.now.
+   * @type {() => number}
+   */
+  now: nowOption = null,
   // Intentionally accepted and ignored: no user-level or feature-level mode layer.
   userHome: _userHome,
   userMode: _userMode,
@@ -71,6 +96,14 @@ export function createChainRun({
   if (!feature) throw new Error('feature is required');
   if (!cwd) throw new Error('cwd is required');
   if (!runtime) throw new Error('runtime is required');
+
+  const handoffCountdownMs = Math.max(
+    0,
+    Number.isFinite(Number(handoffCountdownMsOption))
+      ? Number(handoffCountdownMsOption)
+      : DEFAULT_HANDOFF_COUNTDOWN_MS,
+  );
+  const now = typeof nowOption === 'function' ? nowOption : () => Date.now();
 
   /** @type {'review'|'vibe'|null} */
   const startupMode = normalizeMode(mode);
@@ -216,12 +249,25 @@ export function createChainRun({
 
   /**
    * Classify the occupied slot for outward status / step reason.
-   * Dual conditions for opening the next ticket remain
-   * Closed ∧ (exit ∨ force-advance ∨ auto safe-reap under autoAdvance).
-   * refreshStatus never reaps; only step() may safe-reap.
+   *
+   * freeable — human Enter may free the slot (Closed ∧ dead/orphan path).
+   * autoHandoff — step() may release and auto-spawn next ready impl.
+   *
+   * Auto handoff requires business complete AND sessionEnded === success
+   * (or explicit forceAdvance). Process death alone is not enough.
+   * Auto path never kills a live worker.
+   * Wayfinder complete never sets autoHandoff.
    */
   async function classifyOccupiedSlot() {
-    if (!slot) return { ok: true, reason: 'empty-slot', status: 'idle' };
+    if (!slot) {
+      return {
+        ok: true,
+        freeable: true,
+        autoHandoff: false,
+        reason: 'empty-slot',
+        status: 'idle',
+      };
+    }
 
     const completion = await tracker.getCompletion(slot.issue.id);
     const alive = workerAlive();
@@ -229,55 +275,91 @@ export function createChainRun({
     if (!completion.closed) {
       // Process exit alone must never open the next issue.
       if (alive) {
-        return { ok: false, reason: 'soft-stuck', status: 'soft-stuck' };
+        return {
+          ok: false,
+          freeable: false,
+          autoHandoff: false,
+          reason: 'soft-stuck',
+          status: 'soft-stuck',
+        };
       }
-      return { ok: false, reason: 'needs-resume', status: 'needs-resume' };
+      return {
+        ok: false,
+        freeable: false,
+        autoHandoff: false,
+        reason: 'needs-resume',
+        status: 'needs-resume',
+      };
     }
 
+    // Business complete — never auto-kill a still-live worker.
     if (alive && !slot.forceAdvanceRequested) {
-      return { ok: false, reason: 'awaiting-worker-exit', status: 'awaiting-worker-exit' };
+      return {
+        ok: false,
+        freeable: false,
+        autoHandoff: false,
+        reason: 'awaiting-worker-exit',
+        status: 'awaiting-worker-exit',
+      };
+    }
+
+    // Human force-advance: skip end-signal wait; free + allow auto next.
+    if (slot.forceAdvanceRequested) {
+      return {
+        ok: true,
+        freeable: true,
+        autoHandoff: true,
+        reason: 'closed-and-force-advance',
+        status: 'idle',
+      };
+    }
+
+    // Worker not alive (natural exit / already dead). Freeable for Enter;
+    // auto path only with sessionEnded success and non-wayfinder.
+    const entryClass = resolveEntryClass(slot.issue?.entryClass, slot.issue);
+    const isWayfinder = entryClass === 'wayfinder';
+    const sessionSuccess = slot.sessionEnded === SESSION_ENDED.SUCCESS;
+
+    if (isWayfinder) {
+      return {
+        ok: false,
+        freeable: true,
+        autoHandoff: false,
+        reason: 'wayfinder-complete',
+        status: 'awaiting-session-end',
+      };
+    }
+
+    if (!sessionSuccess) {
+      // Honest degradation: no session-end success → no auto spawn.
+      return {
+        ok: false,
+        freeable: true,
+        autoHandoff: false,
+        reason: 'awaiting-session-end',
+        status: 'awaiting-session-end',
+      };
     }
 
     return {
       ok: true,
-      reason: slot.forceAdvanceRequested && alive
-        ? 'closed-and-force-advance'
-        : 'closed-and-exited',
+      freeable: true,
+      autoHandoff: true,
+      reason: 'closed-and-session-success',
       status: 'idle',
     };
   }
 
-  /**
-   * Closed ∧ autoAdvance on ∧ this slot still holds a live worker for that
-   * ticket → short reconfirm, then end only this slot's process (if still
-   * alive). Already-exited: confirm death only, no kill. Never runs when
-   * not Closed, auto off, force-advance already requested, empty slot, or
-   * HITL-only (no slot). Does not touch other pids.
-   */
-  async function safeReapClosedSlotWorker() {
-    if (!slot || !autoAdvance || slot.forceAdvanceRequested) {
-      return { reaped: false, reason: 'not-applicable' };
-    }
+  function countdownRemainingMs() {
+    if (!slot || slot.handoffCountdownStartedAt == null) return null;
+    const elapsed = Math.max(0, now() - slot.handoffCountdownStartedAt);
+    return Math.max(0, handoffCountdownMs - elapsed);
+  }
 
-    const completion = await tracker.getCompletion(slot.issue.id);
-    if (!completion.closed) {
-      return { reaped: false, reason: 'not-closed' };
-    }
-
-    // Short reconfirm: re-read Closed + liveness before acting.
-    const reconfirm = await tracker.getCompletion(slot.issue.id);
-    if (!reconfirm.closed) {
-      return { reaped: false, reason: 'not-closed' };
-    }
-    if (!workerAlive()) {
-      return { reaped: false, reason: 'already-exited' };
-    }
-
-    const pid = slot.pid;
-    if (typeof launcher.kill === 'function') {
-      await launcher.kill(pid);
-    }
-    return { reaped: true, reason: 'reaped', pid };
+  function clearCountdownMarker() {
+    if (!slot || slot.handoffCountdownStartedAt == null) return;
+    const { handoffCountdownStartedAt: _drop, ...rest } = slot;
+    slot = rest;
   }
 
   async function recommendHitl() {
@@ -348,6 +430,8 @@ export function createChainRun({
       model: contract.model,
       effort: contract.effort,
       forceAdvanceRequested: false,
+      /** @type {null | 'success' | 'failure' | 'interrupted'} */
+      sessionEnded: null,
     };
     status = 'soft-stuck';
     pendingHitl = null;
@@ -363,13 +447,14 @@ export function createChainRun({
   }
 
   /**
-   * Try to free a completed slot (Closed ∧ exit/force) so explicit start can proceed.
-   * Live/incomplete slots stay occupied.
+   * Try to free a completed slot so explicit Enter start can proceed.
+   * freeable: Closed ∧ (worker dead ∨ force-advance). Live incomplete slots stay.
+   * Does not require sessionEnded success (human may free and start next).
    */
   async function releaseSlotIfHandoffReady() {
     if (!slot) return { ok: true, reason: 'empty-slot' };
     const gate = await classifyOccupiedSlot();
-    if (!gate.ok) {
+    if (!gate.freeable) {
       status = gate.status;
       return { ok: false, reason: gate.reason, status: gate.status };
     }
@@ -536,6 +621,16 @@ export function createChainRun({
     get runtime() {
       return runtime;
     },
+    /** Configured handoff countdown length in ms (default 9000). */
+    get handoffCountdownMs() {
+      return handoffCountdownMs;
+    },
+    /**
+     * Remaining ms while status is handoff-countdown; null when not counting.
+     */
+    get handoffCountdownRemainingMs() {
+      return countdownRemainingMs();
+    },
     /**
      * Freeze the chain: no further auto spawn and no force-advance to next.
      * Resume of the current needs-resume slot remains allowed.
@@ -653,9 +748,10 @@ export function createChainRun({
       return { ok: true, model: normalized.model, effort: normalized.effort };
     },
     /**
-     * Human force-advance: skip waiting for worker exit.
-     * Only valid when the current issue is already Closed.
+     * Human force-advance: skip waiting for worker exit / session-end signal
+     * and skip countdown. Only valid when the current issue is already Closed.
      * Default: do not kill the old worker (orphan). Opt-in killWorker: true.
+     * Auto path never kills; this is the only kill entry (explicit opt-in).
      */
     async forceAdvance({ killWorker = false } = {}) {
       if (stopped) {
@@ -671,7 +767,44 @@ export function createChainRun({
       if (killWorker && typeof launcher.kill === 'function') {
         await launcher.kill(slot.pid);
       }
-      slot = { ...slot, forceAdvanceRequested: true };
+      const nextSlot = {
+        ...slot,
+        forceAdvanceRequested: true,
+      };
+      delete nextSlot.handoffCountdownStartedAt;
+      slot = nextSlot;
+      return { ok: true };
+    },
+    /**
+     * Record a unified session-end outcome on the current slot.
+     * success | failure | interrupted. Auto path only auto-handoffs on success
+     * (and only after business complete; order fully enforced in later tickets).
+     */
+    reportSessionEnded(outcome) {
+      if (!slot) {
+        return { ok: false, reason: 'empty-slot' };
+      }
+      const allowed = new Set([
+        SESSION_ENDED.SUCCESS,
+        SESSION_ENDED.FAILURE,
+        SESSION_ENDED.INTERRUPTED,
+      ]);
+      if (!allowed.has(outcome)) {
+        return { ok: false, reason: 'invalid-outcome' };
+      }
+      slot = { ...slot, sessionEnded: outcome };
+      return { ok: true, sessionEnded: outcome };
+    },
+    /**
+     * Cancel an in-progress handoff countdown: free the completed slot without
+     * auto-spawning the next ticket. Operator may Enter to start next manually.
+     */
+    async cancelHandoffCountdown() {
+      if (!slot || slot.handoffCountdownStartedAt == null) {
+        return { ok: false, reason: 'no-countdown' };
+      }
+      slot = null;
+      status = stopped ? 'stopped' : 'idle';
       return { ok: true };
     },
     /**
@@ -752,6 +885,7 @@ export function createChainRun({
     },
     /**
      * Reclassify occupied-slot status without spawning (for TUI refresh).
+     * Never kills workers. Surfaces handoff-countdown remaining when active.
      */
     async refreshStatus() {
       if (stopped) {
@@ -766,18 +900,43 @@ export function createChainRun({
         status = 'idle';
         return { status, reason: 'empty-slot' };
       }
+      // Prefer countdown projection when an active timer is still running
+      // and autoHandoff is still allowed.
+      if (
+        slot.handoffCountdownStartedAt != null
+        && !slot.forceAdvanceRequested
+        && autoAdvance
+      ) {
+        const gate = await classifyOccupiedSlot();
+        if (gate.autoHandoff) {
+          const remainingMs = countdownRemainingMs();
+          if (remainingMs != null && remainingMs > 0) {
+            status = 'handoff-countdown';
+            return {
+              status: 'handoff-countdown',
+              reason: 'handoff-countdown',
+              remainingMs,
+            };
+          }
+        }
+      }
       const gate = await classifyOccupiedSlot();
       status = gate.status;
-      return { status: gate.status, reason: gate.reason };
+      return {
+        status: gate.status,
+        reason: gate.reason,
+        remainingMs: countdownRemainingMs(),
+      };
     },
     /**
      * One evaluation cycle:
      * - If stopped, never auto-spawn or open HITL offers.
-     * - If a slot is held and Closed ∧ autoAdvance on ∧ still alive, safe-reap
-     *   this slot's worker (short reconfirm); then dual-gate release.
-     * - If a slot is held, release it only when dual conditions are met.
-     * - If autoAdvance is false, reclassify/release only — no auto reap of a
-     *   still-live Closed worker, no auto spawn / HITL offer.
+     * - Never auto-kill a live worker (Closed alone → awaiting-worker-exit).
+     * - Auto handoff only when classify.autoHandoff (sessionEnded success or
+     *   forceAdvance). Closed ∧ natural exit without end signal → stay
+     *   awaiting-session-end (no kill, no auto next).
+     * - Wayfinder complete never auto-handoffs.
+     * - When autoHandoff + autoAdvance + countdown > 0 → handoff-countdown.
      * - Then spawn at most one auto ready-impl candidate into an empty slot.
      * - Wayfinder is never auto-spawned; operator uses startIssue/Enter.
      * - human/unknown HITL: emit needs-confirmation until confirmHitl.
@@ -797,22 +956,76 @@ export function createChainRun({
 
       let releasedThisStep = false;
       if (slot) {
-        // AFK path: Closed + auto on + live this-slot worker → reap then gate.
-        await safeReapClosedSlotWorker();
-        const gate = await classifyOccupiedSlot();
-        if (!gate.ok) {
-          status = gate.status;
-          return {
-            spawned: false,
-            advanced: false,
-            reason: gate.reason,
-            next: nextIssue,
-            status,
-          };
+        // Active countdown: re-validate autoHandoff preconditions, then wait or release.
+        if (slot.handoffCountdownStartedAt != null && !slot.forceAdvanceRequested) {
+          const gate = await classifyOccupiedSlot();
+          if (!gate.autoHandoff) {
+            clearCountdownMarker();
+            status = gate.status;
+            return {
+              spawned: false,
+              advanced: false,
+              reason: gate.reason,
+              next: nextIssue,
+              status,
+            };
+          }
+          const remainingMs = countdownRemainingMs() ?? 0;
+          if (remainingMs > 0 && autoAdvance) {
+            status = 'handoff-countdown';
+            return {
+              spawned: false,
+              advanced: false,
+              reason: 'handoff-countdown',
+              remainingMs,
+              next: nextIssue,
+              status,
+            };
+          }
+          // Countdown elapsed, or auto turned off mid-countdown → free slot.
+          slot = null;
+          status = 'idle';
+          releasedThisStep = true;
+        } else {
+          const gate = await classifyOccupiedSlot();
+          if (!gate.autoHandoff) {
+            clearCountdownMarker();
+            status = gate.status;
+            return {
+              spawned: false,
+              advanced: false,
+              reason: gate.reason,
+              next: nextIssue,
+              status,
+            };
+          }
+
+          // autoHandoff: force-advance or Closed ∧ sessionEnded success.
+          // Start countdown (default 9s) before open next when auto is on.
+          const startCountdown =
+            autoAdvance
+            && !slot.forceAdvanceRequested
+            && handoffCountdownMs > 0
+            && !workerAlive();
+
+          if (startCountdown) {
+            slot = { ...slot, handoffCountdownStartedAt: now() };
+            status = 'handoff-countdown';
+            return {
+              spawned: false,
+              advanced: false,
+              reason: 'handoff-countdown',
+              remainingMs: handoffCountdownMs,
+              next: nextIssue,
+              status,
+            };
+          }
+
+          // forceAdvance, auto off, or countdown disabled (0ms) → release now.
+          slot = null;
+          status = 'idle';
+          releasedThisStep = true;
         }
-        slot = null;
-        status = 'idle';
-        releasedThisStep = true;
       }
 
       // Fullscreen default / manual-start gate: tick may refresh but must not fire.

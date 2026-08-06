@@ -23,6 +23,9 @@ export function parseDispatchCommand(raw) {
   if (startMatch) return { type: 'start', arg: startMatch[1] };
   if (lower === 't' || lower === 'tick') return { type: 'tick' };
   if (lower === 'f' || lower === 'force' || lower === 'force-advance') return { type: 'forceAdvance' };
+  if (lower === 'c' || lower === 'cancel' || lower === 'cancel-countdown') {
+    return { type: 'cancelHandoffCountdown' };
+  }
   if (lower === 'r' || lower === 'resume') return { type: 'resume' };
   if (lower === 'y' || lower === 'yes' || lower === 'confirm') return { type: 'confirmHitl' };
   if (lower === 'n' || lower === 'no' || lower === 'reject') return { type: 'rejectHitl' };
@@ -111,6 +114,19 @@ export async function handleDispatchCommand(surface, command) {
         return { message: '已强制推进，继续接力。' };
       }
       return { message: `无法强制推进: ${result.reason}` };
+    }
+    case 'cancelHandoffCountdown': {
+      if (typeof surface.cancelHandoffCountdown !== 'function') {
+        return { message: '当前表面不支持取消交接倒计时。', ok: false };
+      }
+      const result = await surface.cancelHandoffCountdown();
+      if (result.ok) {
+        return { message: '已取消自动开下一张倒计时。', ok: true };
+      }
+      return {
+        message: `无法取消倒计时: ${result.reason ?? 'unknown'}`,
+        ok: false,
+      };
     }
     case 'resume': {
       const result = await surface.resume();

@@ -55,7 +55,7 @@ if (result.status === 0) {
   console.log(JSON.stringify({
     ok: true,
     exitCode: 0,
-    stages: ['A-closed-safe-reap-next', 'B-resume-nonblank', 'C-not-closed-no-kill'],
+    stages: ['A-closed-no-kill-no-auto-without-end', 'B-resume-nonblank', 'C-not-closed-no-kill'],
     failureCodes: ['not-closed', 'no-exit', 'resume-blank', 'wrong-kill'],
   }, null, 2));
   process.exit(0);

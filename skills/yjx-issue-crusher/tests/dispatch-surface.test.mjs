@@ -51,6 +51,7 @@ function makeSurface(overrides = {}) {
     cwd: '/tmp/project',
     runtime: 'grok',
     modeConfig,
+    handoffCountdownMs: 0,
     ...chainOptions,
   });
 
@@ -76,12 +77,13 @@ test('dispatch snapshot shows effective mode and empty-slot status', async () =>
   assert.equal(snap.actions.stop.available, true);
 });
 
-test('dispatch snapshot updates slot state as chain migrates soft-stuck → Closed auto-reap → next', async () => {
-  // With autoAdvance on (default chain/once seam), Closed + live worker is
-  // safe-reaped on tick and next ready ticket spawns — no permanent stick.
+test('dispatch snapshot updates slot state as chain migrates soft-stuck → await exit → awaiting-session-end', async () => {
+  // Closed + live worker: never kill; stay awaiting-worker-exit.
+  // Natural exit without session end: awaiting-session-end (no auto next).
+  // forceAdvance is the human escape to open next.
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  const { tracker, launcher, surface } = makeSurface({
+  const { tracker, launcher, surface, chain } = makeSurface({
     candidates: [first, second],
   });
 
@@ -94,19 +96,36 @@ test('dispatch snapshot updates slot state as chain migrates soft-stuck → Clos
 
   const oldPid = snap.slot.pid;
   tracker.setCompletion('01-first.md', true);
-  // refresh only: still observable as awaiting-worker-exit, no kill yet
+  // refresh only: still observable as awaiting-worker-exit, no kill
   await surface.refresh();
   snap = surface.snapshot();
   assert.equal(snap.status, 'awaiting-worker-exit');
   assert.equal(snap.actions.forceAdvance.available, true);
   assert.equal(launcher.isAlive(oldPid), true);
 
+  // Tick while still alive: still wait, never kill.
+  await surface.tick();
+  snap = surface.snapshot();
+  assert.equal(snap.status, 'awaiting-worker-exit');
+  assert.equal(snap.slot?.issueId, '01-first.md');
+  assert.equal(launcher.isAlive(oldPid), true);
+  assert.equal(launcher.kills.length, 0);
+
+  launcher.markExited(oldPid);
+  await surface.tick();
+  snap = surface.snapshot();
+  assert.equal(snap.status, 'awaiting-session-end');
+  assert.equal(snap.slot?.issueId, '01-first.md');
+  assert.equal(launcher.kills.length, 0);
+  assert.equal(launcher.launches.length, 1);
+
+  // Human f opens next without kill.
+  await surface.forceAdvance();
   await surface.tick();
   snap = surface.snapshot();
   assert.equal(snap.status, 'soft-stuck');
   assert.equal(snap.slot?.issueId, '02-second.md');
-  assert.equal(launcher.isAlive(oldPid), false);
-  assert.deepEqual(launcher.kills, [oldPid]);
+  assert.equal(launcher.kills.length, 0);
 });
 
 test('read-only board projection exposes dependencies; surface has no graph dispatch action', async () => {
@@ -152,7 +171,7 @@ test('read-only board projection exposes dependencies; surface has no graph disp
 test('mode dial writes repo, emits vibe tip, only affects subsequent tickets', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  const { tracker, launcher, surface, modeConfig } = makeSurface({
+  const { tracker, launcher, surface, modeConfig, chain } = makeSurface({
     candidates: [first, second],
     mode: 'review',
   });
@@ -174,6 +193,7 @@ test('mode dial writes repo, emits vibe tip, only affects subsequent tickets', a
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(snap.slot.pid);
+  chain.reportSessionEnded('success');
   await surface.tick();
   assert.equal(surface.snapshot().slot.mode, 'vibe');
 });
@@ -357,10 +377,10 @@ test('renderDispatchFrame includes Chinese UI, dependency graph, and executable 
   assert.doesNotMatch(text, /\bdrag\b|reassign via graph|dispatch via graph/i);
 });
 
-test('interactive TUI auto-poll advances after Closed + exit without manual tick', async () => {
+test('interactive TUI auto-poll advances after dual-gate without manual tick', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  const { tracker, launcher, surface } = makeSurface({
+  const { tracker, launcher, surface, chain } = makeSurface({
     candidates: [first, second],
   });
 
@@ -395,9 +415,10 @@ test('interactive TUI auto-poll advances after Closed + exit without manual tick
   }
   assert.equal(firstReady, true, 'initial autoTick should occupy first slot');
 
-  // Dual conditions without typing `t`.
+  // Dual-gate (Closed + session end success) without typing `t`.
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
+  chain.reportSessionEnded('success');
 
   // Wait for auto-poll to open second ticket.
   let advanced = false;
@@ -412,7 +433,7 @@ test('interactive TUI auto-poll advances after Closed + exit without manual tick
     }
     await new Promise((r) => setTimeout(r, 40));
   }
-  assert.equal(advanced, true, 'auto-poll must spawn next after Closed+exit');
+  assert.equal(advanced, true, 'auto-poll must spawn next after dual-gate');
   assert.equal(launcher.launches.length, 2);
 
   input.write('q\n');
@@ -555,7 +576,7 @@ test('surface toggle writes preference; setAutoAdvance and stop do not', async (
 test('surface.toggleAutoAdvance flips projection; on alone does not idle-spawn; handoff still works', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  const { tracker, launcher, surface } = makeSurface({
+  const { tracker, launcher, surface, chain } = makeSurface({
     candidates: [first, second],
     autoAdvance: false,
   });
@@ -578,8 +599,9 @@ test('surface.toggleAutoAdvance flips projection; on alone does not idle-spawn; 
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
+  chain.reportSessionEnded('success');
   await surface.tick();
-  assert.equal(launcher.launches.length, 2, 'auto on + Closed handoff must spawn next');
+  assert.equal(launcher.launches.length, 2, 'auto on + dual-gate handoff must spawn next');
   assert.equal(surface.snapshot().slot?.issueId, '02-second.md');
 
   const off = await surface.toggleAutoAdvance();
@@ -590,7 +612,8 @@ test('surface.toggleAutoAdvance flips projection; on alone does not idle-spawn; 
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
   assert.equal(launcher.launches.length, 2, 's-off must block auto handoff spawn');
-  assert.equal(surface.snapshot().slot, null);
+  // Without session end / force: freeable but not auto-released.
+  assert.equal(surface.snapshot().status, 'awaiting-session-end');
 });
 
 test('surface: after toggle off, start succeeds but autoAdvance stays off', async () => {
@@ -611,7 +634,7 @@ test('surface: after toggle off, start succeeds but autoAdvance stays off', asyn
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(surface.snapshot().slot.pid);
   await surface.tick();
-  assert.equal(surface.snapshot().slot, null);
+  assert.equal(surface.snapshot().status, 'awaiting-session-end');
 
   const result = await surface.start('02-second.md');
   assert.equal(result.ok, true);
@@ -642,7 +665,7 @@ test('snapshot exposes subsequent model/effort and pinned slot model/effort', as
 test('surface setModelEffort writes repo, updates snapshot, next launch carries it, slot pinned', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
-  const { tracker, launcher, surface, modeConfig } = makeSurface({
+  const { tracker, launcher, surface, modeConfig, chain } = makeSurface({
     candidates: [first, second],
   });
 
@@ -661,6 +684,7 @@ test('surface setModelEffort writes repo, updates snapshot, next launch carries 
 
   tracker.setCompletion('01-first.md', true);
   launcher.markExited(snap.slot.pid);
+  chain.reportSessionEnded('success');
   await surface.tick();
   const nextSnap = surface.snapshot();
   assert.equal(nextSnap.slot.issueId, '02-second.md');
