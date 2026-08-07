@@ -18,6 +18,7 @@
  * 12. 20260804-1006 / 02 — hard layout: numeric terminal height, footer pin, top wrap
  * 13. 20260804-1802 / 02 — fullscreen model→effort transactional menu + top/footer
  * 14. 20260807-fullscreen-tui-ux-impl / 03 — m/v remap + footer groups / hot·dim
+ * 15. 20260807-fullscreen-tui-ux-impl / 04 — middle default list+focus neighborhood; global second view
  */
 
 import assert from 'node:assert/strict';
@@ -602,7 +603,7 @@ test('renderTopBar shows feature / runtime / subsequent mode / autoAdvance / cha
   assert.match(stopped, /已停链/);
 });
 
-test('renderMiddlePanel shows 中文图例、依赖图与「现在可执行」', () => {
+test('renderMiddlePanel default: 列表+焦点邻域与「现在可执行」(全局图非默认)', () => {
   const middle = renderMiddlePanel(snapWithBoard({
     slot: {
       issueId: '02-ready.md',
@@ -613,17 +614,17 @@ test('renderMiddlePanel shows 中文图例、依赖图与「现在可执行」',
     },
   }));
 
-  assert.match(middle, /依赖图/);
+  assert.match(middle, /列表 · 全板|现在可执行/);
   assert.match(middle, /只读|不可图上派票/);
-  assert.match(middle, /图例/);
-  assert.match(middle, /★可执行/);
-  assert.match(middle, /▶进行中|现在可执行/);
-  assert.match(middle, /──►/);
+  assert.match(middle, /焦点邻域|邻域/);
   assert.match(middle, /现在可执行/);
   assert.match(middle, /02-ready\.md|★\s*02/);
-  // Graph marks: 01 closed, 02 in slot
-  assert.match(middle, /✓01|✓\s*01/);
-  assert.match(middle, /▶02|▶\s*02/);
+  // Focus neighborhood marks: 01 closed, 02 focus/slot
+  assert.match(middle, /✓01|✓\s*01|01-done\.md/);
+  assert.match(middle, /02-ready\.md|◀焦点|◀当前槽/);
+  assert.match(middle, /上游|下游|──►|├─|└─/);
+  // Global overview title is second view only.
+  assert.doesNotMatch(middle, /依赖图 · 全局总览|依赖图（只读 · 不可图上派票）/);
 });
 
 test('renderSlotPanel: empty slot is blank; occupied/HITL keep ticket/pid/closed/mode', () => {
@@ -686,8 +687,7 @@ test('DispatchShell given snapshot shows top / middle / slot live content (not p
   assert.match(text, /后续 mode:/);
   assert.match(text, /review/);
   assert.match(text, /需人工确认|needs-confirmation/);
-  assert.match(text, /依赖图/);
-  assert.match(text, /图例/);
+  assert.match(text, /现在可执行|焦点邻域|列表 · 全板/);
   assert.match(text, /现在可执行/);
   assert.match(text, /02-ready\.md|★\s*02/);
   assert.match(text, /人工确认|需确认|HITL/);
@@ -1441,7 +1441,7 @@ test('region pure text drops debug bracket labels; keeps product copy', () => {
 
   assert.match(top, /Issue Crusher|调度/);
   assert.match(top, /功能:\s*demo/);
-  assert.match(middle, /依赖图/);
+  assert.match(middle, /现在可执行|焦点邻域|列表 · 全板/);
   assert.match(middle, /现在可执行/);
   // Empty slot: no permanent product block (three-band Ready).
   assert.equal(slot.trim(), '');
@@ -2755,10 +2755,14 @@ test('edge occupied slot: 中带顶部最小槽摘要 id/标题/已关票/pid', 
   assert.match(middle, /pid:\s*99/);
   assert.match(middle, /已关票:\s*否/);
   assert.match(middle, /标题:/);
-  // Summary sits above graph/list work object.
+  // Summary sits above list/neighborhood work object.
   const slotIdx = middle.indexOf('当前槽');
-  const graphIdx = middle.indexOf('依赖图');
-  assert.ok(slotIdx >= 0 && graphIdx > slotIdx, 'slot summary must precede middle graph');
+  const workIdx = Math.max(
+    middle.indexOf('现在可执行'),
+    middle.indexOf('列表 · 全板'),
+    middle.indexOf('焦点邻域'),
+  );
+  assert.ok(slotIdx >= 0 && workIdx > slotIdx, 'slot summary must precede middle list/neighborhood');
 });
 
 test('edge matrix: display name + CTA key binding per primary state', () => {
@@ -2851,7 +2855,7 @@ test('edge matrix: display name + CTA key binding per primary state', () => {
 
 // --- 20260807-fullscreen-tui-ux-impl / 03: 键位 remap + 底栏分组 / 热 dim ---
 
-test('footer groups: 边沿 → 主路径 Enter/s/导航 → m/v → t/q；中文短标签', () => {
+test('footer groups: 边沿 → 主路径 Enter/s/导航 → m/v → t/g/q；中文短标签', () => {
   const footer = renderFooter(snapWithBoard({
     status: 'needs-confirmation',
     autoAdvance: false,
@@ -2873,15 +2877,16 @@ test('footer groups: 边沿 → 主路径 Enter/s/导航 → m/v → t/q；中�
   const m = footer.indexOf('[m]');
   const v = footer.indexOf('[v]');
   const t = footer.indexOf('[t]');
+  const g = footer.indexOf('[g]');
   const q = footer.indexOf('[q]');
 
   assert.ok(y >= 0 && n >= 0 && enter >= 0 && s >= 0 && nav >= 0);
-  assert.ok(m >= 0 && v >= 0 && t >= 0 && q >= 0);
-  // A 边沿 → B 主路径 → C m/v → D t/q
+  assert.ok(m >= 0 && v >= 0 && t >= 0 && g >= 0 && q >= 0);
+  // A 边沿 → B 主路径 → C m/v → D t/g/q
   assert.ok(y < enter && n < enter, 'edge keys before Enter');
   assert.ok(enter < s && s < nav, 'main path Enter → s → nav');
   assert.ok(nav < m && m < v, 'nav before m/v');
-  assert.ok(v < t && t < q, 't then q last group');
+  assert.ok(v < t && t < g && g < q, 't → g → q last group');
 
   assert.match(footer, /\[m\] 模型/);
   assert.match(footer, /\[v\] 模式/);
@@ -2890,6 +2895,7 @@ test('footer groups: 边沿 → 主路径 Enter/s/导航 → m/v → t/q；中�
   assert.match(footer, /\[y\] 同意/);
   assert.match(footer, /\[n\] 拒绝/);
   assert.match(footer, /\[t\] 刷新/);
+  assert.match(footer, /\[g\] 全局总览/);
   assert.match(footer, /\[q\] 退出/);
   assert.doesNotMatch(footer, /\[o\]/);
 });
@@ -3028,4 +3034,153 @@ test('HITL: digits still only navigate; nav line stays in footer', async () => {
     },
   }));
   assert.match(footer, /导航|j\/k|数字/);
+});
+
+// --- 20260807-fullscreen-tui-ux-impl / 04: middle list + focus neighborhood ---
+
+test('Ready default middle: list + focus neighborhood, not global-graph-only', () => {
+  const middle = renderMiddlePanel(snapWithBoard({
+    status: 'idle',
+    slot: null,
+    autoAdvance: false,
+  }));
+  // Work object: executable list visible with focus/default mark.
+  assert.match(middle, /现在可执行/);
+  assert.match(middle, /02-ready\.md/);
+  assert.match(middle, /◀选中|←看板默认|看板默认/);
+  // Full-board remainder stays in the list (not only executables).
+  assert.match(middle, /全板其余/);
+  assert.match(middle, /01-done\.md/);
+  assert.match(middle, /03-blocked\.md/);
+  // Focus neighborhood clues (read-only direct up/down).
+  assert.match(middle, /焦点邻域|邻域/);
+  assert.match(middle, /上游|下游|直接上下游|──►/);
+  assert.match(middle, /只读|不可图上派票/);
+  // Default is NOT exclusive global overview; list must remain available.
+  assert.doesNotMatch(middle, /^依赖图（全局/m);
+  // Neighborhood may still mention short ids; the global-only title should be absent by default.
+  assert.doesNotMatch(middle, /依赖图 · 全局总览|依赖图（只读 · 不可图上派票）/);
+});
+
+test('Ready default shell frame: list usable; not global graph exclusive', () => {
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard({ status: 'idle', slot: null, autoAdvance: false }),
+    terminalRows: 28,
+  }));
+  assert.match(text, /现在可执行/);
+  assert.match(text, /02-ready\.md/);
+  assert.match(text, /焦点邻域|邻域|上游|下游/);
+  assert.doesNotMatch(text, /依赖图 · 全局总览|依赖图（只读 · 不可图上派票）/);
+  // Enter path still discoverable.
+  assert.match(text, /\[Enter\].*开始|Enter/);
+});
+
+test('middle focus neighborhood follows list highlight when selected', () => {
+  // Two unblocked executables so selectedIndex can point at either row.
+  const issues = [
+    {
+      id: '01-a.md',
+      title: 'a',
+      closed: false,
+      blockedBy: [],
+      unlocks: ['03-c.md'],
+      status: 'ready-for-agent',
+    },
+    {
+      id: '02-b.md',
+      title: 'b',
+      closed: false,
+      blockedBy: [],
+      unlocks: ['03-c.md'],
+      status: 'ready-for-agent',
+    },
+    {
+      id: '03-c.md',
+      title: 'c',
+      closed: false,
+      blockedBy: ['01-a.md', '02-b.md'],
+      unlocks: [],
+      status: 'ready-for-agent',
+    },
+  ];
+  const snap = snapWithBoard({
+    status: 'idle',
+    slot: null,
+    board: { feature: 'demo', readOnly: true, issues },
+  });
+  // selectedIndex 1 → focus 02; neighborhood should mention 03 as downstream of 02.
+  const middle = renderMiddlePanel(snap, { selectedIndex: 1 });
+  assert.match(middle, /02-b\.md.*◀选中|◀选中/);
+  assert.match(middle, /焦点邻域|邻域/);
+  // Focus uses short mark (★02◀焦点); full ids appear on list / detail lines.
+  assert.match(middle, /02◀焦点|★02.*◀焦点|◀焦点/);
+  assert.match(middle, /03-c\.md|·03|03/);
+  assert.match(middle, /上游|下游|──►/);
+});
+
+test('middleView global: full overview is second view; list nav / Enter contract untouched', async () => {
+  const global = renderMiddlePanel(snapWithBoard({
+    status: 'idle',
+    slot: null,
+  }), { middleView: 'global' });
+  assert.match(global, /依赖图|全局/);
+  assert.match(global, /只读|不可图上派票/);
+  assert.match(global, /──►/);
+  // Global may still show executable for orientation, but is explicitly second view chrome.
+  assert.match(global, /图例|全局总览|依赖图/);
+  // List remains present in global frame (not graph-only exclusive).
+  assert.match(global, /现在可执行/);
+  assert.match(global, /02-ready\.md/);
+
+  assert.deepEqual(mapFullscreenKey('g'), { type: 'toggleMiddleView' });
+  const { surface, launcher } = makeSurface({
+    candidates: [candidate('01-a.md'), candidate('02-b.md')],
+  });
+  await surface.refresh();
+  const toggled = await handleFullscreenKey(surface, 'g', {});
+  assert.equal(toggled.toggleMiddleView, true);
+  // No spawn / no graph-dispatch side effect from g.
+  assert.equal(toggled.spawned, undefined);
+  assert.equal(launcher.launches.length, 0);
+
+  // List nav still highlight-only while second view would be showing.
+  const nav = await handleFullscreenKey(surface, 'j', {
+    selectedIndex: 0,
+    executableCount: 2,
+  });
+  assert.equal(nav.selectionOnly, true);
+  assert.equal(nav.selectedIndex, 1);
+  assert.equal(launcher.launches.length, 0);
+
+  // Enter still starts selected ticket (presentation view does not gate start).
+  await handleFullscreenKey(surface, '\r', {
+    selectedIndex: 1,
+    executableCount: 2,
+    selectedIssueId: '02-b.md',
+  });
+  assert.equal(launcher.launches.length, 1);
+  assert.equal(launcher.launches[0].issue.id, '02-b.md');
+
+  // Footer advertises optional g (secondary).
+  const footer = renderFooter(snapWithBoard({ autoAdvance: false }));
+  assert.match(footer, /\[g\].*全局/);
+});
+
+test('occupied slot middle: list + neighborhood remain; no graph dispatch', () => {
+  const middle = renderMiddlePanel(snapWithBoard({
+    status: 'soft-stuck',
+    slot: {
+      issueId: '02-ready.md',
+      title: '可执行票',
+      pid: 42,
+      mode: 'review',
+      closed: false,
+    },
+  }));
+  assert.match(middle, /当前槽/);
+  assert.match(middle, /现在可执行/);
+  assert.match(middle, /焦点邻域|邻域/);
+  assert.match(middle, /只读|不可图上派票/);
+  // Forbid dispatch affordances; "不可图上派票" is the positive read-only label.
+  assert.doesNotMatch(middle, /点击派票|派票入口|从图派票/);
 });

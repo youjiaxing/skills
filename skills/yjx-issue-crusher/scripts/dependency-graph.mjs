@@ -142,6 +142,153 @@ function tryLinearOrder(issues) {
 }
 
 /**
+ * Immediate upstream of focus = blockedBy entries that exist on the board.
+ * @param {Array<object>} issues
+ * @param {string | null | undefined} focusId
+ * @returns {string[]}
+ */
+export function listDirectUpstream(issues, focusId) {
+  if (!focusId) return [];
+  const list = Array.isArray(issues) ? issues : [];
+  const byId = new Map(list.map((issue) => [issue.id, issue]));
+  const focus = byId.get(focusId);
+  if (!focus) return [];
+  const idSet = new Set(byId.keys());
+  return sortIds((focus.blockedBy || []).filter((blockerId) => idSet.has(blockerId)));
+}
+
+/**
+ * Immediate downstream = open issues that list focus in blockedBy.
+ * @param {Array<object>} issues
+ * @param {string | null | undefined} focusId
+ * @returns {string[]}
+ */
+export function listDirectDownstream(issues, focusId) {
+  if (!focusId) return [];
+  const list = Array.isArray(issues) ? issues : [];
+  const idSet = new Set(list.map((issue) => issue.id));
+  if (!idSet.has(focusId)) return [];
+  return sortIds(
+    list
+      .filter((issue) => (issue.blockedBy || []).includes(focusId))
+      .map((issue) => issue.id),
+  );
+}
+
+/**
+ * Focus for neighborhood: list highlight → current slot → board default → first board id.
+ * Spec allows either list highlight or slot as reasonable default.
+ *
+ * @param {Array<object>} issues
+ * @param {{
+ *   selectedIssueId?: string | null,
+ *   slotIssueId?: string | null,
+ *   defaultIssueId?: string | null,
+ * }} [opts]
+ * @returns {string | null}
+ */
+export function resolveFocusIssueId(
+  issues,
+  {
+    selectedIssueId = null,
+    slotIssueId = null,
+    defaultIssueId = null,
+  } = {},
+) {
+  const list = Array.isArray(issues) ? issues : [];
+  const ids = new Set(list.map((issue) => issue.id));
+  for (const candidate of [selectedIssueId, slotIssueId, defaultIssueId]) {
+    if (candidate != null && candidate !== '' && ids.has(candidate)) return candidate;
+  }
+  return list[0]?.id ?? null;
+}
+
+/**
+ * Read-only direct up/downstream neighborhood of focus (not full-board map).
+ * Collapses each side beyond maxPerSide with +N.
+ *
+ * @param {{
+ *   issues?: Array<object>,
+ *   focusId?: string | null,
+ *   slotIssueId?: string | null,
+ *   executableIds?: string[] | Set<string> | null,
+ *   maxPerSide?: number,
+ * }} [options]
+ * @returns {{
+ *   lines: string[],
+ *   focusId: string | null,
+ *   upstream: string[],
+ *   downstream: string[],
+ * }}
+ */
+export function renderFocusNeighborhood({
+  issues = [],
+  focusId = null,
+  slotIssueId = null,
+  executableIds = null,
+  maxPerSide = 5,
+} = {}) {
+  const list = Array.isArray(issues) ? issues : [];
+  const byId = new Map(list.map((issue) => [issue.id, issue]));
+  const lines = [];
+
+  if (!focusId || !byId.has(focusId)) {
+    lines.push('焦点邻域（只读 · 直接上下游 · 非全板）: （无焦点）');
+    return { lines, focusId: null, upstream: [], downstream: [] };
+  }
+
+  const execIds = executableIds == null
+    ? listExecutableIssueIds(list)
+    : [...executableIds];
+  const execSet = new Set(execIds);
+  const markOf = (id) => issueMark({
+    closed: Boolean(byId.get(id)?.closed),
+    id,
+    slotIssueId,
+    executableIds: execSet,
+  });
+  /** Dense token: mark + short number (or short id). */
+  const tok = (id) => `${markOf(id)}${shortIssueLabel(id)}`;
+  /** Slightly longer token when side needs id disambiguation. */
+  const describe = (id) => `${markOf(id)}${shortIssueLabel(id)} ${id}`;
+
+  const upstream = listDirectUpstream(list, focusId);
+  const downstream = listDirectDownstream(list, focusId);
+  const limit = Number.isFinite(Number(maxPerSide)) && Number(maxPerSide) > 0
+    ? Math.floor(Number(maxPerSide))
+    : 5;
+  const upMore = Math.max(0, upstream.length - limit);
+  const downMore = Math.max(0, downstream.length - limit);
+  const showUps = upstream.slice(0, limit);
+  const showDowns = downstream.slice(0, limit);
+
+  const side = (ids, more) => {
+    if (ids.length === 0) return '·';
+    const body = ids.map((id) => tok(id)).join('+');
+    return more > 0 ? `${body}+${more}` : body;
+  };
+
+  // Two-line max: keeps Ready frames under narrow/low terminal height floors.
+  // Clue shape: 上游 ──► 焦点 ──► 下游 (not a full-board map).
+  const chain = `${side(showUps, upMore)} ──► ${tok(focusId)}◀焦点 ──► ${side(showDowns, downMore)}`;
+  lines.push(`焦点邻域（只读 · 直接上下游 · 非全板）: ${chain}`);
+  // Detail ids when neighbors exist (still one line; +N already folded into side()).
+  if (showUps.length || showDowns.length) {
+    const upDetail = showUps.length
+      ? showUps.map((id) => describe(id)).join(' · ') + (upMore > 0 ? ` · +${upMore}` : '')
+      : '（无）';
+    const downDetail = showDowns.length
+      ? showDowns.map((id) => describe(id)).join(' · ') + (downMore > 0 ? ` · +${downMore}` : '')
+      : '（无）';
+    lines.push(`  上游: ${upDetail} · 下游: ${downDetail}`);
+  } else {
+    lines.push('  上游: （无） · 下游: （无）');
+  }
+
+  return { lines, focusId, upstream, downstream };
+}
+
+/**
  * @param {{
  *   issues: Array<object>,
  *   slotIssueId?: string|null,

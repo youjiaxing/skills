@@ -3,8 +3,12 @@ import test from 'node:test';
 
 import {
   issueMark,
+  listDirectDownstream,
+  listDirectUpstream,
   listExecutableIssueIds,
   renderDependencyGraph,
+  renderFocusNeighborhood,
+  resolveFocusIssueId,
   shortIssueLabel,
   statusLabelZh,
 } from '../scripts/dependency-graph.mjs';
@@ -128,4 +132,112 @@ test('statusLabelZh distinguishes awaiting-worker-exit and needs-resume', () => 
     statusLabelZh('awaiting-worker-exit'),
     statusLabelZh('needs-resume'),
   );
+});
+
+// --- 20260807-fullscreen-tui-ux-impl / 04: focus neighborhood projection ---
+
+test('listDirectUpstream/Downstream: only immediate neighbors', () => {
+  const issues = [
+    { id: '01-a.md', closed: true, blockedBy: [] },
+    { id: '02-b.md', closed: false, blockedBy: ['01-a.md'] },
+    { id: '03-c.md', closed: false, blockedBy: ['02-b.md'] },
+    { id: '04-d.md', closed: false, blockedBy: ['01-a.md', '02-b.md'] },
+  ];
+  assert.deepEqual(listDirectUpstream(issues, '02-b.md'), ['01-a.md']);
+  assert.deepEqual(listDirectDownstream(issues, '02-b.md'), ['03-c.md', '04-d.md']);
+  // Not transitive: focus 02 does not include 04 as upstream.
+  assert.deepEqual(listDirectUpstream(issues, '03-c.md'), ['02-b.md']);
+  assert.equal(listDirectUpstream(issues, '01-a.md').length, 0);
+});
+
+test('resolveFocusIssueId: selected > slot > default > first board', () => {
+  const issues = [
+    { id: '01-a.md', closed: true, blockedBy: [] },
+    { id: '02-b.md', closed: false, blockedBy: [] },
+    { id: '03-c.md', closed: false, blockedBy: ['02-b.md'] },
+  ];
+  assert.equal(
+    resolveFocusIssueId(issues, {
+      selectedIssueId: '03-c.md',
+      slotIssueId: '02-b.md',
+      defaultIssueId: '02-b.md',
+    }),
+    '03-c.md',
+  );
+  assert.equal(
+    resolveFocusIssueId(issues, {
+      selectedIssueId: null,
+      slotIssueId: '02-b.md',
+      defaultIssueId: '02-b.md',
+    }),
+    '02-b.md',
+  );
+  assert.equal(
+    resolveFocusIssueId(issues, {
+      selectedIssueId: null,
+      slotIssueId: null,
+      defaultIssueId: '02-b.md',
+    }),
+    '02-b.md',
+  );
+  assert.equal(
+    resolveFocusIssueId(issues, {
+      selectedIssueId: null,
+      slotIssueId: null,
+      defaultIssueId: null,
+    }),
+    '01-a.md',
+  );
+});
+
+test('renderFocusNeighborhood: direct up/down only; +N fold; read-only clues', () => {
+  const issues = [
+    { id: '01-a.md', title: 'A', closed: true, blockedBy: [] },
+    { id: '02-b.md', title: 'B', closed: false, blockedBy: ['01-a.md'] },
+    { id: '03-c.md', title: 'C', closed: false, blockedBy: ['02-b.md'] },
+  ];
+  const { lines } = renderFocusNeighborhood({
+    issues,
+    focusId: '02-b.md',
+    slotIssueId: null,
+    maxPerSide: 5,
+  });
+  const text = lines.join('\n');
+  assert.match(text, /焦点邻域|邻域/);
+  assert.match(text, /只读|直接上下游|非全板/);
+  assert.match(text, /02-b\.md|焦点/);
+  assert.match(text, /上游/);
+  assert.match(text, /01-a\.md|01/);
+  assert.match(text, /下游/);
+  assert.match(text, /03-c\.md|03/);
+  assert.match(text, /──►/);
+
+  // Collapse when many direct neighbors.
+  const hub = {
+    id: 'hub.md',
+    title: 'hub',
+    closed: false,
+    blockedBy: ['u1.md', 'u2.md', 'u3.md', 'u4.md', 'u5.md', 'u6.md'],
+  };
+  const many = [
+    hub,
+    ...[1, 2, 3, 4, 5, 6].map((n) => ({
+      id: `u${n}.md`,
+      title: `u${n}`,
+      closed: true,
+      blockedBy: [],
+    })),
+    ...[1, 2, 3, 4, 5, 6].map((n) => ({
+      id: `d${n}.md`,
+      title: `d${n}`,
+      closed: false,
+      blockedBy: ['hub.md'],
+    })),
+  ];
+  const folded = renderFocusNeighborhood({
+    issues: many,
+    focusId: 'hub.md',
+    maxPerSide: 3,
+  }).lines.join('\n');
+  assert.match(folded, /\+\d+/);
 });

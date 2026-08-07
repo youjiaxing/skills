@@ -13,8 +13,9 @@
  * Ready (idle + empty slot): top shows 可开干/暂无票 + 「下一步」主 CTA;
  * edge matrix uses operator display names (进行中 / [f] 待收尾 / 自动收尾中 /
  * [r] 需恢复 / 无法恢复 / [y/n] 待确认 / 已停链 …) with matching CTA lines.
- * Middle is the work object (executable list + optional slot summary);
- * empty slot does **not** occupy a permanent band.
+ * Middle is the work object: default **list + focus neighborhood** (full-board
+ * roster + direct up/down of focus); optional `g` second view = global graph.
+ * Empty slot does **not** occupy a permanent band.
  *
  * Ticket 05 polish: full-height column layout (middle flexGrow), product
  * copy without debug bracket labels, primary/secondary field hierarchy,
@@ -32,6 +33,8 @@ import { handleDispatchCommand } from './dispatch-commands.mjs';
 import {
   listExecutableIssueIds,
   renderDependencyGraph,
+  renderFocusNeighborhood,
+  resolveFocusIssueId,
   statusLabelZh,
 } from './dependency-graph.mjs';
 import {
@@ -564,19 +567,79 @@ export function renderTopBar(snap, { selectedIndex = null } = {}) {
 }
 
 /**
- * Middle band: optional occupied-slot/HITL summary + dependency graph + 「现在可执行」.
+ * Append executable rows (highlight / 看板默认 / 当前槽 marks) into middle lines.
+ * @param {string[]} lines
+ * @param {object} snap
+ * @param {Array<{id:string,title?:string}>} executable
+ * @param {number | null} selectedIndex
+ */
+function appendExecutableListLines(lines, snap, executable, selectedIndex) {
+  if (executable.length === 0) {
+    lines.push('  （无）');
+    return;
+  }
+  const hasSelection = selectedIndex != null
+    && Number.isInteger(Number(selectedIndex))
+    && Number(selectedIndex) >= 0
+    && Number(selectedIndex) < executable.length;
+  // Same default as Enter without highlight (impl first, else wayfinder).
+  const defaultId = boardDefaultExecutable(snap)?.id ?? null;
+  for (let i = 0; i < executable.length; i += 1) {
+    const item = executable[i];
+    const marks = [];
+    if (snap.slot?.issueId === item.id) marks.push('◀当前槽');
+    if (hasSelection && Number(selectedIndex) === i) marks.push('◀选中');
+    else if (!hasSelection && defaultId && item.id === defaultId) marks.push('←看板默认');
+    const suffix = marks.length ? `  ${marks.join(' ')}` : '';
+    lines.push(`  ★ ${item.id}${suffix}`);
+  }
+}
+
+/**
+ * Non-executable board remainder as compact tokens (full roster under 全板其余).
+ * @param {Array<object>} issues
+ * @param {Set<string>} execIdSet
+ * @param {string | null | undefined} slotIssueId
+ * @param {number} [maxShow]
+ * @returns {string}
+ */
+function boardRemainderSummary(issues, execIdSet, slotIssueId, maxShow = 8) {
+  const tokens = [];
+  for (const issue of issues) {
+    if (execIdSet.has(issue.id)) continue;
+    const mark = issue.closed
+      ? '✓'
+      : (slotIssueId && issue.id === slotIssueId ? '▶' : '·');
+    // No inter-token " · " — blocked mark is already "·" and would double-dot.
+    tokens.push(`${mark}${issue.id}`);
+  }
+  if (tokens.length === 0) return '（无）';
+  if (tokens.length <= maxShow) return tokens.join('  ');
+  const shown = tokens.slice(0, maxShow).join('  ');
+  return `${shown}  +${tokens.length - maxShow}`;
+}
+
+/**
+ * Middle band work object.
+ * Default: full-board list (可执行 + 其余) + focus direct neighborhood (read-only).
+ * Secondary `middleView: 'global'`: full dependency overview (not the default main screen).
  * Board remains read-only display; no graph dispatch.
  * Empty slot does **not** add a permanent placeholder block.
  * Optional selectedIndex highlights an executable list row (keyboard ↑↓/j/k/digits).
  * No highlight → first executable marked ←看板默认 so default Enter intent is visible.
  * Selected vs current-slot use distinct marks.
+ * Focus for neighborhood: list highlight → slot → board default (reasonable default).
  *
  * @param {object | null | undefined} snap
- * @param {{ selectedIndex?: number | null }} [opts]
+ * @param {{
+ *   selectedIndex?: number | null,
+ *   middleView?: 'list' | 'global',
+ * }} [opts]
  * @returns {string}
  */
-export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
+export function renderMiddlePanel(snap, { selectedIndex = null, middleView = 'list' } = {}) {
   const lines = [];
+  const view = middleView === 'global' ? 'global' : 'list';
 
   // Occupied slot / HITL summary merges into middle top (three-band IA).
   const slotBlock = renderSlotPanel(snap);
@@ -585,49 +648,73 @@ export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
     lines.push('');
   }
 
-  lines.push('依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`);
-
   if (!snap) {
-    lines.push('  （启动中…）');
-    lines.push('');
-    lines.push('现在可执行:');
-    lines.push('  （无）');
+    if (view === 'global') {
+      lines.push('依赖图 · 全局总览（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`);
+      lines.push('  （启动中…）');
+    } else {
+      lines.push('列表 · 全板（只读 · 不可图上派票）');
+      lines.push('现在可执行:');
+      lines.push('  （无）');
+      lines.push('焦点邻域（只读 · 直接上下游 · 非全板）');
+      lines.push('  （启动中…）');
+    }
     return lines.join('\n');
   }
 
   const issues = snap.board?.issues ?? [];
+  const slotIssueId = snap.slot?.issueId ?? null;
   const graph = renderDependencyGraph({
     issues,
-    slotIssueId: snap.slot?.issueId ?? null,
+    slotIssueId,
   });
+  const execIdSet = new Set(graph.executable.map((item) => item.id));
 
-  for (const line of graph.lines) lines.push(line);
+  if (view === 'global') {
+    // Second view only — not Ready default main screen.
+    lines.push('依赖图 · 全局总览（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`);
+    for (const line of graph.lines) lines.push(line);
+    if (graph.warnings.length) {
+      lines.push('警告:');
+      for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
+    }
+    lines.push('');
+    lines.push('现在可执行:');
+    appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
+    lines.push('  （按 g 返回列表+邻域）');
+    return lines.join('\n');
+  }
+
+  // Default: list + focus neighborhood (compact — keep Ready under height floor).
+  lines.push('列表 · 全板（只读 · 不可图上派票）');
+  lines.push('现在可执行:');
+  appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
+  lines.push(`全板其余: ${boardRemainderSummary(issues, execIdSet, slotIssueId)}`);
+
+  const hasSelection = selectedIndex != null
+    && Number.isInteger(Number(selectedIndex))
+    && Number(selectedIndex) >= 0
+    && Number(selectedIndex) < graph.executable.length;
+  const selectedIssueId = hasSelection
+    ? graph.executable[Number(selectedIndex)].id
+    : null;
+  const focusId = resolveFocusIssueId(issues, {
+    selectedIssueId,
+    slotIssueId,
+    defaultIssueId: boardDefaultExecutable(snap)?.id ?? null,
+  });
+  const neighborhood = renderFocusNeighborhood({
+    issues,
+    focusId,
+    slotIssueId,
+    executableIds: execIdSet,
+  });
+  for (const line of neighborhood.lines) lines.push(line);
   if (graph.warnings.length) {
     lines.push('警告:');
     for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
   }
-
-  lines.push('');
-  lines.push('现在可执行:');
-  if (graph.executable.length === 0) {
-    lines.push('  （无）');
-  } else {
-    const hasSelection = selectedIndex != null
-      && Number.isInteger(Number(selectedIndex))
-      && Number(selectedIndex) >= 0
-      && Number(selectedIndex) < graph.executable.length;
-    // Same default as Enter without highlight (impl first, else wayfinder).
-    const defaultId = boardDefaultExecutable(snap)?.id ?? null;
-    for (let i = 0; i < graph.executable.length; i += 1) {
-      const item = graph.executable[i];
-      const marks = [];
-      if (snap.slot?.issueId === item.id) marks.push('◀当前槽');
-      if (hasSelection && Number(selectedIndex) === i) marks.push('◀选中');
-      else if (!hasSelection && defaultId && item.id === defaultId) marks.push('←看板默认');
-      const suffix = marks.length ? `  ${marks.join(' ')}` : '';
-      lines.push(`  ★ ${item.id}${suffix}`);
-    }
-  }
+  lines.push('  （按 g 看全局总览）');
 
   return lines.join('\n');
 }
@@ -829,8 +916,9 @@ export function buildFooterItems(snap) {
     });
   }
 
-  // D — secondary: refresh + quit (optional global `g` deferred).
+  // D — secondary: refresh + optional global overview + quit.
   items.push({ id: 't', text: '[t] 刷新', group: 'secondary', hot: hot.has('t') });
+  items.push({ id: 'g', text: '[g] 全局总览', group: 'secondary', hot: hot.has('g') });
   items.push({ id: 'q', text: '[q] 退出', group: 'secondary', hot: hot.has('q') });
 
   return items;
@@ -1048,6 +1136,8 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
   // o intentionally unbound — no dual-key teaching split with m.
   if (lower === 'j') return { type: 'selectNext' };
   if (lower === 'k') return { type: 'selectPrev' };
+  // g toggles middle second view (global dependency overview) — shell-owned, no dispatch.
+  if (lower === 'g') return { type: 'toggleMiddleView' };
   if (/^[1-9]$/.test(lower)) return { type: 'selectIndex', arg: Number(lower) - 1 };
   return null;
 }
@@ -1092,6 +1182,7 @@ export function nextListSelection(command, current, count) {
  *   message?: string,
  *   selectedIndex?: number | null,
  *   selectionOnly?: boolean,
+ *   toggleMiddleView?: boolean,
  *   ok?: boolean,
  *   spawned?: boolean,
  *   reason?: string,
@@ -1135,6 +1226,11 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
     return { openModelEffort: true };
   }
 
+  // g toggles list+neighborhood ↔ global overview (presentation only).
+  if (command.type === 'toggleMiddleView') {
+    return { toggleMiddleView: true };
+  }
+
   return handleDispatchCommand(surface, command);
 }
 
@@ -1153,20 +1249,23 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
  *   snap?: object | null,
  *   notice?: string | null,
  *   selectedIndex?: number | null,
+ *   middleView?: 'list' | 'global',
  *   terminalRows?: number | null,
+ *   modelEffortMenu?: object | null,
  * }} props
  */
 export function DispatchShell({
   snap = null,
   notice = null,
   selectedIndex = null,
+  middleView = 'list',
   terminalRows = null,
   modelEffortMenu = null,
 } = {}) {
   const layout = describeShellLayout(
     terminalRows != null ? { rows: terminalRows } : {},
   );
-  const middleLines = renderMiddlePanel(snap, { selectedIndex }).split('\n');
+  const middleLines = renderMiddlePanel(snap, { selectedIndex, middleView }).split('\n');
   const noticeLine = renderNotice(snap, notice);
   const topLines = renderTopBar(snap, { selectedIndex }).split('\n');
   const footerItems = buildFooterItems(snap);
@@ -1287,9 +1386,13 @@ export function DispatchShell({
         if (/^\s+session:/.test(line)) {
           return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
         }
-        // Legend / secondary graph chrome stays dim.
-        if (/图例:/.test(line)) {
+        // Legend / secondary graph or neighborhood chrome stays dim.
+        if (/图例:|按 g |只读 · 直接上下游|全板其余:/.test(line)) {
           return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
+        }
+        // Focus node line: mild emphasis without competing with list selection cyan.
+        if (/◀焦点/.test(line)) {
+          return createElement(Text, { key: `m${index}`, bold: true }, line || ' ');
         }
         return createElement(Text, { key: `m${index}` }, line || ' ');
       }),
@@ -1374,6 +1477,8 @@ function DispatchFullscreenApp({
   const [snap, setSnap] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  // Middle band: default list+neighborhood; g toggles global dependency overview.
+  const [middleView, setMiddleView] = useState('list');
   // In-app model→effort overlay (same alt-screen; no nested DECSET).
   const [modelEffortMenu, setModelEffortMenu] = useState(null);
   // Numeric height from mount stdout.rows (resolved once). Resize re-pin is
@@ -1546,6 +1651,11 @@ function DispatchFullscreenApp({
           return;
         }
 
+        if (result.toggleMiddleView) {
+          setMiddleView((current) => (current === 'global' ? 'list' : 'global'));
+          return;
+        }
+
         if (result.openModelEffort) {
           // Gate on surface action availability when projection is ready.
           if (currentSnap?.actions?.setModelEffort?.available === false) {
@@ -1599,6 +1709,7 @@ function DispatchFullscreenApp({
     snap,
     notice,
     selectedIndex,
+    middleView,
     terminalRows: resolvedRows,
     modelEffortMenu,
   });
