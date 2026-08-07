@@ -1,14 +1,19 @@
 /**
- * Ink fullscreen dispatch shell (tickets 01–05).
+ * Ink fullscreen dispatch shell (tickets 01–05 + 20260807 Ready three-band).
  *
- * Interactive TTY path: alternate-screen layout with regions
- * 顶栏 / 中部 / 当前槽 / 底栏. Keyboard drives the same Dispatch Surface
+ * Interactive TTY path: alternate-screen layout with **three bands**
+ * 顶带 / 中带 / 底带. Keyboard drives the same Dispatch Surface
  * actions as the printable TUI (`m` mode dial, `f` force, `r` resume,
  * `y`/`n` HITL, `s` toggle auto-open-next, `t` tick, `q` quit;
  * `j`/`k`/digits select executable list highlight; **Enter** starts
  * highlighted (or board default). Orchestration contract is unchanged:
  * board is read-only, single slot, dual-condition handoff still owned by
  * Chain Run / surface.tick. No graph dispatch, no embedded Worker terminal.
+ *
+ * Ready (idle + empty slot): top shows 可开干/暂无票 + 「下一步」主 CTA;
+ * middle is the work object (executable list); empty slot does **not**
+ * occupy a permanent band. Occupied slot / HITL summary merges into the
+ * middle top when present.
  *
  * Ticket 05 polish: full-height column layout (middle flexGrow), product
  * copy without debug bracket labels, primary/secondary field hierarchy,
@@ -24,6 +29,7 @@ import { Box, Text, render, useApp, useInput } from 'ink';
 
 import { handleDispatchCommand } from './dispatch-commands.mjs';
 import {
+  listExecutableIssueIds,
   renderDependencyGraph,
   statusLabelZh,
 } from './dependency-graph.mjs';
@@ -55,7 +61,7 @@ const DEFAULT_FIELD_MAX = 48;
 /** Top-bar secondary field budget (feature / long status fragments). */
 const TOP_FIELD_MAX = 40;
 /**
- * Minimum usable shell height (rows). Below this, fall back so four regions
+ * Minimum usable shell height (rows). Below this, fall back so three bands
  * still fit; Ink percent height cannot recover a content-shrunk root.
  */
 const SHELL_HEIGHT_FLOOR = 12;
@@ -154,8 +160,139 @@ export function drainPendingInput(input) {
   return drained;
 }
 
+/** Board statuses that are Type values when role is absent (wayfinder-like). */
+const WAYFINDER_TYPE_AS_STATUS = new Set(['research', 'prototype', 'grilling', 'task']);
+
+/**
+ * Executable rows for Ready projection (same order as middle list).
+ * Pure — snapshot board only; never spawns. Shared by CTA and keyboard selection.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {Array<{ id: string, title: string }>}
+ */
+function readyExecutables(snap) {
+  if (!snap?.board?.issues) return [];
+  try {
+    return renderDependencyGraph({
+      issues: snap.board.issues,
+      slotIssueId: snap.slot?.issueId ?? null,
+    }).executable;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether a board issue is wayfinder-like (Enter-startable, not auto-impl default).
+ * Aligns with dependency-graph + classifyEntryClass shape (snapshot-only).
+ *
+ * @param {object | null | undefined} issue
+ * @returns {boolean}
+ */
+function isWayfinderBoardIssue(issue) {
+  if (!issue) return false;
+  if (issue.entryClass === 'wayfinder') return true;
+  if (issue.workflow === 'wayfinder') return true;
+  if (issue.type != null && String(issue.type).trim() !== '') return true;
+  const status = issue.status ?? issue.statusRole ?? null;
+  return WAYFINDER_TYPE_AS_STATUS.has(status);
+}
+
+/**
+ * Board default Enter target from snapshot (mirrors resolveStartIssue null id):
+ * first auto-ready **impl** among executables, else first wayfinder executable.
+ * Pure board projection — no tracker I/O.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {{ id: string, title: string } | null}
+ */
+export function boardDefaultExecutable(snap) {
+  const issues = snap?.board?.issues;
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  let execIds;
+  try {
+    execIds = listExecutableIssueIds(issues);
+  } catch {
+    return null;
+  }
+  if (execIds.length === 0) return null;
+  const byId = new Map(issues.map((issue) => [issue.id, issue]));
+  const execIssues = execIds.map((id) => byId.get(id)).filter(Boolean);
+
+  const byNumber = (left, right) => {
+    const ln = Number.parseInt(String(left.id || '').replace(/\.md$/i, ''), 10);
+    const rn = Number.parseInt(String(right.id || '').replace(/\.md$/i, ''), 10);
+    if (Number.isFinite(ln) && Number.isFinite(rn) && ln !== rn) return ln - rn;
+    return String(left.id).localeCompare(String(right.id));
+  };
+
+  const pick = (list) => {
+    if (!list.length) return null;
+    const sorted = [...list].sort(byNumber);
+    const issue = sorted[0];
+    return { id: issue.id, title: issue.title ?? issue.id };
+  };
+
+  return pick(execIssues.filter((issue) => !isWayfinderBoardIssue(issue)))
+    || pick(execIssues.filter((issue) => isWayfinderBoardIssue(issue)))
+    || pick(execIssues);
+}
+
+/**
+ * Ready-path operator status display name (not internal idle id).
+ * - idle + has executable → 可开干
+ * - idle + no executable → 暂无票
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string | null} null when not Ready idle
+ */
+function readyStatusDisplayName(snap) {
+  if (!snap || snap.status !== 'idle') return null;
+  return readyExecutables(snap).length > 0 ? '可开干' : '暂无票';
+}
+
+/**
+ * Ready-path main CTA line for the top band.
+ * Templates (operator language):
+ * - has highlight → 下一步：开 {id} {title} · 按 Enter
+ * - no highlight → 下一步：开「看板默认」{id} · 按 Enter
+ * - none → 下一步：无票可开 · 刷新列表/等待
+ * autoAdvance on may suffix 自动接力开中（忽略高亮）.
+ *
+ * @param {object | null | undefined} snap
+ * @param {{ selectedIndex?: number | null }} [opts]
+ * @returns {string | null}
+ */
+export function renderReadyMainCta(snap, { selectedIndex = null } = {}) {
+  if (!snap || snap.status !== 'idle' || snap.stopped) return null;
+  const exec = readyExecutables(snap);
+  if (exec.length === 0) {
+    return '下一步：无票可开 · 刷新列表/等待';
+  }
+
+  let line;
+  const idx = selectedIndex == null ? -1 : Number(selectedIndex);
+  if (Number.isInteger(idx) && idx >= 0 && idx < exec.length) {
+    const item = exec[idx];
+    const title = item.title && item.title !== item.id
+      ? ` ${truncateDisplayField(item.title, 24)}`
+      : '';
+    line = `下一步：开 ${item.id}${title} · 按 Enter`;
+  } else {
+    const def = boardDefaultExecutable(snap) ?? exec[0];
+    line = `下一步：开「看板默认」${def.id} · 按 Enter`;
+  }
+
+  // Omitted autoAdvance projects as 开 (same as top-bar dial).
+  if (snap.autoAdvance !== false) {
+    line += ' · 自动接力开中（忽略高亮）';
+  }
+  return line;
+}
+
 /**
  * Operator-facing status line for the top bar.
+ * Ready idle uses 可开干 / 暂无票 (not internal「空闲」).
  * Edge states must stay distinguishable without reading SKILL.md:
  * - awaiting-worker-exit → wait for natural Worker exit (never auto-kill)
  * - awaiting-worker-exit + auto off → may use f after Closed
@@ -171,9 +308,15 @@ export function drainPendingInput(input) {
 function statusLine(snap) {
   if (!snap) return '状态: （启动中）';
   const status = snap.status;
-  const label = status ? statusLabelZh(status) : '—';
   // Avoid "已停链 [已停链]" when status is already the stopped label.
   const stoppedMark = snap.stopped && status !== 'stopped' ? ' [已停链]' : '';
+
+  const readyName = readyStatusDisplayName(snap);
+  if (readyName) {
+    return `状态: ${readyName}${stoppedMark}`;
+  }
+
+  const label = status ? statusLabelZh(status) : '—';
 
   let hint = '';
   if (status === 'awaiting-worker-exit') {
@@ -250,8 +393,9 @@ export function truncateDisplayField(value, max = DEFAULT_FIELD_MAX) {
 
 /**
  * Structural layout contract for the fullscreen shell (CI-assertable).
- * Middle is the stretch main region; other bands stay content-sized.
- * No animation — static four-region column only.
+ * Three bands: top (situation + CTA) · middle (work object, stretch) · footer (keys).
+ * Empty slot does not get its own region; occupied summary lives in middle.
+ * No animation — static three-band column only.
  *
  * When `rows` is provided, root height is a numeric terminal line budget so
  * Yoga can flex-grow the middle and pin the footer. Without `rows`, height
@@ -263,14 +407,13 @@ export function truncateDisplayField(value, max = DEFAULT_FIELD_MAX) {
  *   root: { height: string | number, width: string, flexDirection: string },
  *   top: { flexGrow: number },
  *   middle: { flexGrow: number, stretch: boolean },
- *   slot: { flexGrow: number },
  *   footer: { flexGrow: number },
  *   animation: boolean,
  * }}
  */
 export function describeShellLayout({ rows } = {}) {
   return {
-    regions: ['top', 'middle', 'slot', 'footer'],
+    regions: ['top', 'middle', 'footer'],
     root: {
       height: rows != null ? resolveShellHeight(rows) : '100%',
       width: '100%',
@@ -278,7 +421,6 @@ export function describeShellLayout({ rows } = {}) {
     },
     top: { flexGrow: 0 },
     middle: { flexGrow: 1, stretch: true },
-    slot: { flexGrow: 0 },
     footer: { flexGrow: 0 },
     animation: false,
   };
@@ -295,18 +437,19 @@ export function subsequentFlagLabel(value) {
 }
 
 /**
- * Top bar: feature / runtime / subsequent mode / model / effort /
- * auto-open-next / chain status.
+ * Top band: feature / runtime / subsequent mode / model / effort /
+ * auto-open-next / chain status display name + Ready 主 CTA.
  * Pure — safe for unit tests without a terminal.
  * Product copy only (no `[顶栏]` debug prefix).
  *
- * Two lines so model/effort, 「自动开下一张」and chain status stay discoverable
- * after wrap on narrow terminals.
+ * Lines so model/effort, 「自动开下一张」and chain status stay discoverable
+ * after wrap on narrow terminals. Ready adds a dedicated 「下一步」CTA line.
  *
  * @param {object | null | undefined} snap
+ * @param {{ selectedIndex?: number | null }} [opts]
  * @returns {string}
  */
-export function renderTopBar(snap) {
+export function renderTopBar(snap, { selectedIndex = null } = {}) {
   if (!snap) {
     return 'Issue Crusher · 调度（启动中…）';
   }
@@ -330,13 +473,16 @@ export function renderTopBar(snap) {
     `自动开下一张: ${autoLabel}`,
     statusLine(snap),
   ].join('  ·  ');
-  return `${primary}\n${critical}`;
+  const cta = renderReadyMainCta(snap, { selectedIndex });
+  return cta ? `${primary}\n${critical}\n${cta}` : `${primary}\n${critical}`;
 }
 
 /**
- * Middle panel: Chinese dependency graph legend + graph + 「现在可执行」.
+ * Middle band: optional occupied-slot/HITL summary + dependency graph + 「现在可执行」.
  * Board remains read-only display; no graph dispatch.
+ * Empty slot does **not** add a permanent placeholder block.
  * Optional selectedIndex highlights an executable list row (keyboard ↑↓/j/k/digits).
+ * No highlight → first executable marked ←看板默认 so default Enter intent is visible.
  * Selected vs current-slot use distinct marks.
  *
  * @param {object | null | undefined} snap
@@ -344,7 +490,16 @@ export function renderTopBar(snap) {
  * @returns {string}
  */
 export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
-  const lines = ['依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`];
+  const lines = [];
+
+  // Occupied slot / HITL summary merges into middle top (three-band IA).
+  const slotBlock = renderSlotPanel(snap);
+  if (slotBlock.trim()) {
+    for (const line of slotBlock.split('\n')) lines.push(line);
+    lines.push('');
+  }
+
+  lines.push('依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`);
 
   if (!snap) {
     lines.push('  （启动中…）');
@@ -371,11 +526,18 @@ export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
   if (graph.executable.length === 0) {
     lines.push('  （无）');
   } else {
+    const hasSelection = selectedIndex != null
+      && Number.isInteger(Number(selectedIndex))
+      && Number(selectedIndex) >= 0
+      && Number(selectedIndex) < graph.executable.length;
+    // Same default as Enter without highlight (impl first, else wayfinder).
+    const defaultId = boardDefaultExecutable(snap)?.id ?? null;
     for (let i = 0; i < graph.executable.length; i += 1) {
       const item = graph.executable[i];
       const marks = [];
       if (snap.slot?.issueId === item.id) marks.push('◀当前槽');
-      if (selectedIndex === i) marks.push('◀选中');
+      if (hasSelection && Number(selectedIndex) === i) marks.push('◀选中');
+      else if (!hasSelection && defaultId && item.id === defaultId) marks.push('←看板默认');
       const suffix = marks.length ? `  ${marks.join(' ')}` : '';
       lines.push(`  ★ ${item.id}${suffix}`);
     }
@@ -385,7 +547,8 @@ export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
 }
 
 /**
- * Lower panel: current slot (empty or ticket/pid/closed/mode) + pending HITL.
+ * Occupied-slot / HITL summary text for the middle band.
+ * Empty slot returns '' — Ready must not keep a permanent「当前槽（空）」block.
  * Primary fields on the first line; session is a secondary indented line.
  * Long title/session values are truncated so the band does not collapse layout.
  *
@@ -397,9 +560,7 @@ export function renderSlotPanel(snap, { maxFieldWidth = DEFAULT_FIELD_MAX } = {}
   const lines = [];
   const max = maxFieldWidth;
 
-  if (!snap || !snap.slot) {
-    lines.push('当前槽 （空）');
-  } else {
+  if (snap?.slot) {
     const slot = snap.slot;
     // Long issue ids / titles must not blow the primary slot row (pid/closed stay visible).
     const issueId = truncateDisplayField(slot.issueId ?? '—', max);
@@ -758,10 +919,11 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
 }
 
 /**
- * Presentational shell: four fixed regions filling terminal height.
+ * Presentational shell: three bands filling terminal height.
  * Middle flexGrow=1 eats remaining vertical space. Safe for renderToString.
- * Hierarchy: top/status primary; middle content; footer dim; session secondary
- * (already dimmed in pure text via indent); selection bold; current-slot green.
+ * Hierarchy: top/status+CTA primary; middle work object; footer dim; session
+ * secondary (indent in pure text); selection bold; current-slot green.
+ * Empty slot: no permanent slot band. Notice (when present) sits in middle.
  *
  * Pass `terminalRows` (stdout.rows) so root height is numeric — required for
  * middle stretch + footer pin. Without it, height stays `'100%'` (content-sized
@@ -785,9 +947,8 @@ export function DispatchShell({
     terminalRows != null ? { rows: terminalRows } : {},
   );
   const middleLines = renderMiddlePanel(snap, { selectedIndex }).split('\n');
-  const slotLines = renderSlotPanel(snap).split('\n');
   const noticeLine = renderNotice(snap, notice);
-  const topLines = renderTopBar(snap).split('\n');
+  const topLines = renderTopBar(snap, { selectedIndex }).split('\n');
   const footer = renderFooter(snap);
 
   // In-app overlay reuses the same alt-screen session (no nested DECSET on Windows).
@@ -867,10 +1028,14 @@ export function DispatchShell({
         flexDirection: 'column',
         width: '100%',
       },
-      // Primary band: multi-line product title + auto/status (bold).
+      // Primary band: multi-line product title + auto/status + Ready CTA (bold).
       ...topLines.map((line, index) => createElement(
         Text,
-        { key: `t${index}`, bold: true },
+        {
+          key: `t${index}`,
+          bold: true,
+          color: /^下一步：/.test(line) ? 'cyan' : undefined,
+        },
         line || ' ',
       )),
     ),
@@ -887,6 +1052,7 @@ export function DispatchShell({
         const isSelected = /◀选中/.test(line);
         const isCurrentSlot = /◀当前槽/.test(line) && !isSelected;
         const isBoth = /◀当前槽/.test(line) && isSelected;
+        const isBoardDefault = /←看板默认/.test(line);
         // Selected row: bold + cyan; current-slot-only: green; both: cyan bold.
         if (isSelected || isBoth) {
           return createElement(Text, { key: `m${index}`, bold: true, color: 'cyan' }, line || ' ');
@@ -894,29 +1060,20 @@ export function DispatchShell({
         if (isCurrentSlot) {
           return createElement(Text, { key: `m${index}`, color: 'green' }, line || ' ');
         }
+        if (isBoardDefault) {
+          return createElement(Text, { key: `m${index}`, color: 'cyan' }, line || ' ');
+        }
+        // Secondary: session line (from merged slot summary) is indented + dim.
+        if (/^\s+session:/.test(line)) {
+          return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
+        }
         // Legend / secondary graph chrome stays dim.
-        if (index === 1 || line.startsWith('  图例')) {
+        if (/图例:/.test(line)) {
           return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
         }
         return createElement(Text, { key: `m${index}` }, line || ' ');
       }),
-    ),
-    createElement(
-      Box,
-      {
-        flexGrow: layout.slot.flexGrow,
-        borderStyle: 'single',
-        paddingX: 1,
-        flexDirection: 'column',
-        width: '100%',
-      },
-      ...slotLines.map((line, index) => {
-        // Secondary: session line is indented + dim.
-        if (/^\s+session:/.test(line)) {
-          return createElement(Text, { key: `s${index}`, dimColor: true }, line || ' ');
-        }
-        return createElement(Text, { key: `s${index}` }, line || ' ');
-      }),
+      // Notice only when present — no empty placeholder row.
       noticeLine
         ? createElement(Text, { key: 'notice', color: 'yellow' }, noticeLine)
         : null,
@@ -936,15 +1093,8 @@ export function DispatchShell({
 }
 
 function executableFromSnap(snap) {
-  if (!snap?.board?.issues) return [];
-  try {
-    return renderDependencyGraph({
-      issues: snap.board.issues,
-      slotIssueId: snap.slot?.issueId ?? null,
-    }).executable;
-  } catch {
-    return [];
-  }
+  // Single helper with Ready CTA / middle list / keyboard selection.
+  return readyExecutables(snap);
 }
 
 function executableCountFromSnap(snap) {

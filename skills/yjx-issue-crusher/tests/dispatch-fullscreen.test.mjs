@@ -5,7 +5,7 @@
  *
  * Seams under test:
  * 1. shouldUseFullscreenDispatch — TTY interactive vs --once / non-TTY routing
- * 2. DispatchShell via renderToString — region skeleton (顶栏/中部/当前槽/底栏)
+ * 2. DispatchShell via renderToString — region skeleton (顶带/中带/底带)
  * 3. runFullscreenDispatch — start + q quit (no hang); surface stop on quit
  * 4. runDispatchTui non-TTY — never enters fullscreen / still returns
  * 5. pure region text / DispatchShell — given snapshot → 中文分区内容
@@ -42,10 +42,12 @@ import {
   mapFullscreenKey,
   nextListSelection,
   openModelEffortMenu,
+  boardDefaultExecutable,
   renderFooter,
   renderMiddlePanel,
   renderModelEffortMenuFrame,
   renderNotice,
+  renderReadyMainCta,
   renderSlotPanel,
   renderTopBar,
   resolveShellHeight,
@@ -141,7 +143,7 @@ test('shouldUseFullscreenDispatch: only interactive dual-TTY, never --once / non
   assert.equal(shouldUseFullscreenDispatch({ input: pipeIn, output: pipeOut }), false);
 });
 
-test('DispatchShell skeleton exposes 顶栏 / 中部 / 当前槽 / 底栏 regions', () => {
+test('DispatchShell skeleton exposes 顶带 / 中带 / 底带 (no empty-slot band)', () => {
   const text = renderToString(createElement(DispatchShell, {
     snap: {
       feature: 'demo',
@@ -151,14 +153,15 @@ test('DispatchShell skeleton exposes 顶栏 / 中部 / 当前槽 / 底栏 region
       stopped: false,
       slot: null,
       cwd: '/tmp/project',
+      board: { feature: 'demo', readOnly: true, issues: [] },
     },
   }));
 
-  // Four regions by content, without debug bracket labels.
+  // Three bands by content, without debug bracket labels or permanent empty slot.
   assert.match(text, /Issue Crusher|调度/);
   assert.match(text, /依赖图|现在可执行/);
-  assert.match(text, /当前槽/);
   assert.match(text, /\[q\].*退出|退出/);
+  assert.doesNotMatch(text, /当前槽\s*（空）|当前槽 \(空\)/);
   assert.doesNotMatch(text, /\[顶栏\]|\[中部\]|\[底栏\]/);
   // Must not look like the old one-page + readline prompt surface.
   assert.doesNotMatch(text, /^>\s*$/m);
@@ -617,10 +620,9 @@ test('renderMiddlePanel shows 中文图例、依赖图与「现在可执行」',
   assert.match(middle, /▶02|▶\s*02/);
 });
 
-test('renderSlotPanel shows empty slot or ticket/pid/closed/mode and pending HITL', () => {
+test('renderSlotPanel: empty slot is blank; occupied/HITL keep ticket/pid/closed/mode', () => {
   const empty = renderSlotPanel(snapWithBoard());
-  assert.match(empty, /当前槽/);
-  assert.match(empty, /（空）|空/);
+  assert.equal(empty.trim(), '', 'empty slot must not paint a permanent 当前槽（空） block');
 
   const occupied = renderSlotPanel(snapWithBoard({
     status: 'soft-stuck',
@@ -704,20 +706,20 @@ test('region text updates when snapshot migrates (poll equivalence)', () => {
 
   const topBefore = renderTopBar(before);
   const topAfter = renderTopBar(after);
-  assert.match(topBefore, /空闲|idle/);
+  assert.match(topBefore, /可开干|暂无票|空闲|idle/);
   assert.match(topAfter, /软卡住|soft-stuck/);
   assert.notEqual(topBefore, topAfter);
 
   const slotBefore = renderSlotPanel(before);
   const slotAfter = renderSlotPanel(after);
-  assert.match(slotBefore, /（空）|空/);
+  assert.equal(slotBefore.trim(), '');
   assert.match(slotAfter, /02-ready\.md/);
   assert.match(slotAfter, /pid:\s*7/);
   assert.notEqual(slotBefore, slotAfter);
 
   const shellBefore = renderToString(createElement(DispatchShell, { snap: before }));
   const shellAfter = renderToString(createElement(DispatchShell, { snap: after }));
-  assert.match(shellBefore, /空闲|idle/);
+  assert.match(shellBefore, /可开干|暂无票|空闲|idle/);
   assert.match(shellAfter, /软卡住|soft-stuck/);
   assert.match(shellAfter, /pid:\s*7/);
   assert.notEqual(shellBefore, shellAfter);
@@ -1391,17 +1393,17 @@ test('s on with empty slot does not auto-spawn on tick (Enter still required)', 
 
 // --- dispatch-tui-start-and-polish / 05: fullscreen layout + visual hierarchy ---
 
-test('describeShellLayout: four stable regions; middle is stretch main', () => {
+test('describeShellLayout: three stable bands; middle is stretch main', () => {
   const layout = describeShellLayout();
-  assert.deepEqual(layout.regions, ['top', 'middle', 'slot', 'footer']);
+  assert.deepEqual(layout.regions, ['top', 'middle', 'footer']);
   assert.equal(layout.root.height, '100%');
   assert.equal(layout.root.width, '100%');
   assert.equal(layout.root.flexDirection, 'column');
   assert.equal(layout.middle.flexGrow, 1);
   assert.equal(layout.middle.stretch, true);
   assert.equal(layout.top.flexGrow, 0);
-  assert.equal(layout.slot.flexGrow, 0);
   assert.equal(layout.footer.flexGrow, 0);
+  assert.equal(layout.slot, undefined);
   // No heavy animation contract — layout is static structure only.
   assert.equal(layout.animation, false);
 });
@@ -1423,7 +1425,8 @@ test('region pure text drops debug bracket labels; keeps product copy', () => {
   assert.match(top, /功能:\s*demo/);
   assert.match(middle, /依赖图/);
   assert.match(middle, /现在可执行/);
-  assert.match(slot, /当前槽/);
+  // Empty slot: no permanent product block (three-band Ready).
+  assert.equal(slot.trim(), '');
   assert.match(footer, /\[q\].*退出|退出/);
   assert.match(notice, /已切换自动开下一张：开/);
 });
@@ -1603,14 +1606,13 @@ test('resolveShellHeight: numeric terminal rows with safe floor (not percent-of-
 
 test('describeShellLayout with rows: root height is terminal lines; middle still stretch', () => {
   const layout = describeShellLayout({ rows: 30 });
-  assert.deepEqual(layout.regions, ['top', 'middle', 'slot', 'footer']);
+  assert.deepEqual(layout.regions, ['top', 'middle', 'footer']);
   assert.equal(layout.root.height, 30);
   assert.equal(layout.root.width, '100%');
   assert.equal(layout.root.flexDirection, 'column');
   assert.equal(layout.middle.flexGrow, 1);
   assert.equal(layout.middle.stretch, true);
   assert.equal(layout.top.flexGrow, 0);
-  assert.equal(layout.slot.flexGrow, 0);
   assert.equal(layout.footer.flexGrow, 0);
   assert.equal(layout.animation, false);
   // Without rows, keep declarative 100% for callers that only need region names.
@@ -1632,7 +1634,7 @@ test('DispatchShell with terminalRows fills height; middle grows; footer not mid
     `expected ~${rows} lines, got ${lines.length}`,
   );
   assert.match(text, /Issue Crusher|调度/);
-  assert.match(text, /当前槽/);
+  assert.doesNotMatch(text, /当前槽\s*（空）|当前槽 \(空\)/);
   assert.match(text, /\[q\].*退出|退出/);
   assert.match(text, /自动开下一张:\s*关/);
 
@@ -1644,7 +1646,7 @@ test('DispatchShell with terminalRows fills height; middle grows; footer not mid
     `footer should pin near bottom (idx=${footerIdx}, lines=${lines.length})`,
   );
 
-  // Four region content still present; no debug bracket labels.
+  // Three-band content still present; no debug bracket labels.
   assert.match(text, /依赖图|现在可执行/);
   assert.doesNotMatch(text, /\[顶栏\]|\[中部\]|\[底栏\]/);
 });
@@ -1687,7 +1689,7 @@ test('narrow top bar still exposes auto dial and chain status in shell frame', (
   }));
   assert.match(text, /自动开下一张:\s*关/);
   assert.match(text, /状态:/);
-  assert.match(text, /当前槽\s*（空）|当前槽 \(空\)|当前槽/);
+  assert.doesNotMatch(text, /当前槽\s*（空）|当前槽 \(空\)/);
 });
 
 // --- 20260804-1006-fix-fullscreen-cold-start / 03: start-model + single-slot regression ---
@@ -2381,4 +2383,175 @@ test('runFullscreenDispatch o: discovery failure still opens menu with 运行时
       setTimeout(() => reject(new Error('discovery-fail o path did not exit')), 3000);
     }),
   ]);
+});
+
+// --- 20260807-fullscreen-tui-ux-impl / 01: Ready 三带壳 + 主 CTA ---
+
+test('Ready 有可执行: 顶带 可开干 + 主 CTA 写清看板默认或高亮并点名 Enter', () => {
+  const boardDefault = renderTopBar(snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    slot: null,
+  }));
+  assert.match(boardDefault, /状态:\s*可开干/);
+  assert.match(boardDefault, /下一步：开「看板默认」02-ready\.md · 按 Enter/);
+  assert.doesNotMatch(boardDefault, /空闲/);
+  assert.doesNotMatch(boardDefault, /无票可开/);
+
+  const highlighted = renderTopBar(snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    slot: null,
+  }), { selectedIndex: 0 });
+  assert.match(highlighted, /状态:\s*可开干/);
+  assert.match(highlighted, /下一步：开 02-ready\.md.* · 按 Enter/);
+  assert.doesNotMatch(highlighted, /看板默认/);
+
+  const ctaOnly = renderReadyMainCta(snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    slot: null,
+  }));
+  assert.match(ctaOnly, /按 Enter/);
+  assert.match(ctaOnly, /看板默认/);
+});
+
+test('Ready 无可执行: 顶带 暂无票 + 主 CTA 不诱导 Enter', () => {
+  const top = renderTopBar(snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    slot: null,
+    board: {
+      feature: 'demo',
+      readOnly: true,
+      issues: [
+        {
+          id: '01-done.md',
+          title: '已完成票',
+          closed: true,
+          blockedBy: [],
+          unlocks: [],
+          status: 'ready-for-agent',
+        },
+      ],
+    },
+  }));
+  assert.match(top, /状态:\s*暂无票/);
+  assert.match(top, /下一步：无票可开/);
+  assert.doesNotMatch(top, /按 Enter/);
+  assert.doesNotMatch(top, /可开干/);
+  assert.doesNotMatch(top, /空闲/);
+});
+
+test('Ready 空槽: 中带不出现常驻大块「当前槽（空）」; 壳为三带', () => {
+  const layout = describeShellLayout();
+  assert.deepEqual(layout.regions, ['top', 'middle', 'footer']);
+
+  const empty = renderSlotPanel(snapWithBoard({ status: 'idle', slot: null }));
+  assert.equal(empty.trim(), '');
+
+  const middle = renderMiddlePanel(snapWithBoard({ status: 'idle', slot: null, autoAdvance: false }));
+  assert.doesNotMatch(middle, /当前槽\s*（空）|当前槽 \(空\)/);
+  assert.match(middle, /现在可执行/);
+  assert.match(middle, /02-ready\.md/);
+
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard({ status: 'idle', autoAdvance: false, slot: null }),
+    terminalRows: 20,
+  }));
+  assert.doesNotMatch(text, /当前槽\s*（空）|当前槽 \(空\)/);
+  assert.match(text, /可开干/);
+  assert.match(text, /下一步：/);
+  assert.match(text, /现在可执行/);
+  assert.match(text, /\[q\].*退出|退出/);
+});
+
+test('Ready 中带: 可执行列表可见; 有高亮可辨, 无高亮默认意图可辨', () => {
+  const withDefault = renderMiddlePanel(snapWithBoard({
+    status: 'idle',
+    slot: null,
+  }));
+  assert.match(withDefault, /现在可执行/);
+  assert.match(withDefault, /★\s*02-ready\.md/);
+  assert.match(withDefault, /←看板默认|看板默认/);
+
+  const withSel = renderMiddlePanel(snapWithBoard({
+    status: 'idle',
+    slot: null,
+  }), { selectedIndex: 0 });
+  assert.match(withSel, /02-ready\.md.*◀选中|◀选中/);
+  assert.doesNotMatch(withSel, /←看板默认/);
+});
+
+test('Ready 三带: 铺满高度 / 底栏近底类既有回归不破', () => {
+  const rows = 24;
+  const text = renderToString(createElement(DispatchShell, {
+    snap: snapWithBoard({ autoAdvance: false, status: 'idle', slot: null }),
+    terminalRows: rows,
+  }));
+  const lines = text.split('\n');
+  assert.ok(
+    lines.length >= rows - 1 && lines.length <= rows + 1,
+    `expected ~${rows} lines, got ${lines.length}`,
+  );
+  const footerIdx = lines.findIndex((line) => /\[q\].*退出|退出/.test(line));
+  assert.ok(footerIdx >= 0, 'footer key line must render');
+  assert.ok(
+    footerIdx >= Math.floor(lines.length * 0.55),
+    `footer should pin near bottom (idx=${footerIdx}, lines=${lines.length})`,
+  );
+  assert.match(text, /状态:\s*可开干/);
+  assert.match(text, /下一步：开「看板默认」02-ready\.md · 按 Enter/);
+});
+
+test('Ready 自动开=开: 主 CTA 可后缀自动接力开中（忽略高亮）', () => {
+  const top = renderTopBar(snapWithBoard({
+    status: 'idle',
+    autoAdvance: true,
+    slot: null,
+  }));
+  assert.match(top, /下一步：开「看板默认」02-ready\.md · 按 Enter · 自动接力开中（忽略高亮）/);
+});
+
+test('Ready 看板默认对齐 Enter: impl 优先于列表中更前的 wayfinder', () => {
+  const snap = snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    slot: null,
+    board: {
+      feature: 'demo',
+      readOnly: true,
+      issues: [
+        {
+          id: '01-explore.md',
+          title: '探路',
+          closed: false,
+          blockedBy: [],
+          unlocks: [],
+          status: 'open',
+          entryClass: 'wayfinder',
+          type: 'research',
+        },
+        {
+          id: '02-impl.md',
+          title: '实现票',
+          closed: false,
+          blockedBy: [],
+          unlocks: [],
+          status: 'ready-for-agent',
+        },
+      ],
+    },
+  });
+
+  const def = boardDefaultExecutable(snap);
+  assert.equal(def?.id, '02-impl.md', 'Enter default must prefer impl over earlier wayfinder');
+
+  const top = renderTopBar(snap);
+  assert.match(top, /下一步：开「看板默认」02-impl\.md · 按 Enter/);
+  assert.doesNotMatch(top, /看板默认」01-explore/);
+
+  const middle = renderMiddlePanel(snap);
+  assert.match(middle, /02-impl\.md.*←看板默认|←看板默认.*02-impl/);
+  assert.doesNotMatch(middle, /01-explore\.md.*←看板默认/);
 });
