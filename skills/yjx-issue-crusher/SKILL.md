@@ -1,6 +1,6 @@
 ---
 name: yjx-issue-crusher
-description: 按 kanban 对 feature 做 issue 串行接力编排（Chain Run）：经 Tracker 端口读自动候选，spawn 独立前台 Worker，盯 Closed 完成闸门。一期 local-markdown；测试可注入假 Tracker/Launcher。交互 dual-TTY 为 Ink 全屏调度 TUI；CLI chain 一键开链。
+description: 按 kanban 对 feature 做 issue 串行接力编排（Chain Run）：经 Tracker 端口读自动候选，spawn 独立前台 Worker；自动接力靠双真源（业务完成 ∧ sessionEnded success）+ 交接倒计时，禁完成态强杀。一期 local-markdown；测试可注入假 Tracker/Launcher/session-end。交互 dual-TTY 为 Ink 全屏调度 TUI；CLI chain 一键开链。
 argument-hint: "<feature-slug>"
 disable-model-invocation: true
 ---
