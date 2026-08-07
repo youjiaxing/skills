@@ -88,16 +88,16 @@ Wayfinder（含 grilling 等）完成：**不**触发自动开下一张；进程
 2. 否则仓内 `workers.<当前 runtime>.model|effort`  
 3. 否则空（运行时产品默认）
 
-**全屏键 `o`（仅 dual-TTY 全屏；`--once` / 非 TTY 不挂）：** model 列表 → effort 列表，两级都确认才提交；任一级 `q`/Esc 取消则 subsequent 与仓均不变。列表首项恒为「运行时默认」（不传 flag）。
+**全屏键 `m`（仅 dual-TTY 全屏；`--once` / 非 TTY 不挂）：** model 列表 → effort 列表，两级都确认才提交；任一级 `q`/Esc 取消则 subsequent 与仓均不变。列表首项恒为「运行时默认」（不传 flag）。**键义对照：`m` = 模型/model·effort（原 `o`）；mode 拨杆已迁到 `v`（原 `m`）。主路径不再把 model 入口绑在 `o` 上。**
 
 - **model 目录：** 编排器透传字符串，不维护权威全量表。Grok：可注入发现端口，默认 best-effort 跑 `grok models`（失败/超时仅保留「运行时默认」等降级项，不挂死）。Claude：静态常见别名提示（如 sonnet/opus/haiku）+ 默认。  
 - **effort 目录：** 首项默认 + 至少 Claude 公开档位提示（low/medium/high/xhigh/max），两侧一律字符串透传；非法值交给 Worker。  
 - **一期无** TUI 自由文本手填；列表没有的 id 仍走 `--model`/`--effort` 或手改 json。
 
-**提交（`setModelEffort` / 调度 surface 端口 / `o` 事务确认）：** 立即写仓到当前 runtime 分桶，只影响**之后** spawn；当前槽在 spawn 时钉死的 model/effort **不热切**。空/空白读侧一律当不传 flag。  
+**提交（`setModelEffort` / 调度 surface 端口 / `m` 事务确认）：** 立即写仓到当前 runtime 分桶，只影响**之后** spawn；当前槽在 spawn 时钉死的 model/effort **不热切**。空/空白读侧一律当不传 flag。  
 **无**跨 runtime 扁平顶层 `model`/`effort` 真源。
 
-**与「不自动换模」：** 编排器仍不在无操作者意图时自行改 model/effort。`o`、CLI flag、仓分桶都是**操作者显式设定 subsequent**，不是策略引擎自动调参。
+**与「不自动换模」：** 编排器仍不在无操作者意图时自行改 model/effort。`m`、CLI flag、仓分桶都是**操作者显式设定 subsequent**，不是策略引擎自动调参。
 
 ### 启动与标题
 
@@ -149,14 +149,44 @@ closed == false
 | 干净路径第一次成功 Enter 开自动 | 同时 **写仓** `autoAdvance: true`（与顶栏一致） |
 | **`q`** / Ctrl+C | 本进程关掉自动并退出全屏；**不**把关写回仓（偏好跨重启保留） |
 
-顶栏须可读展示「自动开下一张：开/关」，并让操作者分清边沿状态：`awaiting-worker-exit`（等进程自退/等会话结束、不杀；可按 `f`）、`session-interrupted`（会话中断 + 原因摘要；可按 `f`）、`handoff-countdown`（显示剩余秒数；按 `c` 取消）、`needs-resume`（有 id 提示按 `r`；无 session id 明示不可静默空窗）。AFK 接力靠 **Closed ∧ 顺序正确的 sessionEnded success ∧ 倒计时结束**（或人手 `f`），**禁止**凭 Closed 强杀进行中的 Agent，**禁止**无结束信号仍自动开下一张。UI/文档宜用直白用语。
+顶栏须可读展示「自动开下一张：开/关」，并用**操作者中文显示名**分清边沿（内部 id 不暴露）：**进行中**、`[f] 待收尾` vs **自动收尾中**、`[r] 需恢复` vs **无法恢复**、`[y/n] 待确认`、交接倒计时剩余秒数（按 `c` 取消）、会话中断 + 原因摘要等。AFK 接力靠 **Closed ∧ 顺序正确的 sessionEnded success ∧ 倒计时结束**（或人手 `f`），**禁止**凭 Closed 强杀进行中的 Agent，**禁止**无结束信号仍自动开下一张。UI/文档宜用直白用语。
+
+### 全屏呈现（操作者）
+
+交互 dual-TTY 主壳是 **三带** 驾驶舱（不是旧四区常驻空槽）：
+
+| 带 | 职责 |
+|----|------|
+| **顶带** | 处境（feature · runtime · 后续 mode · 后续 model/effort · 自动开开\|关）+ 链状态**中文显示名** + 一句主 CTA（`下一步：… · 按 X`） |
+| **中带** | 工作对象：默认 **可执行列表 + 焦点直接上下游邻域**（只读）；占槽时顶部最小槽摘要并入中带；**空槽不**再常驻大块「当前槽（空）」；`g` 切到全局依赖总览（**第二视图**，非默认主屏） |
+| **底带** | 键位图（不叙事）：边沿 available → 主路径始终 → m/v → t/g/q；与主 CTA 点名一致的键更显眼（热）；不可开时 Enter **dim 仍显示** |
+
+**状态显示名与主 CTA（只表达、不改编排闸门）：**
+
+| 条件概要 | 显示名 | 主路径要点 |
+|----------|--------|------------|
+| idle · 有可执行 | 可开干 | Enter 开高亮或看板默认 |
+| idle · 无可执行 | 暂无票 | 不诱导 Enter |
+| soft-stuck | 进行中 | 等当前 Worker；Enter dim |
+| awaiting · 自动关 | `[f] 待收尾` | 主推 `f` |
+| awaiting · 自动开 | 自动收尾中 | 可自动收尾，无需手开下一张 |
+| needs-resume · 有 session | `[r] 需恢复` | 主推 `r` |
+| needs-resume · 无 session | 无法恢复 | 无可用 `r` |
+| needs-confirmation | `[y/n] 待确认` | `y` / `n` |
+| stopped | 已停链 | `q` 退出或重新进入 |
+
+约 **3 秒主路径**：进全屏后应能从顶带读出能不能开干、下一步按什么键、将开哪张或无可执行，以及自动开开/关——**不**靠背内部状态枚举名，也**不**靠过程 scratch。
+
+**键位 remap（必记一句）：** **`m` = 模型/model·effort（原 `o`）；`v` = 模式 review↔vibe（原 `m`）**。底栏中文短标签自教（`[m] 模型` / `[v] 模式`）；**无**首屏「键位已改」notice。`o` 主路径不再绑定 model 入口。
+
+呈现硬约束：数值行高铺满、底栏钉底、进/出备用屏减残影、无重动画；依赖图与列表只读、无图上派票；Worker 独立前台、不内嵌。
 
 ### 测试 seam
 
 - **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽 / morph。  
 - **Session-end 适配 seam：** `scripts/session-end-adapters.mjs` + `tests/session-end-adapters.test.mjs` — 假 NDJSON/事件流映射 Grok/Claude → `success|failure|interrupted`；单轮 stop ≠ success；observable morph argv + watcher；**不**开真 Agent 窗。  
 - **Launcher 终端宿主 seam：** `scripts/terminal-host.mjs` + `tests/terminal-host.test.mjs` — 假探测器下 tab 优先 / 回退独立窗 / 同进程缓存 / 显式 `terminalHost` 覆盖 / **不**持久化探测结果。  
-- **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`o` 事务选单与 `setModelEffort` 写仓可测。  
+- **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`m` 事务选单与 `setModelEffort` 写仓可测；`v` → mode；snapshot → 三带帧 / 显示名 / 主 CTA / 底栏分组。  
 - **Resume 历史探针：** `classifyGrokChatHistory` / `readGrokChatHistory` 对 `chat_history.jsonl` 做空白 vs 有历史红绿判定（不依赖「进程 spawn 成功」 alone）。  
 - **vibe 接力验收（20260805-1244 起，20260806-1636 收紧）：** `tests/vibe-handoff-acceptance.test.mjs` 三阶段（A Closed 后不杀、无会话结束信号不自动下一张 · B needs-resume 历史非空白 · C 未 Closed 不误杀）；失败信息带稳定 stage/code（`not-closed` / `no-exit` / `resume-blank` / `wrong-kill`）。双真源 / 倒计时单元测在 `chain-run.test.mjs`（可注入时钟与 `reportSessionEnded`）。也可用 `scripts/run-vibe-handoff-acceptance.mjs` 拿进程退出码（0 绿；2/3/4 对应 A/B/C）。  
 - **发现端口：** 注入假 discoverer 断言失败/超时降级；CI 不依赖真实 `grok models` 登录。  
@@ -173,14 +203,15 @@ closed == false
 - **Session-end 适配器**（Grok streaming-json `type:end` / Claude result 信封 → 统一 `sessionEnded`）  
 - **mode** 解析与仓文件写回  
 - **subsequent model/effort** 初值（CLI → 仓分桶 → 空）与 `setModelEffort` 写仓  
-- **全屏 `o`**：model→effort 事务选单；Grok 可注入 model 发现（`grok models` best-effort 降级）；Claude 别名 + effort 档位提示  
+- **全屏 `m`**：model→effort 事务选单（原 `o`）；Grok 可注入 model 发现（`grok models` best-effort 降级）；Claude 别名 + effort 档位提示  
+- **全屏 `v`**：mode 拨杆 review↔vibe（原 `m`）；写仓 subsequent  
 - **HITL** confirm/reject（human / 未知；Wayfinder 改由 Enter 直接开）  
 - **CLI：** `recommend` · `probe-launch` · **`chain`**（默认命令；可选假启动器）  
-- **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；顶栏 / 中部依赖图 / 当前槽 / 底栏；**Enter 开始**、列表导航、自动开下一张开关、`o` model/effort）  
+- **交互 dual-TTY 主路径：Ink 全屏调度应用**（alternate-screen；**三带**：顶处境+主 CTA / 中列表+邻域 / 底键位图；**Enter 开始**、列表导航、自动开下一张开关、`m` model/effort、`v` mode）  
 - **启动期全屏选单**：缺 feature / runtime 时用 Ink 列表（`j`/`k`/方向键/数字 + Enter；`q` 取消）；**不为** model/effort 强问  
-- **非全屏路径：** `--once` / 非 TTY / 非交互 → 打印调度帧后退出；**仍可**在 tick 时按看板尝试开票（不套全屏「默认不开」）；**无** `o` 选单  
+- **非全屏路径：** `--once` / 非 TTY / 非交互 → 打印调度帧后退出；**仍可**在 tick 时按看板尝试开票（不套全屏「默认不开」）；**无** `m` 选单  
 - 交互全屏 **后台 poll**（默认 2s）在 **自动开下一张为开** 时支持 AFK 接力  
-- **全屏呈现**：铺满终端高度、进入/退出清残影、主/次信息分层、选中与当前槽可辨；无复杂动画
+- **全屏呈现**：三带铺满终端高度、底栏钉底、进入/退出清残影、主 CTA 与状态显示名、选中与当前槽可辨；无复杂动画
 
 ---
 
@@ -238,18 +269,17 @@ ic
 
 含义：在当前目录开链（`--cwd` / `--project-root` 默认 `pwd`），命令默认 `chain`。
 
-**交互 dual-TTY（stdin+stdout 皆 TTY，且未传 `--once`）** 进入 **Ink 全屏调度应用**（像全屏工具，不是日志滚动页）：
+**交互 dual-TTY（stdin+stdout 皆 TTY，且未传 `--once`）** 进入 **Ink 全屏调度应用**（像全屏工具，不是日志滚动页）。信息架构为 **三带**（详见上节「全屏呈现（操作者）」）：
 
-| 分区 | 内容 |
-|------|------|
-| **顶栏** | feature · runtime · 后续 mode · **后续 model/effort**（空则「运行时默认」）· **自动开下一张：开/关** · 链状态（含 awaiting / needs-resume 操作提示） |
-| **中部** | 中文 ASCII 依赖图（★可执行 ▶进行中 ·阻塞 ✓完成）+「现在可执行」清单（导航高亮；**Enter 开票**；无图上派票） |
-| **当前槽** | 在跑票 / pid / Closed / 钉死 mode；有待确认时显示 HITL |
-| **底栏** | 当前可用键位（含 `[o] model/effort`；与真实行为一致） |
+| 带 | 内容 |
+|----|------|
+| **顶带** | feature · runtime · 后续 mode · **后续 model/effort**（空则「运行时默认」）· **自动开下一张：开/关** · 链状态**中文显示名** · **主 CTA 一句**（`下一步：… · 按 X`） |
+| **中带** | 默认：可执行列表（导航高亮；**Enter 开票**）+ 焦点直接上下游邻域 + 占槽时最小摘要；**空槽不**常驻整块「当前槽（空）」；`g` → 全局依赖总览第二视图（只读，无图上派票） |
+| **底带** | 键位图：边沿 available → 主路径始终 → **`[m] 模型` / `[v] 模式`** → t/g/q；热/dim 与主 CTA 一致 |
 
 Worker（Grok / Claude）由真启动器开在 **前台可介入** 位置：优先在当前多标签终端宿主（Windows Terminal / iTerm2 / Terminal.app 等 best-effort）**新开标签**，失败则回退 **独立 OS 窗**；调度屏 **不内嵌** Worker 输出。多 feature / 多仓 = **多开** `ic` 进程（各管各的调度窗 + Worker）。
 
-**全屏进门不自动开 Worker**；开第一张用 **Enter**（见「全屏：开始与自动开下一张」）。呈现目标：根布局用 **终端行数（数值高度）** 铺满可用高（Ink 的 `height: 100%` 会塌成内容高）、中部 stretch、底栏贴底、顶栏「自动开下一张/状态」单独成行以免折行后丢失、主/次信息字色分层、选中与当前槽可辨；不追求重动画。
+**全屏进门不自动开 Worker**；开第一张用 **Enter**（见「全屏：开始与自动开下一张」）。呈现目标：根布局用 **终端行数（数值高度）** 铺满可用高（Ink 的 `height: 100%` 会塌成内容高）、中带 stretch、底栏贴底、顶带处境/状态/主 CTA 可扫读、主/次信息字色分层、选中与当前槽可辨；不追求重动画。
 
 | 还想指定 | 写法 |
 |----------|------|
@@ -275,10 +305,10 @@ Worker（Grok / Claude）由真启动器开在 **前台可介入** 位置：优�
 
 解析：  
 - **runtime**：`--runtime` → 仓 `runtime` → **交互 dual-TTY 全屏选单**（`grok` / `claude`）；非交互/脚本/`--once` 须显式指定（`--fake-launcher` 冒烟缺省时默认 grok）  
-- **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（全屏拨杆 `m` 仍会写回仓 `mode`）  
+- **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（全屏拨杆 **`v`** 仍会写回仓 `mode`；原键 `m` 已改绑 model/effort）  
 - **autoAdvance**：仓 `autoAdvance === true` 时全屏进门拨杆为开（仍不冷启动 Worker）；否则关；`s` / 干净 Enter 开自动写仓；`q` 不写关  
 - **terminalHost**：仓显式覆盖时优先生效；否则本进程探测（优先标签 → 独立窗）。**自动探测结果不写此键**  
-- **model / effort**：`--model`/`--effort` → 仓 `workers.<当前 runtime>` → 空（不传 flag）；提交 subsequent 后静默写回当前 runtime 分桶  
+- **model / effort**：`--model`/`--effort` → 仓 `workers.<当前 runtime>` → 空（不传 flag）；全屏 **`m`** 提交 subsequent 后静默写回当前 runtime 分桶  
 - **feature**：位置参数 → 否则 dual-TTY **全屏列出** `.scratch` 下 feature 选取；非交互须显式给出
 
 未 `npm link` 时仍可用长路径：
@@ -327,29 +357,32 @@ ic demo \
 
 ### 全屏调度键位
 
-主路径为**单键**（无 readline 行编辑）。底栏会按可用动作隐藏不可用项，文案须与行为一致。
+主路径为**单键**（无 readline 行编辑）。底栏按组绘制：**边沿**（仅 available：`f`/`c`/`r`/`y`/`n`）→ **主路径始终**（Enter / `s` / 导航）→ **配置**（`m`/`v`，stopped 时隐藏）→ **次要**（`t` / `g` / `q`）。与主 CTA 点名一致的键更显眼；不可开时 Enter **dim 仍显示**。文案须与行为一致。
+
+**键义对照（必记）：`m` = 模型/model·effort（原 `o`）；`v` = 模式（原 `m`）。**
 
 ```text
 Enter               开一张：有高亮 → 该票；无高亮 → 看板默认下一张
                     （干净开始下：成功开票后打开「自动开下一张」；
                      若刚用 s 关掉自动：只开一张，不把自动开回来）
 j / k 或 ↓ / ↑     「现在可执行」高亮下一项 / 上一项（只改高亮）
-1–9                 高亮对应可执行项（只改高亮）
+1–9                 高亮对应可执行项（只改高亮；HITL 时仍只导航）
 s                   切换「自动开下一张」开 ↔ 关（纯拨杆，空槽不立刻开票；写仓）
-m                   mode 拨杆：review ↔ vibe（写仓；切 vibe 一行提示；只影响后续 spawn）
-o                   model → effort 两级选单（整次事务确认后写 subsequent + 仓分桶；
+m                   模型：model → effort 两级选单（原 o；整次事务确认后写 subsequent + 仓分桶；
                     只影响之后新开的 Worker；q/Esc 取消不写）
+v                   模式拨杆：review ↔ vibe（原 m；写仓；切 vibe 一行提示；只影响后续 spawn）
 f                   强制推进（仅当前票 Closed 可用；跳过等退出/等结束信号/倒计时；默认不杀进程）
 c                   取消交接倒计时（仅 handoff-countdown；腾槽、不自动开下一张）
 r                   needs-resume / session-interrupted：挂回旧 session 历史（≠ 开下一张；无 id 不可用）
 y / n               HITL 同意 / 拒绝
 t                   手动 tick / 刷新一次
+g                   中带第二视图：全局依赖总览 ↔ 默认列表+邻域（只读）
 q                   关掉自动并退出全屏（Ctrl+C 等同）
 ```
 
-看板与依赖图 **read-only**，无图上派票、无内嵌 Worker。  
+看板与依赖图 **read-only**，无图上派票、无内嵌 Worker。默认中带是列表+焦点邻域，**不是**「全局大图唯一主视图」。  
 自动开着时 **忽略** 列表高亮，只按看板选下一张；高亮只约束 **Enter**。  
-`--once` / 非 TTY **不出现** `o` 选单（无交互 model/effort UI）。
+`--once` / 非 TTY **不出现** `m` 选单（无交互 model/effort UI）。
 
 ### 启动全屏选单键位
 
