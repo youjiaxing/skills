@@ -248,6 +248,16 @@ test('observable morph: Grok gets -p + streaming-json; interactive still forbids
   const fmtIdx = observable.args.indexOf('--output-format');
   assert.ok(fmtIdx >= 0);
   assert.equal(observable.args[fmtIdx + 1], 'streaming-json');
+  // Grok 0.2+: -p/--single <PROMPT> is value-taking. The token after -p must be
+  // the prompt, not another flag — otherwise CLI exits: "value is required for
+  // '--single <PROMPT>' but none was supplied".
+  const pIdx = observable.args.indexOf('-p');
+  assert.ok(pIdx >= 0);
+  const afterP = observable.args[pIdx + 1];
+  assert.notEqual(afterP, '--output-format');
+  assert.equal(typeof afterP, 'string');
+  assert.equal(String(afterP).startsWith('-'), false);
+  assert.equal(afterP, base.initialPrompt);
   // still session-persistent
   assert.equal(observable.args.includes('--no-session-persistence'), false);
 });
