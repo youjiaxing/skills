@@ -13,13 +13,20 @@ const SECTION_RE = /^##\s+(?<title>.+?)\s*$/;
 const PLAIN_FIELD_RE = /^(?<name>[A-Za-z][A-Za-z0-9 _-]*):\s*(?<value>.*)$/;
 const BOLD_FIELD_RE = /^\*\*(?<name>[A-Za-z][A-Za-z0-9 _-]*):\*\*\s*(?<value>.*)$/;
 const WAYFINDER_TYPES = new Set(['research', 'prototype', 'grilling', 'task']);
-// ready-for-agent：与 implementation triage 混用时的开放别名，等价于 open（仍可领取 /research|/wayfinder）。
-const WAYFINDER_STATUSES = new Set(['open', 'claimed', 'resolved', 'ready-for-agent']);
+// Matt local 种子：Status 主要记 claimed/resolved；open/ready-for-agent 为显式开放别名；空/缺省 = unclaimed open。
+// wontfix：终态（对齐 Git 上 close），与 resolved 一样离开 frontier 并解除下游阻塞。
+const WAYFINDER_STATUSES = new Set(['open', 'claimed', 'resolved', 'ready-for-agent', 'wontfix']);
 const WAYFINDER_OPEN_STATUSES = new Set(['open', 'ready-for-agent']);
+const WAYFINDER_TERMINAL_STATUSES = new Set(['resolved', 'wontfix']);
 // Implementation 执行锁：与 triage role 正交，不进 statusRoles 配置。
 const IMPLEMENTATION_CLAIMED_STATUS = 'claimed';
-// Implementation 完成态别名：与 Wayfinder 同名同义；Closed: true 仍是主完成字段，resolved 也可单独表示完成。
+// 完成真源：Status: resolved（与 Wayfinder 统一）。legacy Closed: true 过渡期仍算完成。
 const IMPLEMENTATION_RESOLVED_STATUS = 'resolved';
+const SUPPORTED_PROTOCOLS = new Set([
+  'matt-local-markdown+resolved-v1',
+  // 过渡：旧配置文件仍可加载；语义已改为 resolved 主完成 + Closed 只读兼容。
+  'matt-local-markdown+closed-v1',
+]);
 
 export const WORKFLOW_IMPLEMENTATION = 'implementation';
 export const WORKFLOW_WAYFINDER = 'wayfinder';
@@ -178,7 +185,9 @@ export function validateConfig(value, configPath = CONFIG_RELATIVE_PATH) {
   const errors = [];
   if (!value || typeof value !== 'object' || Array.isArray(value)) errors.push('config must be an object');
   if (value?.schemaVersion !== 1) errors.push('schemaVersion must be 1');
-  if (value?.protocol !== 'matt-local-markdown+closed-v1') errors.push('protocol must be matt-local-markdown+closed-v1');
+  if (!SUPPORTED_PROTOCOLS.has(value?.protocol)) {
+    errors.push('protocol must be matt-local-markdown+resolved-v1 (or legacy +closed-v1)');
+  }
   if (typeof value?.trackerRoot !== 'string' || value.trackerRoot.trim() === '') errors.push('trackerRoot must be a non-empty string');
   if (typeof value?.completionField !== 'string' || value.completionField.trim() === '') errors.push('completionField must be a non-empty string');
   if (!value?.statusRoles || typeof value.statusRoles !== 'object' || Array.isArray(value.statusRoles)) {
@@ -274,6 +283,11 @@ function isImplementationResolvedStatus(status) {
   return normalizeKey(status) === IMPLEMENTATION_RESOLVED_STATUS;
 }
 
+function isTerminalStatus(status, statusRole = '') {
+  const normalized = normalizeKey(status);
+  return WAYFINDER_TERMINAL_STATUSES.has(normalized) || statusRole === 'wontfix';
+}
+
 // Status 是否为 implementation 图已知值：canonical triage role、执行锁 claimed、或完成别名 resolved。
 function isKnownImplementationStatus(status, config) {
   return statusRoleMap(config).has(status)
@@ -361,8 +375,11 @@ function resolveTicketWorkflow(fields, graphWorkflow) {
   return graphWorkflow;
 }
 
+// Matt：未 claimed、未终态 ⇒ open/unclaimed。空 Status 与显式 open/ready-for-agent 同属开放未领。
 function isWayfinderOpenStatus(status) {
-  return WAYFINDER_OPEN_STATUSES.has(normalizeKey(status));
+  const normalized = normalizeKey(status);
+  if (!normalized) return true;
+  return WAYFINDER_OPEN_STATUSES.has(normalized);
 }
 
 async function parseIssueDraft(issuePath, config, graphWorkflow) {
@@ -395,17 +412,20 @@ async function parseIssueDraft(issuePath, config, graphWorkflow) {
       metadataErrors.push('invalid-type');
       warnings.push({ code: 'invalid-type', issue: id, detail: type || '<empty>' });
     }
-    if (statuses.length === 0) {
-      metadataErrors.push('missing-status');
-      warnings.push({ code: 'missing-status', issue: id, detail: 'Status field is missing' });
-    } else if (new Set(statuses.map(normalizeKey)).size > 1) {
+    // Matt：开放未领可无 Status 或空值；仅当写了非空 Status 时校验枚举。
+    if (statuses.length > 0 && new Set(statuses.map(normalizeKey)).size > 1) {
       metadataErrors.push('conflicting-status');
       warnings.push({ code: 'conflicting-status', issue: id, detail: statuses.join(' | ') });
-    } else if (!WAYFINDER_STATUSES.has(normalizedStatus)) {
+    } else if (normalizedStatus && !WAYFINDER_STATUSES.has(normalizedStatus)) {
       metadataErrors.push('invalid-status');
-      warnings.push({ code: 'invalid-status', issue: id, detail: status || '<empty>' });
+      warnings.push({
+        code: 'invalid-status',
+        issue: id,
+        detail: `${status}; Wayfinder Status: empty|open|ready-for-agent|claimed|resolved|wontfix`,
+      });
     }
 
+    const terminal = isTerminalStatus(normalizedStatus);
     const sectionLines = readSection(lines, 'Blocked by');
     const inlineValues = readInlineFieldValues(lines, 'Blocked by');
     const referenceLines = sectionLines.length > 0 ? sectionLines : inlineValues;
@@ -421,8 +441,9 @@ async function parseIssueDraft(issuePath, config, graphWorkflow) {
         status,
         statusRole: normalizedStatus,
         hasStatusField: statuses.length > 0,
-        closed: normalizedStatus === 'resolved',
-        resolved: normalizedStatus === 'resolved',
+        // closed：图论「已离开 open blocker 集合」；resolved：Wayfinder 完成分组（含 wontfix 终态）。
+        closed: terminal,
+        resolved: terminal,
         claimed: normalizedStatus === 'claimed',
         metadataValid: metadataErrors.length === 0,
         metadataErrors,
@@ -439,21 +460,26 @@ async function parseIssueDraft(issuePath, config, graphWorkflow) {
   const statusRole = roleByStatus.get(status) ?? '';
   const claimed = isImplementationClaimedStatus(status);
   const resolvedStatus = isImplementationResolvedStatus(status);
+  const terminalFromStatus = isTerminalStatus(status, statusRole);
   if (statuses.length === 0) {
     metadataErrors.push('missing-status');
-    warnings.push({ code: 'missing-status', issue: id, detail: 'Status field is missing' });
+    warnings.push({
+      code: 'missing-status',
+      issue: id,
+      detail: 'Status field is required for implementation tickets (triage role, claimed, resolved, or wontfix)',
+    });
   } else if (new Set(statuses).size > 1) {
     metadataErrors.push('conflicting-status');
     warnings.push({ code: 'conflicting-status', issue: id, detail: statuses.join(' | ') });
   } else if (!statusRole && !claimed && !resolvedStatus) {
     metadataErrors.push('invalid-status');
     warnings.push({ code: 'invalid-status', issue: id, detail: status || '<empty>' });
-    // 常见误用：把完成写在 Status 上。Status: done 不是完成字段；请用 Closed: true 或 Status: resolved。
+    // 常见误用：Status: done 不是完成态。
     if (normalizeKey(status) === 'done') {
       warnings.push({
         code: 'status-done-not-completion',
         issue: id,
-        detail: 'use Closed: true or Status: resolved; Status: done is not a completion field',
+        detail: 'use Status: resolved (or legacy Closed: true); Status: done is not a completion field',
       });
     }
   }
@@ -463,42 +489,40 @@ async function parseIssueDraft(issuePath, config, graphWorkflow) {
   const closedRaw = completionValues.at(-1) ?? '';
   const parsedClosed = completionValues.length > 0 ? parseClosed(closedRaw) : null;
   const closedImplicit = completionValues.length === 0 && isMattNativeImplementationTicket(fields);
-  // 原生 Matt 模板未声明 Closed 时，兼容地按仍开放的 implementation issue 处理。
-  if (completionValues.length === 0) {
-    if (!closedImplicit && !resolvedStatus) {
-      metadataErrors.push('missing-closed');
-      warnings.push({ code: 'missing-closed', issue: id, detail: `${config.completionField} field is required` });
+  // Closed 不再是完成真源：缺省不报 missing-closed。若仍写 Closed，校验布尔；Closed: true 作 legacy 完成兼容并提示迁移。
+  if (completionValues.length > 0) {
+    if (new Set(completionValues.map(normalizeKey)).size > 1) {
+      metadataErrors.push('conflicting-closed');
+      warnings.push({ code: 'conflicting-closed', issue: id, detail: completionValues.join(' | ') });
+    } else if (parsedClosed === null) {
+      metadataErrors.push('invalid-closed');
+      warnings.push({ code: 'invalid-closed', issue: id, detail: closedRaw || '<empty>' });
+    } else if (parsedClosed === true) {
+      warnings.push({
+        code: 'closed-field-deprecated',
+        issue: id,
+        detail: 'prefer Status: resolved for completion; Closed: true is legacy-compatible only',
+      });
     }
-  } else if (new Set(completionValues.map(normalizeKey)).size > 1) {
-    metadataErrors.push('conflicting-closed');
-    warnings.push({ code: 'conflicting-closed', issue: id, detail: completionValues.join(' | ') });
-  } else if (parsedClosed === null) {
-    metadataErrors.push('invalid-closed');
-    warnings.push({ code: 'invalid-closed', issue: id, detail: closedRaw || '<empty>' });
   }
 
-  // Status: resolved 与 Closed: false 冲突；resolved 且未显式打开时视为已完成。
-  if (resolvedStatus && parsedClosed === false) {
+  // Status: resolved/wontfix 与 Closed: false 冲突。
+  if (terminalFromStatus && parsedClosed === false) {
     metadataErrors.push('conflicting-resolved-open');
     warnings.push({
       code: 'conflicting-resolved-open',
       issue: id,
-      detail: 'Status: resolved conflicts with Closed: false; use Closed: true or drop Closed',
+      detail: 'Status: resolved|wontfix conflicts with Closed: false; drop Closed or set Status without terminal',
     });
   }
 
-  // Closed: true 是完成真源之一；Status: resolved 是完成别名。不要求 Status 仍为某个固定 triage 值。
-  const closed = parsedClosed === true || (resolvedStatus && parsedClosed !== false);
+  // 完成：Status 终态（resolved/wontfix）为主；legacy Closed: true 过渡期仍算完成。
+  const closed = (terminalFromStatus && parsedClosed !== false) || parsedClosed === true;
   if (closed) {
     for (const code of ['invalid-status', 'missing-status', 'missing-closed']) {
       const index = metadataErrors.indexOf(code);
       if (index >= 0) metadataErrors.splice(index, 1);
     }
-  }
-
-  if (statusRole === 'wontfix' && !closed) {
-    metadataErrors.push('open-wontfix');
-    warnings.push({ code: 'open-wontfix', issue: id, detail: 'wontfix must be closed' });
   }
 
   const sectionLines = readSection(lines, 'Blocked by');

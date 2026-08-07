@@ -1,6 +1,6 @@
 ---
 name: yjx-local-kanban
-description: 只读解析 Matt Local Markdown tracker 的普通 implementation issue 或 Wayfinder child ticket 依赖图，输出人类看板、完整 JSON 图或 Mermaid；用于 make kanban、查看执行 frontier、核对阻塞关系或为执行者提供 requiredSkill，不选票、不改状态。
+description: 只读解析 Matt Local Markdown tracker 的普通 implementation issue 或 Wayfinder child ticket 依赖图，输出人类看板、完整 JSON 图或 Mermaid；对齐 Matt local 默认（Wayfinder 空 Status=开放未领；完成统一 Status: resolved；wontfix 终态解阻；legacy Closed: true 过渡兼容）；用于 make kanban、查看 frontier、核对阻塞或 requiredSkill，不选票、不改状态。
 disable-model-invocation: true
 ---
 
@@ -100,11 +100,11 @@ FRONTIER
 
 优先级：
 
-1. 合法完成（`Closed: true`，或 `Status: resolved` 且未显式 `Closed: false`）→ `CLOSED`；
+1. 合法完成（`Status: resolved` / `wontfix`，或 legacy `Closed: true`；且未与 `Closed: false` 冲突）→ `CLOSED` / Wayfinder `RESOLVED`；
 2. 元信息或依赖图无法可靠解释 → `OTHER / WARNINGS`；
 3. 任意合法未关闭 issue 有开放依赖 → `BLOCKED`；
 4. 合法未关闭且 `Status: claimed` → `CLAIMED`（已领取/进行中，不进 frontier，也不解除下游依赖）；
-5. 无开放依赖时，再根据 canonical `Status` role 进入等待、Human 或 Agent 分组。
+5. 无开放依赖时，再根据 canonical `Status` role 进入等待、Human 或 Agent 分组；Wayfinder 空/`open`/`ready-for-agent` → `FRONTIER`。
 
 只查看可立即交给 Agent 的列表：
 
@@ -205,54 +205,66 @@ Blocker 可以使用：
 - 唯一编号；
 - 编号加标题。编号重复时必须由标题唯一消歧，否则 fail-closed。
 
-也支持 Wayfinder 本地格式：
+也支持 Wayfinder 本地格式（对齐 Matt `issue-tracker-local.md`）：
 
 ```markdown
 # <ticket title>
 
 Type: research|prototype|grilling|task
-Status: open|ready-for-agent|claimed|resolved
+Status: claimed|resolved
 Blocked by: none|01, 02
 
 ## Question
 ```
 
-存在 `Label: wayfinder:map` 的 `.scratch/<feature>/map.md` 且**仅有** Wayfinder 票时识别为纯 Wayfinder 图；没有 map 时，也可由合法 `Type` 自动识别。同目录再出现无 `Type` 的实施票则升为 **mixed**。Wayfinder 的 `resolved` 才解除依赖；`open` / `ready-for-agent` 且无开放依赖进入 `FRONTIER`；`claimed` 单独展示。
+- **开放未领**：`Status` **可缺省或为空**（Matt 默认）；也可显式 `open` / `ready-for-agent`。
+- **领取**：`claimed`。
+- **完成 / 终态**：`resolved` 或 `wontfix`（二者均离开 frontier，并**解除下游阻塞**——对齐 Git 上 closed 不再算 open blocker）。
+
+存在 `Label: wayfinder:map` 的 `.scratch/<feature>/map.md` 且**仅有** Wayfinder 票时识别为纯 Wayfinder 图；没有 map 时，也可由合法 `Type` 自动识别。同目录再出现无 `Type` 的实施票则升为 **mixed**。
 
 ## 元信息与 fail-closed
 
-以下情况禁止 issue 进入 `AGENT READY`：
+以下情况禁止 issue 进入 `AGENT READY` / `FRONTIER`：
 
-- `Status` 缺失、冲突或不能映射到 canonical role；
-- `Closed` 缺失、冲突或不是 `true|false`；但完整匹配 Matt 原生 `What to build + Blocked by + Status` 行内模板的票据会兼容视作 `false`；
-- `wontfix / Closed: false`；
+- implementation：`Status` 缺失、冲突或不能映射到 triage role / `claimed` / `resolved`；
+- Wayfinder：非法 `Type`，或非空且非法的 `Status`（**空 Status 合法**）；
 - blocker 引用无法解析或不存在；
 - 自依赖或依赖环。
 
-`Closed: true` 不要求某个固定 Status。Matt 默认 `/implement` 可以完成后保持原 Status 并直接关闭；项目 implementation skill 也可以定义自己的关闭前流程。显式 `Closed: true` 时，非 canonical 的 Status（含误写的 `done`、或仍为 `claimed`）不再阻止进入 `CLOSED`，也不再把该票踢出依赖图。
+### 完成态（protocol `matt-local-markdown+resolved-v1`）
 
-implementation 的 `Status` 除 5 个 triage role 外，额外承认两个与 Wayfinder 对齐的执行态：
+| 信号 | 含义 |
+|------|------|
+| **`Status: resolved`** | **主完成真源**（Wayfinder 与 implementation 统一） |
+| **`Status: wontfix`** | 终态；解除下游阻塞（Matt：close issue ⇒ 非 open blocker） |
+| **`Closed: true`** | **legacy 过渡**：仍算完成，并可能 `closed-field-deprecated` warning |
+| **无 Closed 字段** | **正常**（Matt to-tickets 默认）；未终态则开放 |
 
-- **`claimed`**：已有 Agent 领取、工作进行中。它**不是** triage 配置项，也**不是**完成态。多 Agent 并行时应 claim 后再开干，避免两张手抢同一 frontier 票。
-- **`resolved`**：完成别名（与 Wayfinder 同名同义）。可单独表示完成并解除下游依赖；也可与 `Closed: true` 并存。若写成 `Status: resolved` 且 `Closed: false`，看板 fail-closed 并给出 `conflicting-resolved-open`。
+implementation 的 `Status` 除 5 个 triage role 外：
 
-推荐完成写法仍是 `Closed: true`（可保留原 triage Status）；`Status: resolved` 作为兼容写法被一等支持。
+- **`claimed`**：进行中（非完成）。
+- **`resolved`**：**完成**（会覆盖 triage 角色字符串）。
 
-**不要**用 `Status: done` 表示完成：它不是 completion 字段，不会解除依赖。看板会保留该票、标为 `OTHER / WARNINGS`，并给出 `status-done-not-completion`（以及交接时的 `non-canonical-status-on-handoff`）warning。请改用 `Closed: true` 或 `Status: resolved`。
+若 `Status: resolved|wontfix` 与 `Closed: false` 并存 → `conflicting-resolved-open`。
 
-Comments 中出现的字段示例或历史记录不能覆盖头部真源。
+**不要**用 `Status: done` 表示完成。
+
+Comments 中出现的字段示例不能覆盖头部真源。
 
 只冻结受影响分支：独立且自身合法的 issue 仍可进入 frontier。
 
 ## 两种工作流的边界
 
 - `map.md` 是 Wayfinder 的低分辨率索引，不作为 child ticket 节点；
-- implementation 图继续使用 `Status + Closed`，Wayfinder 图只使用 `Type + Status`；
-- **同 feature 混合是正常的**：目录里同时存在 `Type: research|…` 与无 `Type` 的实施票时，看板进入 `workflow=mixed`，**全部入图**，按票自身类型解析与分组；
-- 未完成的 research **只阻塞声明依赖它的下游票**，不再整板报错、也不再要求「全部决策 resolved 才能实施」；
-- Wayfinder 开放态：`open` 与 `ready-for-agent`（兼容 implementation triage 写法）均可进 `FRONTIER`；完成仍是 `resolved`；
-- mixed 的 NOW / `--ready-only` 合并 `FRONTIER` + `AGENT READY`，命令按票类型分别给 `/wayfinder` 或 `/implement`；
-- `requiredSkill` 是执行入口（Wayfinder 票级字段），不表示看板会自行 claim、resolve 或实施 ticket。
+- **两图都主要使用 `Status`**；不再要求 implementation 必写 `Closed`；
+- **同 feature 混合是正常的**：`workflow=mixed`，按票自身类型分组；
+- 未完成的 research **只阻塞声明依赖它的下游票**；
+- Wayfinder 开放：空 Status / `open` / `ready-for-agent` → `FRONTIER`；完成 `resolved`/`wontfix` → `RESOLVED`；
+- mixed 的 NOW / `--ready-only` 合并 `FRONTIER` + `AGENT READY`；
+- `requiredSkill` 是执行入口，看板不 claim/resolve/实施。
+
+配置：`docs/agents/local-tracker.json` 的 `protocol` 应为 `matt-local-markdown+resolved-v1`（仍接受 legacy `+closed-v1` 文件以便加载）；`completionField` 仅用于**读取** legacy `Closed`。
 
 ## Mermaid
 

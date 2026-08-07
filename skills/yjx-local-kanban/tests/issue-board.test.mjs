@@ -16,7 +16,7 @@ import {
 
 const DEFAULT_CONFIG = {
   schemaVersion: 1,
-  protocol: 'matt-local-markdown+closed-v1',
+  protocol: 'matt-local-markdown+resolved-v1',
   trackerRoot: '.scratch',
   completionField: 'Closed',
   statusRoles: {
@@ -95,14 +95,46 @@ test('resolves POSIX and Windows blocker paths', async (t) => {
   assert.deepEqual(issue(graph, '03-windows.md').blockedBy, ['01-foundation.md']);
 });
 
-test('missing Closed fails closed instead of entering frontier', async (t) => {
+test('missing Closed is allowed; Status alone drives open vs complete', async (t) => {
   const work = await fixture(t);
-  await writeIssue(work.feature, '01-legacy.md', { closed: null });
+  await writeIssue(work.feature, '01-ready.md', { closed: null });
   const graph = await loadGraph(work.feature, work.config);
-  const legacy = issue(graph, '01-legacy.md');
-  assert.equal(legacy.metadataValid, false);
-  assert.deepEqual(legacy.metadataErrors, ['missing-closed']);
-  assert.equal(graph.groupOf(legacy), 'OTHER / WARNINGS');
+  const ready = issue(graph, '01-ready.md');
+  assert.equal(ready.metadataValid, true);
+  assert.equal(ready.closed, false);
+  assert.equal(graph.groupOf(ready), 'AGENT READY');
+  assert.equal(graph.warnings.some((item) => item.code === 'missing-closed'), false);
+});
+
+test('Wayfinder empty Status is unclaimed open (Matt default)', async (t) => {
+  const work = await fixture(t);
+  await writeFile(path.join(work.feature, 'map.md'), '# Map\n\nLabel: wayfinder:map\n');
+  await writeIssue(work.feature, '01-frontier.md', {
+    title: 'Frontier',
+    status: null,
+    closed: null,
+    type: 'grilling',
+    inlineBlockedBy: true,
+  });
+  const graph = await loadGraph(work.feature, work.config);
+  const ticket = issue(graph, '01-frontier.md');
+  assert.equal(ticket.metadataValid, true);
+  assert.equal(ticket.claimed, false);
+  assert.equal(ticket.resolved, false);
+  assert.equal(graph.groupOf(ticket), 'FRONTIER');
+  assert.equal(graph.warnings.some((item) => item.code === 'invalid-status'), false);
+  assert.equal(graph.warnings.some((item) => item.code === 'missing-status'), false);
+});
+
+test('Status:wontfix is terminal and unblocks dependents', async (t) => {
+  const work = await fixture(t);
+  await writeIssue(work.feature, '01-wont.md', { status: 'wontfix', closed: null });
+  await writeIssue(work.feature, '02-next.md', { closed: null, blockedBy: '01-wont.md' });
+  const graph = await loadGraph(work.feature, work.config);
+  assert.equal(issue(graph, '01-wont.md').closed, true);
+  assert.equal(graph.groupOf(issue(graph, '01-wont.md')), 'CLOSED');
+  assert.deepEqual(graph.openBlockersOf(issue(graph, '02-next.md')), []);
+  assert.equal(graph.groupOf(issue(graph, '02-next.md')), 'AGENT READY');
 });
 
 test('completed Wayfinder tickets hand off to native Matt implementation tickets', async (t) => {
@@ -365,15 +397,16 @@ test('research Status:ready-for-agent is frontier-ready in mixed graphs', async 
   assert.match(text, /× 28 \[impl\] Realenv loop/);
 });
 
-test('closed ready-for-agent is accepted for Matt implement completion', async (t) => {
+test('legacy Closed:true still completes during transition', async (t) => {
   const work = await fixture(t);
   await writeIssue(work.feature, '01-done.md', { closed: 'true' });
   const graph = await loadGraph(work.feature, work.config);
   assert.equal(issue(graph, '01-done.md').metadataValid, true);
   assert.equal(graph.groupOf(issue(graph, '01-done.md')), 'CLOSED');
+  assert.ok(graph.warnings.some((item) => item.code === 'closed-field-deprecated'));
 });
 
-test('implementation Status:resolved is a supported completion alias', async (t) => {
+test('implementation Status:resolved is the primary completion field', async (t) => {
   const work = await fixture(t);
   await writeIssue(work.feature, '01-resolved-only.md', {
     status: 'resolved',
@@ -401,6 +434,7 @@ test('implementation Status:resolved is a supported completion alias', async (t)
   assert.equal(resolvedAndClosed.metadataValid, true);
   assert.equal(graph.groupOf(resolvedAndClosed), 'CLOSED');
   assert.deepEqual(graph.openBlockersOf(resolvedAndClosed), []);
+  assert.ok(graph.warnings.some((item) => item.code === 'closed-field-deprecated' && item.issue === '02-resolved-and-closed.md'));
 
   const conflict = issue(graph, '03-conflict.md');
   assert.equal(conflict.closed, false);

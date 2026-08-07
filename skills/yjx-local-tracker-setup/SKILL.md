@@ -1,13 +1,22 @@
 ---
 name: yjx-local-tracker-setup
-description: 在 Matt Pocock Local Markdown issue tracker 项目上增量启用可判定的 Closed 完成字段和机器配置；默认只预览，确认后才写入或迁移旧票。
+description: 在 Matt Local Markdown tracker 上写入 resolved-v1 机器配置，并强制对齐约束文档完成真源为 Status: resolved；先预览后确认再写；Closed 仅 legacy。
 argument-hint: "[项目根目录]"
 disable-model-invocation: true
 ---
 
 # Local Tracker Setup
 
-为已经由 `setup-matt-pocock-skills` 配置为 **Local Markdown** 的项目增加确定性完成协议。本技能不是 Matt setup 的替代品，也不复制 `to-spec`、`to-tickets` 或 `implement`。
+为已经由 `setup-matt-pocock-skills` 配置为 **Local Markdown** 的项目：
+
+1. 写入 **kanban 可读的机器配置**（`+resolved-v1`）；
+2. **强制对齐约束文档**：完成真源改为 **`Status: resolved`**（`Closed: true` 为废弃旧写法，仅 legacy 只读兼容）。
+
+本技能不是 Matt setup 的替代品，也不复制 `to-spec`、`to-tickets` 或 `implement`。
+
+**无附属脚本。** Agent 直接读文件、改文件；不要找 `scripts/` 或跑 Node setup。
+
+**完成判据：** 机器配置已是下方目标 JSON（protocol `+resolved-v1`，`statusRoles` 与 triage 一致）**且** 约束文档已以 `Status: resolved` 为主完成真源。只写 JSON、不改仍写「Closed 完成」的合同 = **setup 未完成**。
 
 ## 前提
 
@@ -18,21 +27,11 @@ docs/agents/issue-tracker.md
 docs/agents/triage-labels.md
 ```
 
-Tracker 文档必须声明 `.scratch/<feature>/issues/<NN>-<slug>.md` 形式的 Local Markdown tracker。前提不满足时停止，并要求先运行 `setup-matt-pocock-skills`、选择 Local Markdown；不要自行猜测或创建一套不同 tracker。
+`issue-tracker.md` 必须声明 Local Markdown，且路径形态为 `.scratch/<feature>/issues/<NN>-<slug>.md`。不满足则停止，要求先跑 `setup-matt-pocock-skills` 并选 Local Markdown。
 
-## 可移植脚本
+默认项目根 = 当前工作区；用户若给了路径则用该路径。
 
-确定性脚本是本 skill 目录下的：
-
-```text
-scripts/setup-local-tracker.mjs
-```
-
-根据当前 Agent 提供的 skill 加载信息定位本 `SKILL.md`，再从其所在目录解析脚本；不要假设 skill 安装在 `.claude`、`.agents`、`.codex` 或任何固定全局目录。脚本只依赖 Node.js 20+ 标准库，不依赖 Claude API、Claude Agent SDK 或 Claude Code 专有运行时。
-
-下文用 `<setup-skill-dir>` 表示本 `SKILL.md` 所在目录。
-
-## 协议
+## 协议（机器配置）
 
 写入固定路径：
 
@@ -40,12 +39,12 @@ scripts/setup-local-tracker.mjs
 docs/agents/local-tracker.json
 ```
 
-配置只保存 parser 必需的机器事实：
+目标内容（`statusRoles` 的**值**必须从 `docs/agents/triage-labels.md` 表「Label in our tracker」列读取；下表仅为 Matt 默认同名示例）：
 
 ```json
 {
   "schemaVersion": 1,
-  "protocol": "matt-local-markdown+closed-v1",
+  "protocol": "matt-local-markdown+resolved-v1",
   "trackerRoot": ".scratch",
   "completionField": "Closed",
   "statusRoles": {
@@ -58,78 +57,119 @@ docs/agents/local-tracker.json
 }
 ```
 
-`statusRoles` 的实际值从 `docs/agents/triage-labels.md` 读取，不要求项目使用上述英文值。
+| 字段 | 规则 |
+|------|------|
+| `schemaVersion` | 固定 `1` |
+| `protocol` | 固定 `matt-local-markdown+resolved-v1`（若现有为 `+closed-v1`，确认后升级） |
+| `trackerRoot` | 固定 `.scratch` |
+| `completionField` | 固定 `"Closed"`——仅供 kanban **读取** legacy 字段名，**不是**要求新票写 Closed |
+| `statusRoles` | 五个 canonical key 齐全；value 来自 triage 表，彼此不重复 |
 
-`Status` 表示 triage 角色；`Closed` 表示依赖是否解除和生命周期是否结束。两者不能互相推断。不要增加 `closeWhen`、状态机配置或自然语言生命周期配置。
+### 完成语义（与 yjx-local-kanban 一致）
+
+| 字段 | 含义 |
+|------|------|
+| **`Status: resolved`** | **主完成真源**（implementation 与 Wayfinder 统一） |
+| **`Status: wontfix`** | 终态；解除下游阻塞 |
+| **`Status: claimed`** | 进行中 / 认领（可选执行锁） |
+| **`Closed`** | **legacy**：kanban 过渡期仍认 `Closed: true`；**新票不要写** |
+
+**约束文档必须写清上述语义。** 禁止再写「Closed 唯一真源」「新票必须 `Closed: false`」「完成必写 `Closed: true`」。
+
+Wayfinder：开放未领可无/空 `Status`；领取 `claimed`；完成 `resolved`。本 setup **不**改 wayfinder 票正文。
 
 ## 流程
 
-### 1. 只读预览
+### 1. 只读预览（不改文件）
 
-始终先运行：
+读取并核对：
 
-```bash
-node <setup-skill-dir>/scripts/setup-local-tracker.mjs \
-  --project-root <project-root>
-```
+1. **前提**：`issue-tracker.md`、`triage-labels.md` 存在且为 Local Markdown。
+2. **目标 config**：按上节拼出目标 `local-tracker.json`（含真实 `statusRoles`）。
+3. **现有 config**（若有 `docs/agents/local-tracker.json`）：
+   - 不存在 → action `create`
+   - 存在且与目标一致 → action `none`
+   - 存在但不一致（含 legacy `+closed-v1`）→ action `replace`（注明将升级）
+4. **约束文档**（存在则读；主 tracker 必读）：
 
-需要机器结果时加 `--json`。预览必须展示：
+| 路径 | 角色 |
+|------|------|
+| `docs/agents/issue-tracker.md` | **主合同**（必对齐） |
+| `agents-local.md` / `agents-global.md` | Agent 纪律（若谈关票/完成） |
+| `Agents.md` / `AGENTS.md` / `Claude.md` / `CLAUDE.md` | 入口纪律（若谈关票/完成） |
+| `CONTEXT.md` | 若写完成闸门 / 调度关票语义 |
 
-- 即将创建、保持或替换的机器配置；
-- 扫描到的 feature 和普通 implementation issues；
-- 缺少 `Closed` 的旧票；
-- 可安全补 `Closed: false` 的票；
-- 因缺少 `Status` 而不会自动迁移的票。
+对齐判定（主 tracker **全部**满足；其它文件仅在「谈关票/完成」时适用）：
 
-默认命令不修改任何文件。
+- **已对齐**：明确完成 = `Status: resolved`（可写 `wontfix` 终态）；`Closed` 若出现，只作 legacy 只读兼容说明，**不是**完成必做步骤。
+- **未对齐**：完成仍要求 `Closed: true`；或把 Closed 当唯一真源；或主 tracker 完全没有 implementation 的 `resolved` 完成合同（Matt 默认模板常见）。
+- 允许在「已 resolved 为主」的文中提及 legacy `Closed: true`（不算未对齐）。
+
+5. **票盘点（可选摘要，非阻塞）**：粗扫 `.scratch/*/issues/*.md` 即可——约多少实施票、是否仍见 legacy `Closed`、是否明显缺 `Status`。**不要**把「缺 Closed」当必须迁移；**不要**在本 skill 批量改票。
+
+把预览摘要用中文给用户（config action、是否需升级协议、哪些约束文档未对齐）。**此步不写盘。**
 
 ### 2. 请求确认
 
-把预览摘要给用户，明确区分：
+选项从 1 编号，**推荐项必须是 1**：
 
-1. 只写或校正机器配置；
-2. 同时为预览列出的旧 implementation issues 补 `Closed: false`。
+1. **写机器配置 + 对齐约束文档到 `Status: resolved`**（推荐）  
+   - 推荐理由：配置与合同一致；Agent / kanban / implement 关票不再分裂。
+2. **仅预览 / 暂不改**  
+   - 不采纳为默认：问题仍在。
 
-只有用户明确确认后才能执行。不要把安装本 skill、运行预览或先前讨论视为迁移授权。
+**不要**把「只写 JSON、文档以后再说」标成推荐项。  
+**不要**提供「给票塞 `Closed: false`」类迁移（已废弃）。
 
-### 3. 应用
+若 config 已是目标且约束文档已对齐：说明 **setup 已完成**，无需再写。
 
-只写配置：
+只有用户明确确认选项 1 后才进入写入。
 
-```bash
-node <setup-skill-dir>/scripts/setup-local-tracker.mjs \
-  --project-root <project-root> \
-  --apply --yes
+### 3. 写机器配置
+
+用户确认后，写入（或覆盖）`docs/agents/local-tracker.json` 为步骤 1 拼出的目标 JSON（合法 JSON，缩进 2 空格，文件末尾换行）。
+
+### 4. 对齐约束文档（必做，若步骤 1 判定未对齐）
+
+#### `issue-tracker.md` 必须写明
+
+- 完成：`Status: resolved`（`wontfix` 亦为终态）；
+- 可领取：triage 五态（如 `ready-for-agent`）或 Wayfinder 空/`open`；
+- 认领（可选）：`Status: claimed`；
+- **`Closed: true` 仅 legacy**；**新票不要写 Closed**；
+- 哪个 skill 在实现成功后写 `resolved`（默认：`/implement` 成功后关票，或本仓 agents-local 纪律）。
+
+最小完成头示例：
+
+```markdown
+**Status:** resolved
 ```
 
-同时迁移预览过的旧票：
+#### 改写规则
 
-```bash
-node <setup-skill-dir>/scripts/setup-local-tracker.mjs \
-  --project-root <project-root> \
-  --apply --yes --migrate-closed
-```
+- 把「完成 = `Closed: true`」改为「完成 = `Status: resolved`」；
+- 若需提及 Closed：仅说明 kanban **过渡期只读兼容**，不得再当必做步骤；
+- 同步改步骤 1 列出的、谈关票/完成的其它纪律文件；
+- 不批量改 `.scratch` 旧票；不推断旧票是否已完成；
+- 不改 wayfinder `map.md` 与票正文（除非用户另开任务）。
 
-迁移保持原字段风格：`Status:` 对应 `Closed:`，`**Status:**` 对应 `**Closed:**`。只在首个二级章节前的头部字段区插入；不修改 Comments，不覆盖已有 `Closed`，不迁移 wayfinder 工件。
+### 5. 复核
 
-### 4. 复核
+再读一遍 `local-tracker.json` 与改过的约束文档：
 
-应用后重新运行只读预览。若项目也安装了 `yjx-local-kanban`，再用它的 `--list-features --json` 和单 feature `--json --non-interactive` 检查图事实。
+1. config 与目标一致（protocol `+resolved-v1`，roles 正确）；
+2. 约束文档以 `Status: resolved` 为主完成真源。
 
-## 项目接入
+可选：若装了 `yjx-local-kanban`，用 `make kanban` 等核对图（非必须）。
 
-项目 tracker 文档应明确：
-
-- 新 implementation issue 必须显式包含 `Closed: false`；
-- `Closed: true` 是依赖解除的唯一机器真源；
-- 缺少或非法 `Closed` 必须 fail-closed；
-- 哪个 implementation skill 负责何时关闭，或项目无特殊流程时采用默认规则：`/implement` 成功完成实现与验证后直接把 `Closed` 改为 `true`，不为此创造新的 `Status` 值；
-- 状态、评论、人工 review 和提交等更细生命周期继续由项目 tracker 文档或 implementation skill 定义。
+未满足 1+2 不得宣称 setup 完成。
 
 ## 边界
 
 - 不发布或重拆 issues；
-- 不推断旧票是否已经完成；旧票一律只补 `Closed: false`；
-- 不通过 checklist、commit、`ready-for-human` 或其它 Status 猜测完成；
-- 不修改 wayfinder 的 `map.md`、`Type: research|prototype|grilling|task` 或 `Status: claimed|resolved` 工件；
-- 不要求安装 `yjx-local-kanban` 或 `yjx-local-ralph` 才能运行 setup。
+- 不推断旧票是否已完成；
+- 不通过 checklist/commit 猜测完成；
+- 不修改 wayfinder 的 `map.md` 或带 `Type: research|prototype|grilling|task` 的票；
+- 不要求必须安装 kanban 才能跑 setup；
+- 不塞、不迁移票上的 `Closed` 字段；
+- 与 **`yjx-local-kanban`** 合同一致：`+resolved-v1` + legacy `Closed: true` 只读兼容。
