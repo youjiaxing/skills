@@ -47,6 +47,8 @@ import {
   renderMiddlePanel,
   renderModelEffortMenuFrame,
   renderNotice,
+  operatorStatusDisplayName,
+  renderMainCta,
   renderReadyMainCta,
   renderSlotPanel,
   renderTopBar,
@@ -579,7 +581,9 @@ test('renderTopBar shows feature / runtime / subsequent mode / autoAdvance / cha
   assert.match(live, /runtime:\s*grok|运行时:\s*grok/);
   assert.match(live, /后续 mode:\s*vibe/);
   assert.match(live, /自动开下一张:\s*开/);
-  assert.match(live, /软卡住|soft-stuck/);
+  // Operator display name (not internal soft-stuck id).
+  assert.match(live, /进行中/);
+  assert.doesNotMatch(live, /软卡住|soft-stuck/);
 
   const off = renderTopBar(snapWithBoard({
     status: 'idle',
@@ -707,7 +711,8 @@ test('region text updates when snapshot migrates (poll equivalence)', () => {
   const topBefore = renderTopBar(before);
   const topAfter = renderTopBar(after);
   assert.match(topBefore, /可开干|暂无票|空闲|idle/);
-  assert.match(topAfter, /软卡住|soft-stuck/);
+  assert.match(topAfter, /进行中/);
+  assert.doesNotMatch(topAfter, /软卡住|soft-stuck/);
   assert.notEqual(topBefore, topAfter);
 
   const slotBefore = renderSlotPanel(before);
@@ -720,7 +725,8 @@ test('region text updates when snapshot migrates (poll equivalence)', () => {
   const shellBefore = renderToString(createElement(DispatchShell, { snap: before }));
   const shellAfter = renderToString(createElement(DispatchShell, { snap: after }));
   assert.match(shellBefore, /可开干|暂无票|空闲|idle/);
-  assert.match(shellAfter, /软卡住|soft-stuck/);
+  assert.match(shellAfter, /进行中/);
+  assert.doesNotMatch(shellAfter, /软卡住|soft-stuck/);
   assert.match(shellAfter, /pid:\s*7/);
   assert.notEqual(shellBefore, shellAfter);
 });
@@ -791,7 +797,7 @@ test('runFullscreenDispatch poll tick refreshes shell from successive snapshots'
   ]);
 
   assert.ok(result.ticks >= 2, `expected >=2 ticks, got ${result.ticks}`);
-  assert.match(out, /pid:\s*55|02-ready\.md|软卡住/);
+  assert.match(out, /pid:\s*55|02-ready\.md|进行中/);
 });
 
 // --- Ticket 03: fullscreen keyboard → existing dispatch actions ---
@@ -1847,7 +1853,7 @@ test('renderTopBar shows subsequent model/effort or 运行时默认', () => {
 
 // --- 20260805-1244-vibe-handoff-and-resume / 03: status copy + key regression ---
 
-test('renderTopBar distinguishes awaiting-worker-exit (wait natural exit vs manual f)', () => {
+test('renderTopBar distinguishes awaiting-worker-exit (自动收尾中 vs [f] 待收尾)', () => {
   const autoOn = renderTopBar(snapWithBoard({
     status: 'awaiting-worker-exit',
     autoAdvance: true,
@@ -1862,8 +1868,9 @@ test('renderTopBar distinguishes awaiting-worker-exit (wait natural exit vs manu
       resume: { available: false, reason: 'not-needs-resume' },
     },
   }));
-  assert.match(autoOn, /等待.*退出|Worker.*退出/);
-  assert.match(autoOn, /自退|不强制杀/);
+  assert.match(autoOn, /状态:\s*自动收尾中/);
+  assert.match(autoOn, /下一步：可自动收尾 · 无需手开下一张/);
+  assert.doesNotMatch(autoOn, /\[f\] 待收尾/);
   assert.doesNotMatch(autoOn, /按\s*r|恢复会话/);
 
   const autoOff = renderTopBar(snapWithBoard({
@@ -1880,9 +1887,9 @@ test('renderTopBar distinguishes awaiting-worker-exit (wait natural exit vs manu
       resume: { available: false, reason: 'not-needs-resume' },
     },
   }));
-  assert.match(autoOff, /等待.*退出|Worker.*退出/);
-  assert.match(autoOff, /强制推进|按\s*f/);
-  assert.doesNotMatch(autoOff, /不强制杀/);
+  assert.match(autoOff, /状态:\s*\[f\] 待收尾/);
+  assert.match(autoOff, /下一步：Worker 已关票 · 按 f 强制推进/);
+  assert.doesNotMatch(autoOff, /状态:\s*自动收尾中/);
 });
 
 test('renderTopBar shows handoff-countdown remaining seconds and cancel hint', () => {
@@ -1932,7 +1939,7 @@ test('renderTopBar distinguishes session-interrupted reason summary from countdo
   assert.doesNotMatch(text, /交接倒计时|按\s*c/);
 });
 
-test('renderTopBar distinguishes needs-resume (press r) vs no session id', () => {
+test('renderTopBar distinguishes needs-resume ([r] 需恢复 vs 无法恢复)', () => {
   const withId = renderTopBar(snapWithBoard({
     status: 'needs-resume',
     autoAdvance: false,
@@ -1948,9 +1955,9 @@ test('renderTopBar distinguishes needs-resume (press r) vs no session id', () =>
       resume: { available: true, reason: null },
     },
   }));
-  assert.match(withId, /恢复|needs-resume/i);
-  assert.match(withId, /按\s*r|\[r\]/);
-  assert.doesNotMatch(withId, /无 session|no-session-id/i);
+  assert.match(withId, /状态:\s*\[r\] 需恢复/);
+  assert.match(withId, /下一步：按 r 恢复历史会话/);
+  assert.doesNotMatch(withId, /无法恢复|无 session|no-session-id/i);
   assert.doesNotMatch(withId, /自动收尾/);
 
   const noId = renderTopBar(snapWithBoard({
@@ -1968,9 +1975,9 @@ test('renderTopBar distinguishes needs-resume (press r) vs no session id', () =>
       resume: { available: false, reason: 'no-session-id' },
     },
   }));
-  assert.match(noId, /恢复|needs-resume/i);
-  assert.match(noId, /无 session|no-session-id/i);
-  assert.doesNotMatch(noId, /按\s*r|\[r\]/);
+  assert.match(noId, /状态:\s*无法恢复/);
+  assert.match(noId, /下一步：无法恢复 · 无 session id/);
+  assert.doesNotMatch(noId, /\[r\] 需恢复|按 r 恢复/);
 });
 
 test('renderFooter shows f only when forceAdvance available; r only when resume available', () => {
@@ -2554,4 +2561,274 @@ test('Ready 看板默认对齐 Enter: impl 优先于列表中更前的 wayfinder
   const middle = renderMiddlePanel(snap);
   assert.match(middle, /02-impl\.md.*←看板默认|←看板默认.*02-impl/);
   assert.doesNotMatch(middle, /01-explore\.md.*←看板默认/);
+});
+
+// --- 20260807-fullscreen-tui-ux-impl / 02: 边沿态显示名 + 主 CTA 矩阵 ---
+
+const occupiedSlot = {
+  issueId: '02-ready.md',
+  title: '实现票标题',
+  pid: 4242,
+  mode: 'vibe',
+  closed: false,
+  sessionId: 'sess-edge',
+};
+
+test('edge soft-stuck: 显示名 进行中；CTA 等 Worker 且勿再 Enter；Enter 仍可见', () => {
+  const snap = snapWithBoard({
+    status: 'soft-stuck',
+    autoAdvance: true,
+    slot: { ...occupiedSlot, closed: false },
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  });
+  assert.equal(operatorStatusDisplayName(snap), '进行中');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*进行中/);
+  assert.doesNotMatch(top, /软卡住|soft-stuck/);
+  assert.match(top, /下一步：等当前 Worker · 勿再 Enter 开票/);
+  assert.match(renderMainCta(snap), /勿再 Enter/);
+  // Contract: Enter stays discoverable (not hidden); emphasis is visual/CTA weight only.
+  assert.match(renderFooter(snap), /\[Enter\]/);
+});
+
+test('edge awaiting + auto off: [f] 待收尾；CTA 主推 f', () => {
+  const snap = snapWithBoard({
+    status: 'awaiting-worker-exit',
+    autoAdvance: false,
+    slot: { ...occupiedSlot, closed: true },
+    actions: {
+      forceAdvance: { available: true, reason: null },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  });
+  assert.equal(operatorStatusDisplayName(snap), '[f] 待收尾');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*\[f\] 待收尾/);
+  assert.match(top, /下一步：Worker 已关票 · 按 f 强制推进/);
+  assert.doesNotMatch(top, /自动收尾中|进行中|软卡住/);
+  assert.match(renderMainCta(snap), /按 f/);
+});
+
+test('edge awaiting + auto on: 自动收尾中；CTA 可自动收尾且与进行中/待收尾可分', () => {
+  const snap = snapWithBoard({
+    status: 'awaiting-worker-exit',
+    autoAdvance: true,
+    slot: { ...occupiedSlot, closed: true },
+    actions: {
+      forceAdvance: { available: true, reason: null },
+      resume: { available: false, reason: 'not-needs-resume' },
+    },
+  });
+  assert.equal(operatorStatusDisplayName(snap), '自动收尾中');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*自动收尾中/);
+  assert.match(top, /下一步：可自动收尾 · 无需手开下一张/);
+  assert.doesNotMatch(top, /\[f\] 待收尾/);
+  assert.doesNotMatch(top, /状态:\s*进行中/);
+  assert.doesNotMatch(top, /勿再 Enter 开票/);
+});
+
+test('edge needs-resume with session: [r] 需恢复；CTA 主推 r', () => {
+  const snap = snapWithBoard({
+    status: 'needs-resume',
+    autoAdvance: false,
+    slot: { ...occupiedSlot, closed: false, sessionId: 'sess-1' },
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: true, reason: null },
+    },
+  });
+  assert.equal(operatorStatusDisplayName(snap), '[r] 需恢复');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*\[r\] 需恢复/);
+  assert.match(top, /下一步：按 r 恢复历史会话/);
+  assert.doesNotMatch(top, /无法恢复/);
+  assert.match(renderMainCta(snap), /按 r/);
+});
+
+test('edge needs-resume without session: 无法恢复；不出现可用 r 诱导', () => {
+  const snap = snapWithBoard({
+    status: 'needs-resume',
+    autoAdvance: false,
+    slot: { ...occupiedSlot, closed: false, sessionId: null },
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: false, reason: 'no-session-id' },
+    },
+  });
+  assert.equal(operatorStatusDisplayName(snap), '无法恢复');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*无法恢复/);
+  assert.match(top, /下一步：无法恢复 · 无 session id/);
+  assert.doesNotMatch(top, /\[r\] 需恢复/);
+  assert.doesNotMatch(top, /按 r 恢复/);
+  assert.doesNotMatch(renderFooter(snap), /\[r\]/);
+});
+
+test('edge needs-confirmation: [y/n] 待确认；CTA 点名 y/n', () => {
+  const snap = snapWithBoard({
+    status: 'needs-confirmation',
+    autoAdvance: false,
+    slot: null,
+    pendingHitl: {
+      issueId: '03-hitl.md',
+      title: '人闸票',
+      entryClass: 'human',
+      runtime: 'grok',
+      mode: 'review',
+    },
+    actions: {
+      confirmHitl: { available: true, reason: null },
+      rejectHitl: { available: true, reason: null },
+    },
+  });
+  assert.equal(operatorStatusDisplayName(snap), '[y/n] 待确认');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*\[y\/n\] 待确认/);
+  assert.match(top, /下一步：按 y 同意 \/ n 拒绝/);
+  assert.match(renderMainCta(snap), /按 y|按 n|y 同意/);
+});
+
+test('edge stopped: 已停链；主路径指向退出/重新进入', () => {
+  const snap = snapWithBoard({
+    status: 'stopped',
+    stopped: true,
+    autoAdvance: false,
+    slot: null,
+  });
+  assert.equal(operatorStatusDisplayName(snap), '已停链');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*已停链/);
+  assert.match(top, /下一步：链已停 · 按 q 退出或重新进入/);
+  assert.match(renderMainCta(snap), /按 q/);
+});
+
+test('edge bootstrap error: 启动失败；CTA 看错误 · q', () => {
+  const snap = {
+    feature: '?',
+    status: 'error',
+    stopped: false,
+    slot: null,
+    messages: [{ type: 'error', text: 'boom bootstrap' }],
+    actions: {},
+  };
+  assert.equal(operatorStatusDisplayName(snap), '启动失败');
+  const top = renderTopBar(snap);
+  assert.match(top, /状态:\s*启动失败/);
+  assert.match(top, /下一步：查看错误 · 按 q 退出/);
+});
+
+test('edge occupied slot: 中带顶部最小槽摘要 id/标题/已关票/pid', () => {
+  const snap = snapWithBoard({
+    status: 'soft-stuck',
+    slot: {
+      issueId: '02-ready.md',
+      title: '很长的实现标题用来截断展示',
+      pid: 99,
+      mode: 'vibe',
+      closed: false,
+      sessionId: 'sess-x',
+    },
+  });
+  const middle = renderMiddlePanel(snap);
+  assert.match(middle, /当前槽/);
+  assert.match(middle, /02-ready\.md/);
+  assert.match(middle, /pid:\s*99/);
+  assert.match(middle, /已关票:\s*否/);
+  assert.match(middle, /标题:/);
+  // Summary sits above graph/list work object.
+  const slotIdx = middle.indexOf('当前槽');
+  const graphIdx = middle.indexOf('依赖图');
+  assert.ok(slotIdx >= 0 && graphIdx > slotIdx, 'slot summary must precede middle graph');
+});
+
+test('edge matrix: display name + CTA key binding per primary state', () => {
+  const cases = [
+    {
+      name: '进行中',
+      snap: snapWithBoard({
+        status: 'soft-stuck',
+        slot: { ...occupiedSlot, closed: false },
+      }),
+      display: '进行中',
+      ctaKey: /Enter|勿再 Enter/,
+    },
+    {
+      name: '[f] 待收尾',
+      snap: snapWithBoard({
+        status: 'awaiting-worker-exit',
+        autoAdvance: false,
+        slot: { ...occupiedSlot, closed: true },
+        actions: { forceAdvance: { available: true, reason: null } },
+      }),
+      display: '[f] 待收尾',
+      ctaKey: /按 f/,
+    },
+    {
+      name: '自动收尾中',
+      snap: snapWithBoard({
+        status: 'awaiting-worker-exit',
+        autoAdvance: true,
+        slot: { ...occupiedSlot, closed: true },
+      }),
+      display: '自动收尾中',
+      ctaKey: /可自动收尾/,
+    },
+    {
+      name: '[r] 需恢复',
+      snap: snapWithBoard({
+        status: 'needs-resume',
+        slot: { ...occupiedSlot, sessionId: 's1' },
+        actions: { resume: { available: true, reason: null } },
+      }),
+      display: '[r] 需恢复',
+      ctaKey: /按 r/,
+    },
+    {
+      name: '无法恢复',
+      snap: snapWithBoard({
+        status: 'needs-resume',
+        slot: { ...occupiedSlot, sessionId: null },
+        actions: { resume: { available: false, reason: 'no-session-id' } },
+      }),
+      display: '无法恢复',
+      ctaKey: /无 session id/,
+      noR: true,
+    },
+    {
+      name: '[y/n] 待确认',
+      snap: snapWithBoard({
+        status: 'needs-confirmation',
+        slot: null,
+        pendingHitl: { issueId: 'h.md', entryClass: 'human' },
+        actions: {
+          confirmHitl: { available: true, reason: null },
+          rejectHitl: { available: true, reason: null },
+        },
+      }),
+      display: '[y/n] 待确认',
+      ctaKey: /y 同意|n 拒绝/,
+    },
+    {
+      name: '已停链',
+      snap: snapWithBoard({ status: 'stopped', stopped: true, slot: null }),
+      display: '已停链',
+      ctaKey: /按 q/,
+    },
+  ];
+
+  for (const c of cases) {
+    assert.equal(operatorStatusDisplayName(c.snap), c.display, c.name);
+    const top = renderTopBar(c.snap);
+    assert.match(top, new RegExp(`状态:\\s*${c.display.replace(/[[\]]/g, '\\$&')}`), c.name);
+    assert.match(top, /下一步：/, c.name);
+    assert.match(renderMainCta(c.snap) ?? '', c.ctaKey, c.name);
+    if (c.noR) {
+      assert.doesNotMatch(top, /按 r 恢复/);
+      assert.doesNotMatch(renderFooter(c.snap), /\[r\]/);
+    }
+  }
 });

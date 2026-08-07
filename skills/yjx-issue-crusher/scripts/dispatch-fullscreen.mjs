@@ -1,5 +1,5 @@
 /**
- * Ink fullscreen dispatch shell (tickets 01–05 + 20260807 Ready three-band).
+ * Ink fullscreen dispatch shell (tickets 01–05 + 20260807 three-band UX).
  *
  * Interactive TTY path: alternate-screen layout with **three bands**
  * 顶带 / 中带 / 底带. Keyboard drives the same Dispatch Surface
@@ -11,9 +11,10 @@
  * Chain Run / surface.tick. No graph dispatch, no embedded Worker terminal.
  *
  * Ready (idle + empty slot): top shows 可开干/暂无票 + 「下一步」主 CTA;
- * middle is the work object (executable list); empty slot does **not**
- * occupy a permanent band. Occupied slot / HITL summary merges into the
- * middle top when present.
+ * edge matrix uses operator display names (进行中 / [f] 待收尾 / 自动收尾中 /
+ * [r] 需恢复 / 无法恢复 / [y/n] 待确认 / 已停链 …) with matching CTA lines.
+ * Middle is the work object (executable list + optional slot summary);
+ * empty slot does **not** occupy a permanent band.
  *
  * Ticket 05 polish: full-height column layout (middle flexGrow), product
  * copy without debug bracket labels, primary/secondary field hierarchy,
@@ -252,6 +253,52 @@ function readyStatusDisplayName(snap) {
 }
 
 /**
+ * Whether needs-resume can advertise r (same gate as footer / surface.actions).
+ * @param {object | null | undefined} snap
+ * @returns {boolean}
+ */
+function resumeSessionAvailable(snap) {
+  const resume = snap?.actions?.resume;
+  if (resume?.reason === 'no-session-id') return false;
+  if (resume?.available === true) return true;
+  if (resume?.available === false) return false;
+  return Boolean(snap?.slot?.sessionId);
+}
+
+/**
+ * Operator-facing chain status display name (not internal status ids).
+ * Covers Ready + primary edge matrix from the fullscreen UX redesign.
+ * Secondary chain states (countdown / interrupted / …) return null so the
+ * status line can keep their existing distinguishability hints.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string | null}
+ */
+export function operatorStatusDisplayName(snap) {
+  if (!snap) return null;
+
+  if (snap.status === 'error') return '启动失败';
+  if (snap.status === 'stopped') return '已停链';
+
+  const readyName = readyStatusDisplayName(snap);
+  if (readyName) return readyName;
+
+  switch (snap.status) {
+    case 'soft-stuck':
+      return '进行中';
+    case 'awaiting-worker-exit':
+      // Omitted autoAdvance projects as 开 (same as Ready CTA / top dial).
+      return snap.autoAdvance === false ? '[f] 待收尾' : '自动收尾中';
+    case 'needs-resume':
+      return resumeSessionAvailable(snap) ? '[r] 需恢复' : '无法恢复';
+    case 'needs-confirmation':
+      return '[y/n] 待确认';
+    default:
+      return null;
+  }
+}
+
+/**
  * Ready-path main CTA line for the top band.
  * Templates (operator language):
  * - has highlight → 下一步：开 {id} {title} · 按 Enter
@@ -291,16 +338,74 @@ export function renderReadyMainCta(snap, { selectedIndex = null } = {}) {
 }
 
 /**
+ * Main CTA line for the top band (Ready + edge matrix).
+ * Phrase shape: 下一步：… · 按 X (wait states may recommend「等」).
+ * Expression only — does not redefine orchestration gates.
+ *
+ * @param {object | null | undefined} snap
+ * @param {{ selectedIndex?: number | null }} [opts]
+ * @returns {string | null}
+ */
+export function renderMainCta(snap, { selectedIndex = null } = {}) {
+  if (!snap) return null;
+
+  if (snap.status === 'error') {
+    return '下一步：查看错误 · 按 q 退出';
+  }
+  if (snap.status === 'stopped') {
+    return '下一步：链已停 · 按 q 退出或重新进入';
+  }
+
+  const ready = renderReadyMainCta(snap, { selectedIndex });
+  if (ready) return ready;
+
+  switch (snap.status) {
+    case 'soft-stuck':
+      return '下一步：等当前 Worker · 勿再 Enter 开票';
+    case 'awaiting-worker-exit':
+      return snap.autoAdvance === false
+        ? '下一步：Worker 已关票 · 按 f 强制推进'
+        : '下一步：可自动收尾 · 无需手开下一张';
+    case 'needs-resume':
+      return resumeSessionAvailable(snap)
+        ? '下一步：按 r 恢复历史会话'
+        : '下一步：无法恢复 · 无 session id';
+    case 'needs-confirmation':
+      return '下一步：按 y 同意 / n 拒绝';
+    case 'handoff-countdown': {
+      const remMs = Number(snap.handoffCountdownRemainingMs);
+      const sec = Number.isFinite(remMs)
+        ? Math.max(0, Math.ceil(remMs / 1000))
+        : null;
+      return sec != null
+        ? `下一步：${sec}s 后开下一张 · 按 c 取消`
+        : '下一步：倒计时后开下一张 · 按 c 取消';
+    }
+    case 'session-interrupted': {
+      const reason = snap.interruptReason != null && String(snap.interruptReason).trim() !== ''
+        ? String(snap.interruptReason).trim()
+        : null;
+      const resume = snap.actions?.resume;
+      const rPart = resume?.available === true
+        ? '；可按 r 挂回'
+        : resume?.reason === 'no-session-id'
+          ? '；无 session id'
+          : '';
+      return reason
+        ? `下一步：会话中断（${reason}）· 可按 f${rPart}`
+        : `下一步：会话中断 · 可按 f${rPart}`;
+    }
+    case 'awaiting-session-end':
+      return '下一步：缺会话结束信号 · 可按 f 或 Enter';
+    default:
+      return null;
+  }
+}
+
+/**
  * Operator-facing status line for the top bar.
- * Ready idle uses 可开干 / 暂无票 (not internal「空闲」).
- * Edge states must stay distinguishable without reading SKILL.md:
- * - awaiting-worker-exit → wait for natural Worker exit (never auto-kill)
- * - awaiting-worker-exit + auto off → may use f after Closed
- * - awaiting-session-end → Closed/wayfinder waiting end; may use f or Enter
- * - session-interrupted → no success (death/failure/interrupted); reason summary; f
- * - handoff-countdown → seconds left; press c to cancel auto next
- * - needs-resume + r available → press r (history, not next ticket)
- * - needs-resume + no session id → explicit dead-end, no silent empty window
+ * Primary matrix uses operator display names (可开干 / 进行中 / [f] 待收尾 …).
+ * Secondary chain states keep short Chinese labels + distinguishability hints.
  *
  * @param {object | null | undefined} snap
  * @returns {string}
@@ -311,20 +416,15 @@ function statusLine(snap) {
   // Avoid "已停链 [已停链]" when status is already the stopped label.
   const stoppedMark = snap.stopped && status !== 'stopped' ? ' [已停链]' : '';
 
-  const readyName = readyStatusDisplayName(snap);
-  if (readyName) {
-    return `状态: ${readyName}${stoppedMark}`;
+  const operatorName = operatorStatusDisplayName(snap);
+  if (operatorName) {
+    return `状态: ${operatorName}${stoppedMark}`;
   }
 
   const label = status ? statusLabelZh(status) : '—';
 
   let hint = '';
-  if (status === 'awaiting-worker-exit') {
-    // Closed + still alive: wait natural exit / session-end signal (never auto-kill).
-    hint = snap.autoAdvance === false
-      ? '（等会话结束/进程自退；可按 f 强制推进）'
-      : '（等会话结束/进程自退，不强制杀）';
-  } else if (status === 'awaiting-session-end') {
+  if (status === 'awaiting-session-end') {
     hint = '（缺会话结束信号；可按 f 或 Enter）';
   } else if (status === 'session-interrupted') {
     const reason = snap.interruptReason != null && String(snap.interruptReason).trim() !== ''
@@ -347,21 +447,6 @@ function statusLine(snap) {
     hint = sec != null
       ? `（${sec}s 后开下一张；按 c 取消）`
       : '（倒计时后开下一张；按 c 取消）';
-  } else if (status === 'needs-resume') {
-    // Prefer action projection (same gate as footer [r]); fall back to slot id.
-    const resume = snap.actions?.resume;
-    if (resume?.reason === 'no-session-id') {
-      hint = '（无 session id）';
-    } else if (resume?.available === true) {
-      hint = '（按 r）';
-    } else if (resume?.available === false) {
-      // Unavailable for a reason other than no-id: do not advertise r.
-      hint = resume.reason ? `（${resume.reason}）` : '';
-    } else if (snap.slot?.sessionId) {
-      hint = '（按 r）';
-    } else {
-      hint = '（无 session id）';
-    }
   }
 
   return `状态: ${label}${hint}${stoppedMark}`;
@@ -438,12 +523,13 @@ export function subsequentFlagLabel(value) {
 
 /**
  * Top band: feature / runtime / subsequent mode / model / effort /
- * auto-open-next / chain status display name + Ready 主 CTA.
+ * auto-open-next / chain status display name + 主 CTA.
  * Pure — safe for unit tests without a terminal.
  * Product copy only (no `[顶栏]` debug prefix).
  *
  * Lines so model/effort, 「自动开下一张」and chain status stay discoverable
- * after wrap on narrow terminals. Ready adds a dedicated 「下一步」CTA line.
+ * after wrap on narrow terminals. Adds a dedicated 「下一步」CTA line when
+ * the snapshot maps to Ready or a primary/secondary edge CTA.
  *
  * @param {object | null | undefined} snap
  * @param {{ selectedIndex?: number | null }} [opts]
@@ -473,7 +559,7 @@ export function renderTopBar(snap, { selectedIndex = null } = {}) {
     `自动开下一张: ${autoLabel}`,
     statusLine(snap),
   ].join('  ·  ');
-  const cta = renderReadyMainCta(snap, { selectedIndex });
+  const cta = renderMainCta(snap, { selectedIndex });
   return cta ? `${primary}\n${critical}\n${cta}` : `${primary}\n${critical}`;
 }
 
