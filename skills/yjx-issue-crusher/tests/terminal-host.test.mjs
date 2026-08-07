@@ -4,11 +4,13 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync, unlinkSync } from 'node:fs';
 
 import {
   HOST_IDS,
   buildDefaultHostChain,
   createTerminalHostLauncher,
+  createWindowsTerminalHost,
   normalizeTerminalHostId,
 } from '../scripts/terminal-host.mjs';
 import { createRealLauncher } from '../scripts/real-launcher.mjs';
@@ -351,4 +353,54 @@ test('createRealLauncher falls back to window when terminal-host tab fails', asy
     }),
   );
   assert.equal(result.pid, 777);
+});
+
+test('windows-terminal openTab: 中文 argv 经环境变量传递,脚本保持纯 ASCII', () => {
+  const captured = {};
+  const host = createWindowsTerminalHost({
+    platform: 'win32',
+    runWt(wtArgs, spawnOptions) {
+      captured.wtArgs = wtArgs;
+      captured.env = spawnOptions.env;
+      return { status: 0, stderr: '' };
+    },
+    resolveWorkerPid() {
+      return 4242;
+    },
+  });
+
+  const prompt =
+    '/wayfinder .scratch/20260807-agent-plan-discipline/issues/03-写测研究业务场景选集.md\n'
+    + 'Hard constraints: Wayfinder completion is Status: resolved (not impl Closed alone).';
+  const result = host.openTab(
+    'grok',
+    ['--cwd', 'D:/proj', '-p', prompt],
+    { cwd: 'D:/proj' },
+  );
+
+  assert.equal(result.pid, 4242);
+  // 载荷经环境变量注入:Windows env 为 UTF-16,不经过「脚本文件按系统代码页(CP936)解码」,
+  // 中文路径/多行 prompt 不会被读成 GBK 乱码。
+  assert.equal(captured.env.YJX_LAUNCH_CMD, 'grok');
+  assert.equal(captured.env.YJX_LAUNCH_CWD, 'D:/proj');
+  assert.ok(captured.env.YJX_LAUNCH_ARGSTR.includes('写测研究业务场景选集'));
+  assert.ok(captured.env.YJX_LAUNCH_ARGSTR.includes('/wayfinder'));
+  // pid 文件路径也经 env 传递,不落入脚本字面量
+  assert.ok(String(captured.env.YJX_LAUNCH_PIDFILE).includes('yjx-ic-pid-'));
+  // wt 新标签目录仍显式传 -d <cwd>
+  const dIdx = captured.wtArgs.indexOf('-d');
+  assert.ok(dIdx >= 0);
+  assert.equal(captured.wtArgs[dIdx + 1], 'D:/proj');
+  // 脚本文件:仅 ASCII 模板,业务字符串不落盘(避免 PowerShell 5.1 按 ANSI 读脚本乱码)
+  const fileIdx = captured.wtArgs.indexOf('-File');
+  const scriptFile = captured.wtArgs[fileIdx + 1];
+  const script = readFileSync(scriptFile, 'utf8');
+  assert.match(script, /\$psi\.Arguments = \$env:YJX_LAUNCH_ARGSTR/);
+  assert.doesNotMatch(script, /[^\x00-\x7F]/u);
+  assert.ok(!script.includes('写测'));
+  try {
+    unlinkSync(scriptFile);
+  } catch {
+    // best-effort temp cleanup
+  }
 });
