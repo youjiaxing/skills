@@ -552,7 +552,7 @@ export function renderTopBar(snap, { selectedIndex = null } = {}) {
     `后续 mode: ${mode}${modeHint(mode)}`,
   ].join('  ·  ');
   // Critical operator dials on their own line — short enough for narrow TTYs.
-  // subsequent model/effort stay here so operators can trust the o-flow source.
+  // subsequent model/effort stay here so operators can trust the model/effort source.
   const critical = [
     `后续 model: ${modelLabel}`,
     `后续 effort: ${effortLabel}`,
@@ -691,33 +691,165 @@ export function renderSlotPanel(snap, { maxFieldWidth = DEFAULT_FIELD_MAX } = {}
 }
 
 /**
- * Bottom bar: available keys from snapshot.actions (+ always t/q and list nav).
- * Product key help only (no `[底栏]` debug prefix). Dimmed in the shell.
+ * Keys that should read "hot" in the footer (main CTA + available edge keys).
+ * Expression only — mirrors CTA emphasis, does not change command availability.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {Set<string>}
+ */
+export function footerHotKeys(snap) {
+  const hot = new Set();
+  if (!snap) return hot;
+
+  const actions = snap.actions || {};
+  // Available edge keys are always hot when shown.
+  if (actions.forceAdvance?.available) hot.add('f');
+  if (actions.cancelHandoffCountdown?.available) hot.add('c');
+  if (actions.resume?.available) hot.add('r');
+  if (actions.confirmHitl?.available) hot.add('y');
+  if (actions.rejectHitl?.available) hot.add('n');
+
+  if (snap.status === 'stopped' || snap.status === 'error') {
+    hot.add('q');
+    return hot;
+  }
+
+  if (snap.status === 'idle' && !snap.stopped) {
+    if (readyExecutables(snap).length > 0) hot.add('Enter');
+    return hot;
+  }
+
+  switch (snap.status) {
+    case 'soft-stuck':
+      // Wait — Enter stays visible but not hot.
+      break;
+    case 'awaiting-worker-exit':
+      if (snap.autoAdvance === false) hot.add('f');
+      break;
+    case 'needs-resume':
+      if (resumeSessionAvailable(snap)) hot.add('r');
+      break;
+    case 'needs-confirmation':
+      hot.add('y');
+      hot.add('n');
+      break;
+    case 'handoff-countdown':
+      hot.add('c');
+      break;
+    case 'session-interrupted':
+      hot.add('f');
+      if (actions.resume?.available) hot.add('r');
+      break;
+    case 'awaiting-session-end':
+      hot.add('f');
+      hot.add('Enter');
+      break;
+    default:
+      break;
+  }
+  return hot;
+}
+
+/**
+ * Structured footer key legend.
+ * Group order (left → right): edge (available only) → main path (always) →
+ * m/v (hidden when stopped) → t / q.
+ * Hot = main CTA named key or available edge; Enter dim when not startable.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {Array<{
+ *   id: string,
+ *   text: string,
+ *   group: 'edge' | 'main' | 'config' | 'secondary',
+ *   hot?: boolean,
+ *   dim?: boolean,
+ * }>}
+ */
+export function buildFooterItems(snap) {
+  const actions = snap?.actions || {};
+  const hot = footerHotKeys(snap);
+  /** @type {Array<{ id: string, text: string, group: 'edge' | 'main' | 'config' | 'secondary', hot?: boolean, dim?: boolean }>} */
+  const items = [];
+
+  // A — edge keys only when available.
+  if (actions.forceAdvance?.available) {
+    items.push({ id: 'f', text: '[f] 强制推进', group: 'edge', hot: true });
+  }
+  if (actions.cancelHandoffCountdown?.available) {
+    items.push({ id: 'c', text: '[c] 取消倒计时', group: 'edge', hot: true });
+  }
+  if (actions.resume?.available) {
+    items.push({ id: 'r', text: '[r] 恢复历史', group: 'edge', hot: true });
+  }
+  if (actions.confirmHitl?.available) {
+    items.push({ id: 'y', text: '[y] 同意', group: 'edge', hot: true });
+  }
+  if (actions.rejectHitl?.available) {
+    items.push({ id: 'n', text: '[n] 拒绝', group: 'edge', hot: true });
+  }
+
+  // B — main path always (Enter / s / nav). Enter dim when not recommended.
+  const enterHot = hot.has('Enter');
+  items.push({
+    id: 'Enter',
+    text: '[Enter] 开始',
+    group: 'main',
+    hot: enterHot,
+    dim: !enterHot,
+  });
+  const autoLabel = snap?.autoAdvance === false ? '关' : '开';
+  items.push({
+    id: 's',
+    text: `[s] 自动开下一张(${autoLabel})`,
+    group: 'main',
+    hot: hot.has('s'),
+  });
+  // Navigation moves highlight only; Enter starts. Arrows ≡ j/k. Never hide for HITL.
+  items.push({
+    id: 'nav',
+    text: '[↑↓/j/k|数字] 导航',
+    group: 'main',
+  });
+
+  // C — m/v when subsequent config is available (hidden when stopped).
+  if (actions.setModelEffort?.available !== false) {
+    items.push({
+      id: 'm',
+      text: '[m] 模型',
+      group: 'config',
+      hot: hot.has('m'),
+    });
+  }
+  if (actions.setMode?.available !== false) {
+    items.push({
+      id: 'v',
+      text: '[v] 模式',
+      group: 'config',
+      hot: hot.has('v'),
+    });
+  }
+
+  // D — secondary: refresh + quit (optional global `g` deferred).
+  items.push({ id: 't', text: '[t] 刷新', group: 'secondary', hot: hot.has('t') });
+  items.push({ id: 'q', text: '[q] 退出', group: 'secondary', hot: hot.has('q') });
+
+  return items;
+}
+
+/**
+ * Bottom bar: available keys from snapshot.actions (+ always Enter/s/nav/t/q).
+ * Product key help only (no `[底栏]` debug prefix).
+ * Groups: edge → main → m/v → t/q. Chinese short labels; m=模型 v=模式.
  *
  * @param {object | null | undefined} snap
  * @returns {string}
  */
 export function renderFooter(snap) {
-  const actions = snap?.actions || {};
-  const keys = [];
-  if (actions.setMode?.available !== false) keys.push('[m] mode 拨杆');
-  // o opens model→effort transactional menu (subsequent only; no live hot-switch).
-  if (actions.setModelEffort?.available !== false) keys.push('[o] model/effort');
-  if (actions.forceAdvance?.available) keys.push('[f] 强制推进');
-  if (actions.cancelHandoffCountdown?.available) keys.push('[c] 取消倒计时');
-  if (actions.resume?.available) keys.push('[r] 恢复历史');
-  if (actions.confirmHitl?.available) keys.push('[y] 同意');
-  if (actions.rejectHitl?.available) keys.push('[n] 拒绝');
-  // s is the auto-open-next dial (not chain stop). Show current state plainly.
-  const autoLabel = snap?.autoAdvance === false ? '关' : '开';
-  keys.push(`[s] 自动开下一张(${autoLabel})`);
-  // Navigation moves highlight only; Enter starts. Arrows ≡ j/k.
-  keys.push('[t] 刷新', '[↑↓/j/k|数字] 导航', '[Enter] 开始', '[q] 退出');
-  return keys.join('  ');
+  return buildFooterItems(snap).map((item) => item.text).join('  ');
 }
 
 /**
- * Sync model list fallback for the fullscreen `o` flow.
+ * Sync model list fallback for the fullscreen model/effort (`m`) flow.
  * Prefer async {@link resolveModelItems} (injectable Grok discovery) at open time.
  * - claude: static alias hints + 运行时默认
  * - grok (sync, no discovery): 运行时默认 only — real list comes from discovery
@@ -839,7 +971,7 @@ export function renderModelEffortMenuFrame(state) {
   if (!state || !state.open) return '';
   const items = state.stage === 'model' ? state.modelItems : state.effortItems;
   const title = state.stage === 'model'
-    ? '选择 subsequent model（确认后选 effort；整次 o 事务）'
+    ? '选择 subsequent model（确认后选 effort；整次 m 事务）'
     : '选择 subsequent effort（确认后提交；q/Esc 取消整次事务）';
   // Reuse startup list chrome so j/k/digits/Enter/q match operator muscle memory.
   return renderStartupSelectFrame({
@@ -871,7 +1003,7 @@ export function renderNotice(snap, notice = null) {
 
 /**
  * Map one fullscreen keypress to a dispatch command or list-selection intent.
- * Mode dial: bare `m` toggles subsequent review ↔ vibe (no readline args).
+ * `m` → model/effort menu (was o); `v` → mode dial review↔vibe (was m).
  * Enter / return → start (highlighted id resolved by handleFullscreenKey).
  * Arrow ↓ ≡ j (selectNext); arrow ↑ ≡ k (selectPrev) — highlight only.
  *
@@ -906,12 +1038,14 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
   if (lower === 'r') return { type: 'resume' };
   if (lower === 'y') return { type: 'confirmHitl' };
   if (lower === 'n') return { type: 'rejectHitl' };
-  if (lower === 'm') {
+  // m opens model→effort transactional menu (was o).
+  if (lower === 'm') return { type: 'openModelEffort' };
+  // v dials subsequent mode review↔vibe (was m).
+  if (lower === 'v') {
     const next = subsequentMode === 'vibe' ? 'review' : 'vibe';
     return { type: 'setMode', arg: next };
   }
-  // o opens model→effort transactional menu (not mode; m stays mode-only).
-  if (lower === 'o') return { type: 'openModelEffort' };
+  // o intentionally unbound — no dual-key teaching split with m.
   if (lower === 'j') return { type: 'selectNext' };
   if (lower === 'k') return { type: 'selectPrev' };
   if (/^[1-9]$/.test(lower)) return { type: 'selectIndex', arg: Number(lower) - 1 };
@@ -1035,7 +1169,7 @@ export function DispatchShell({
   const middleLines = renderMiddlePanel(snap, { selectedIndex }).split('\n');
   const noticeLine = renderNotice(snap, notice);
   const topLines = renderTopBar(snap, { selectedIndex }).split('\n');
-  const footer = renderFooter(snap);
+  const footerItems = buildFooterItems(snap);
 
   // In-app overlay reuses the same alt-screen session (no nested DECSET on Windows).
   if (modelEffortMenu?.open) {
@@ -1172,8 +1306,22 @@ export function DispatchShell({
         paddingX: 1,
         width: '100%',
       },
-      // Weak band: key help.
-      createElement(Text, { dimColor: true }, footer),
+      // Key legend: hot (CTA / edge) bold; others dim (Enter dim when not startable).
+      ...footerItems.flatMap((item, index) => {
+        const prefix = index === 0 ? '' : '  ';
+        const isHot = Boolean(item.hot) && !item.dim;
+        return [
+          createElement(
+            Text,
+            {
+              key: `fk-${item.id}`,
+              bold: isHot,
+              dimColor: !isHot,
+            },
+            `${prefix}${item.text}`,
+          ),
+        ];
+      }),
     ),
   );
 }
@@ -1276,7 +1424,7 @@ function DispatchFullscreenApp({
 
     const intervalMs = Math.max(250, pollIntervalMs);
     const pollId = setInterval(() => {
-      // Freeze poll while the o-menu owns the keyboard (avoid mid-menu redraw races).
+      // Freeze poll while the model/effort menu owns the keyboard (avoid mid-menu redraw races).
       if (cancelled || busyRef.current || quittingRef.current || menuRef.current?.open) return;
       busyRef.current = true;
       (async () => {

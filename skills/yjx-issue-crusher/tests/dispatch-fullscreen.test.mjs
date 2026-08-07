@@ -16,7 +16,8 @@
  * 10. ticket 04 — arrow keys ≡ j/k; footer labels Enter / arrows / s auto
  * 11. ticket 05 — fullscreen layout polish: stretch middle, hierarchy, no ghost labels
  * 12. 20260804-1006 / 02 — hard layout: numeric terminal height, footer pin, top wrap
- * 13. 20260804-1802 / 02 — fullscreen `o` model→effort transactional menu + top/footer
+ * 13. 20260804-1802 / 02 — fullscreen model→effort transactional menu + top/footer
+ * 14. 20260807-fullscreen-tui-ux-impl / 03 — m/v remap + footer groups / hot·dim
  */
 
 import assert from 'node:assert/strict';
@@ -43,6 +44,7 @@ import {
   nextListSelection,
   openModelEffortMenu,
   boardDefaultExecutable,
+  buildFooterItems,
   renderFooter,
   renderMiddlePanel,
   renderModelEffortMenuFrame,
@@ -802,7 +804,7 @@ test('runFullscreenDispatch poll tick refreshes shell from successive snapshots'
 
 // --- Ticket 03: fullscreen keyboard → existing dispatch actions ---
 
-test('mapFullscreenKey maps m/f/r/y/n/s/t/q and list nav to surface command types', () => {
+test('mapFullscreenKey maps m/v/f/r/y/n/s/t/q and list nav to surface command types', () => {
   assert.deepEqual(mapFullscreenKey('q'), { type: 'quit' });
   assert.deepEqual(mapFullscreenKey('Q'), { type: 'quit' });
   // Fullscreen s toggles auto-open-next (not chain stop).
@@ -813,15 +815,20 @@ test('mapFullscreenKey maps m/f/r/y/n/s/t/q and list nav to surface command type
   assert.deepEqual(mapFullscreenKey('y'), { type: 'confirmHitl' });
   assert.deepEqual(mapFullscreenKey('n'), { type: 'rejectHitl' });
 
-  // Mode dial: single `m` toggles subsequent mode (fullscreen has no readline arg).
+  // Remap: m → model/effort；v → mode 拨杆（原 m）。
+  assert.deepEqual(mapFullscreenKey('m'), { type: 'openModelEffort' });
+  assert.deepEqual(mapFullscreenKey('M'), { type: 'openModelEffort' });
   assert.deepEqual(
-    mapFullscreenKey('m', { subsequentMode: 'review' }),
+    mapFullscreenKey('v', { subsequentMode: 'review' }),
     { type: 'setMode', arg: 'vibe' },
   );
   assert.deepEqual(
-    mapFullscreenKey('m', { subsequentMode: 'vibe' }),
+    mapFullscreenKey('v', { subsequentMode: 'vibe' }),
     { type: 'setMode', arg: 'review' },
   );
+  // 旧 o 不再作 model 入口（避免双键教学分裂）；旧 m 不再拨 mode。
+  assert.equal(mapFullscreenKey('o'), null);
+  assert.notEqual(mapFullscreenKey('m')?.type, 'setMode');
 
   assert.deepEqual(mapFullscreenKey('j'), { type: 'selectNext' });
   assert.deepEqual(mapFullscreenKey('k'), { type: 'selectPrev' });
@@ -887,7 +894,7 @@ test('handleFullscreenKey arrow keys only move highlight — never spawn', async
   assert.equal(surface.snapshot().slot, null);
 });
 
-test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker', async () => {
+test('handleFullscreenKey v dial switches mode, shows vibe tip, pins live worker', async () => {
   const first = candidate('01-first.md');
   const second = candidate('02-second.md');
   const { tracker, launcher, surface, modeConfig, chain } = makeSurface({
@@ -898,7 +905,7 @@ test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker
   await surface.tick();
   assert.equal(surface.snapshot().slot.mode, 'review');
 
-  const result = await handleFullscreenKey(surface, 'm', {
+  const result = await handleFullscreenKey(surface, 'v', {
     subsequentMode: surface.snapshot().subsequentMode,
   });
   assert.equal(result.quit, undefined);
@@ -908,11 +915,11 @@ test('handleFullscreenKey m dial switches mode, shows vibe tip, pins live worker
   assert.equal(surface.snapshot().slot.mode, 'review', 'live worker stays pinned');
 
   // Dial back to review, then complete first so next spawn takes subsequent mode.
-  await handleFullscreenKey(surface, 'm', {
+  await handleFullscreenKey(surface, 'v', {
     subsequentMode: surface.snapshot().subsequentMode,
   });
   assert.equal(surface.snapshot().subsequentMode, 'review');
-  await handleFullscreenKey(surface, 'm', {
+  await handleFullscreenKey(surface, 'v', {
     subsequentMode: surface.snapshot().subsequentMode,
   });
   assert.equal(surface.snapshot().subsequentMode, 'vibe');
@@ -1146,6 +1153,7 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
     autoAdvance: false,
     actions: {
       setMode: { available: true },
+      setModelEffort: { available: true },
       forceAdvance: { available: false },
       resume: { available: false },
       confirmHitl: { available: true },
@@ -1157,12 +1165,13 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
     },
   }));
 
-  assert.match(footer, /\[m\]/);
-  assert.match(footer, /\[y\]/);
-  assert.match(footer, /\[n\]/);
+  assert.match(footer, /\[m\].*模型/);
+  assert.match(footer, /\[v\].*模式/);
+  assert.match(footer, /\[y\].*同意/);
+  assert.match(footer, /\[n\].*拒绝/);
   assert.match(footer, /\[s\].*自动/);
   assert.doesNotMatch(footer, /\[s\] 停链/);
-  assert.match(footer, /\[t\]/);
+  assert.match(footer, /\[t\].*刷新/);
   assert.match(footer, /\[q\].*退出/);
   assert.doesNotMatch(footer, /\[q\] 退出并停链/);
   // Navigation + start labels: j/k + arrows + digits, Enter start, s auto dial.
@@ -1173,6 +1182,8 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
   assert.match(footer, /\[s\].*自动/);
   // Must not claim selection never starts / is display-only forever.
   assert.doesNotMatch(footer, /只影响显示|永不派票|永不开票|不派票/);
+  // HITL: nav always present; no remap migration notice.
+  assert.doesNotMatch(footer, /键位已改|已 remap|迁移/);
 
   const text = renderToString(createElement(DispatchShell, {
     snap: snapWithBoard(),
@@ -1182,9 +1193,10 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
   assert.match(text, /mode → vibe|后果提示/);
   assert.doesNotMatch(text, /鼠标|mouse|embed worker|内嵌 Worker|graph dispatch|图上派票\s*开/i);
   assert.match(text, /不可图上派票|只读/);
+  assert.doesNotMatch(text, /键位已改|已 remap/);
 });
 
-test('runFullscreenDispatch m then q: mode dial + stop-and-exit via keys', async () => {
+test('runFullscreenDispatch v then q: mode dial + stop-and-exit via keys', async () => {
   const { surface, modeConfig } = makeSurface({
     candidates: [candidate('01-first.md')],
     mode: 'review',
@@ -1207,7 +1219,7 @@ test('runFullscreenDispatch m then q: mode dial + stop-and-exit via keys', async
   });
 
   await new Promise((r) => setTimeout(r, 100));
-  stdin.write('m');
+  stdin.write('v');
   await new Promise((r) => setTimeout(r, 120));
   assert.equal(modeConfig.readMode(), 'vibe');
   stdin.write('q');
@@ -1790,11 +1802,12 @@ test('regression 03: soft-stuck Enter rejects second; cold mount stays empty unt
   ]);
 });
 
-test('regression 03: m/f/r/y/n/t/q still map and drive surface without weakening', async () => {
+test('regression 03: v/m/f/r/y/n/t/q still map and drive surface without weakening', async () => {
   assert.deepEqual(
-    mapFullscreenKey('m', { subsequentMode: 'review' }),
+    mapFullscreenKey('v', { subsequentMode: 'review' }),
     { type: 'setMode', arg: 'vibe' },
   );
+  assert.deepEqual(mapFullscreenKey('m'), { type: 'openModelEffort' });
   assert.deepEqual(mapFullscreenKey('f'), { type: 'forceAdvance' });
   assert.deepEqual(mapFullscreenKey('r'), { type: 'resume' });
   assert.deepEqual(mapFullscreenKey('y'), { type: 'confirmHitl' });
@@ -1820,16 +1833,17 @@ test('regression 03: m/f/r/y/n/t/q still map and drive surface without weakening
   assert.equal(surface.snapshot().autoAdvance, false);
 });
 
-// --- 20260804-1802-tui-model-effort / 02: fullscreen o model→effort menu ---
+// --- 20260804-1802-tui-model-effort / 02: fullscreen model→effort menu (key m) ---
 
-test('mapFullscreenKey o opens model/effort flow; m still only toggles mode', () => {
-  assert.deepEqual(mapFullscreenKey('o'), { type: 'openModelEffort' });
-  assert.deepEqual(mapFullscreenKey('O'), { type: 'openModelEffort' });
+test('mapFullscreenKey m opens model/effort flow; v toggles mode; o unbound', () => {
+  assert.deepEqual(mapFullscreenKey('m'), { type: 'openModelEffort' });
+  assert.deepEqual(mapFullscreenKey('M'), { type: 'openModelEffort' });
   assert.deepEqual(
-    mapFullscreenKey('m', { subsequentMode: 'review' }),
+    mapFullscreenKey('v', { subsequentMode: 'review' }),
     { type: 'setMode', arg: 'vibe' },
   );
-  assert.notEqual(mapFullscreenKey('m', { subsequentMode: 'review' })?.type, 'openModelEffort');
+  assert.equal(mapFullscreenKey('o'), null);
+  assert.notEqual(mapFullscreenKey('v', { subsequentMode: 'review' })?.type, 'openModelEffort');
 });
 
 test('renderTopBar shows subsequent model/effort or 运行时默认', () => {
@@ -2073,15 +2087,17 @@ test('handleFullscreenKey f never kills when issue is not Closed', async () => {
   assert.equal(surface.snapshot().slot?.issueId, '01-first.md');
 });
 
-test('renderFooter includes [o] model/effort when action available', () => {
+test('renderFooter includes [m] 模型 and [v] 模式 when actions available', () => {
   const footer = renderFooter(snapWithBoard({
     actions: {
       setMode: { available: true },
       setModelEffort: { available: true },
     },
   }));
-  assert.match(footer, /\[o\].*model|\[o\].*effort|\[o\].*model\/effort/i);
-  assert.match(footer, /\[m\].*mode/);
+  assert.match(footer, /\[m\].*模型/);
+  assert.match(footer, /\[v\].*模式/);
+  assert.doesNotMatch(footer, /\[o\]/);
+  assert.doesNotMatch(footer, /\[m\].*mode 拨杆|\[v\].*model/i);
 });
 
 test('model→effort menu: both confirms submit; cancel leaves subsequent+repo unchanged', async () => {
@@ -2163,12 +2179,12 @@ test('model→effort menu: both confirms submit; cancel leaves subsequent+repo u
   assert.equal(launcher.launches[1].effort, 'high');
 });
 
-test('handleFullscreenKey o returns openModelEffort without mutating subsequent', async () => {
+test('handleFullscreenKey m returns openModelEffort without mutating subsequent', async () => {
   const { surface, modeConfig } = makeSurface({
     candidates: [candidate('01-first.md')],
   });
   await surface.tick();
-  const result = await handleFullscreenKey(surface, 'o');
+  const result = await handleFullscreenKey(surface, 'm');
   assert.equal(result.openModelEffort, true);
   assert.equal(surface.snapshot().subsequentModel, null);
   assert.equal(modeConfig.readModelEffort('grok').model, null);
@@ -2241,7 +2257,7 @@ test('DispatchShell modelEffortMenu overlay reuses frame without second alt-scre
   assert.doesNotMatch(text, /\u001b\[\?1049l/);
 });
 
-test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unchanged', async () => {
+test('runFullscreenDispatch m then q: opens overlay then cancel; subsequent unchanged', async () => {
   const { surface, modeConfig } = makeSurface({
     candidates: [candidate('01-first.md')],
     mode: 'review',
@@ -2266,7 +2282,7 @@ test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unch
   });
 
   await new Promise((r) => setTimeout(r, 120));
-  stdin.write('o');
+  stdin.write('m');
   await new Promise((r) => setTimeout(r, 150));
   assert.match(out, /model\/effort|subsequent model|运行时默认/i);
   assert.match(out, /inject-model-a/);
@@ -2280,7 +2296,7 @@ test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unch
   const result = await Promise.race([
     runPromise,
     new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('fullscreen o cancel integration did not exit')), 3000);
+      setTimeout(() => reject(new Error('fullscreen m cancel integration did not exit')), 3000);
     }),
   ]);
   assert.equal(result.stopped, true);
@@ -2289,7 +2305,7 @@ test('runFullscreenDispatch o then q: opens overlay then cancel; subsequent unch
   assert.doesNotMatch(out, /\u001b\[\?1049h/);
 });
 
-test('runFullscreenDispatch o can cancel, reopen, and submit without stale-menu crash', async () => {
+test('runFullscreenDispatch m can cancel, reopen, and submit without stale-menu crash', async () => {
   const { surface, modeConfig } = makeSurface({
     runtime: 'claude',
     candidates: [candidate('01-first.md')],
@@ -2309,13 +2325,13 @@ test('runFullscreenDispatch o can cancel, reopen, and submit without stale-menu 
 
   await wait(120);
   // First transaction: cancel at model stage.
-  stdin.write('o');
+  stdin.write('m');
   await wait(150);
   stdin.write('q');
   await wait(120);
 
   // Second transaction: cancel at effort stage.
-  stdin.write('o');
+  stdin.write('m');
   await wait(150);
   stdin.write('j');
   await wait(120);
@@ -2325,7 +2341,7 @@ test('runFullscreenDispatch o can cancel, reopen, and submit without stale-menu 
   await wait(120);
 
   // Third transaction: confirm Claude sonnet + low.
-  stdin.write('o');
+  stdin.write('m');
   await wait(150);
   stdin.write('j');
   await wait(120);
@@ -2344,13 +2360,13 @@ test('runFullscreenDispatch o can cancel, reopen, and submit without stale-menu 
   const result = await Promise.race([
     runPromise,
     new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('reopen/submit o flow did not exit')), 3000);
+      setTimeout(() => reject(new Error('reopen/submit m flow did not exit')), 3000);
     }),
   ]);
   assert.equal(result.stopped, true);
 });
 
-test('runFullscreenDispatch o: discovery failure still opens menu with 运行时默认 only', async () => {
+test('runFullscreenDispatch m: discovery failure still opens menu with 运行时默认 only', async () => {
   const { surface } = makeSurface({
     candidates: [candidate('01-first.md')],
     mode: 'review',
@@ -2376,7 +2392,7 @@ test('runFullscreenDispatch o: discovery failure still opens menu with 运行时
   });
 
   await new Promise((r) => setTimeout(r, 120));
-  stdin.write('o');
+  stdin.write('m');
   await new Promise((r) => setTimeout(r, 150));
   assert.match(out, /运行时默认/);
   assert.doesNotMatch(out, /inject-model|not logged in/);
@@ -2387,7 +2403,7 @@ test('runFullscreenDispatch o: discovery failure still opens menu with 运行时
   await Promise.race([
     runPromise,
     new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('discovery-fail o path did not exit')), 3000);
+      setTimeout(() => reject(new Error('discovery-fail m path did not exit')), 3000);
     }),
   ]);
 });
@@ -2831,4 +2847,185 @@ test('edge matrix: display name + CTA key binding per primary state', () => {
       assert.doesNotMatch(renderFooter(c.snap), /\[r\]/);
     }
   }
+});
+
+// --- 20260807-fullscreen-tui-ux-impl / 03: 键位 remap + 底栏分组 / 热 dim ---
+
+test('footer groups: 边沿 → 主路径 Enter/s/导航 → m/v → t/q；中文短标签', () => {
+  const footer = renderFooter(snapWithBoard({
+    status: 'needs-confirmation',
+    autoAdvance: false,
+    actions: {
+      forceAdvance: { available: false },
+      resume: { available: false },
+      confirmHitl: { available: true },
+      rejectHitl: { available: true },
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+
+  const y = footer.indexOf('[y]');
+  const n = footer.indexOf('[n]');
+  const enter = footer.indexOf('[Enter]');
+  const s = footer.indexOf('[s]');
+  const nav = footer.search(/↑↓\/j\/k|导航/);
+  const m = footer.indexOf('[m]');
+  const v = footer.indexOf('[v]');
+  const t = footer.indexOf('[t]');
+  const q = footer.indexOf('[q]');
+
+  assert.ok(y >= 0 && n >= 0 && enter >= 0 && s >= 0 && nav >= 0);
+  assert.ok(m >= 0 && v >= 0 && t >= 0 && q >= 0);
+  // A 边沿 → B 主路径 → C m/v → D t/q
+  assert.ok(y < enter && n < enter, 'edge keys before Enter');
+  assert.ok(enter < s && s < nav, 'main path Enter → s → nav');
+  assert.ok(nav < m && m < v, 'nav before m/v');
+  assert.ok(v < t && t < q, 't then q last group');
+
+  assert.match(footer, /\[m\] 模型/);
+  assert.match(footer, /\[v\] 模式/);
+  assert.match(footer, /\[Enter\] 开始/);
+  assert.match(footer, /\[s\] 自动开下一张\(关\)/);
+  assert.match(footer, /\[y\] 同意/);
+  assert.match(footer, /\[n\] 拒绝/);
+  assert.match(footer, /\[t\] 刷新/);
+  assert.match(footer, /\[q\] 退出/);
+  assert.doesNotMatch(footer, /\[o\]/);
+});
+
+test('footer: edge keys only when available; main path always; stopped hides m/v', () => {
+  const idle = renderFooter(snapWithBoard({
+    status: 'idle',
+    autoAdvance: true,
+    actions: {
+      forceAdvance: { available: false },
+      resume: { available: false },
+      confirmHitl: { available: false },
+      rejectHitl: { available: false },
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+  assert.doesNotMatch(idle, /\[f\]|\[r\]|\[y\]|\[n\]/);
+  assert.match(idle, /\[Enter\]/);
+  assert.match(idle, /\[s\]/);
+  assert.match(idle, /导航|j\/k/);
+  assert.match(idle, /\[m\] 模型/);
+  assert.match(idle, /\[v\] 模式/);
+
+  const force = renderFooter(snapWithBoard({
+    status: 'awaiting-worker-exit',
+    autoAdvance: false,
+    actions: {
+      forceAdvance: { available: true },
+      resume: { available: false },
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+  assert.match(force, /\[f\] 强制推进/);
+  assert.ok(force.indexOf('[f]') < force.indexOf('[Enter]'));
+
+  const stopped = renderFooter(snapWithBoard({
+    status: 'stopped',
+    stopped: true,
+    actions: {
+      setMode: { available: false, reason: 'stopped' },
+      setModelEffort: { available: false, reason: 'stopped' },
+      forceAdvance: { available: false },
+      resume: { available: false },
+    },
+  }));
+  assert.doesNotMatch(stopped, /\[m\]|\[v\]/);
+  assert.match(stopped, /\[Enter\]/);
+  assert.match(stopped, /\[q\]/);
+});
+
+test('footer hot/dim: CTA 键与 available 边沿热；不可开时 Enter dim 仍显示', () => {
+  const ready = buildFooterItems(snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    actions: {
+      setMode: { available: true },
+      setModelEffort: { available: true },
+      forceAdvance: { available: false },
+      resume: { available: false },
+    },
+  }));
+  const readyEnter = ready.find((i) => i.id === 'Enter');
+  assert.equal(readyEnter?.hot, true);
+  assert.notEqual(readyEnter?.dim, true);
+
+  const soft = buildFooterItems(snapWithBoard({
+    status: 'soft-stuck',
+    autoAdvance: true,
+    slot: { ...occupiedSlot, closed: false },
+    actions: {
+      forceAdvance: { available: false, reason: 'not-closed' },
+      resume: { available: false },
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+  const softEnter = soft.find((i) => i.id === 'Enter');
+  assert.ok(softEnter, 'Enter still present when in progress');
+  assert.equal(softEnter.dim, true);
+  assert.notEqual(softEnter.hot, true);
+
+  const noTicket = buildFooterItems(snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    board: { issues: [], executable: [] },
+    actions: {
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+  const emptyEnter = noTicket.find((i) => i.id === 'Enter');
+  assert.ok(emptyEnter);
+  assert.equal(emptyEnter.dim, true);
+
+  const hitl = buildFooterItems(snapWithBoard({
+    status: 'needs-confirmation',
+    autoAdvance: false,
+    actions: {
+      confirmHitl: { available: true },
+      rejectHitl: { available: true },
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+  assert.equal(hitl.find((i) => i.id === 'y')?.hot, true);
+  assert.equal(hitl.find((i) => i.id === 'n')?.hot, true);
+  assert.ok(hitl.some((i) => i.id === 'nav'), 'HITL keeps nav');
+  assert.equal(hitl.find((i) => i.id === 'Enter')?.dim, true);
+});
+
+test('HITL: digits still only navigate; nav line stays in footer', async () => {
+  const { surface, launcher } = makeSurface({
+    candidates: [candidate('01-ready.md'), candidate('02-ready.md')],
+    hitlCandidates: [candidate('03-human.md', { entryClass: 'human' })],
+  });
+  // Force HITL-style selection context: nav keys must not spawn.
+  await surface.refresh();
+  const launchesBefore = launcher.launches.length;
+  const digit = await handleFullscreenKey(surface, '2', {
+    selectedIndex: 0,
+    executableCount: 2,
+  });
+  assert.equal(digit.selectionOnly, true);
+  assert.equal(digit.selectedIndex, 1);
+  assert.equal(launcher.launches.length, launchesBefore);
+
+  const footer = renderFooter(snapWithBoard({
+    status: 'needs-confirmation',
+    actions: {
+      confirmHitl: { available: true },
+      rejectHitl: { available: true },
+      setMode: { available: true },
+      setModelEffort: { available: true },
+    },
+  }));
+  assert.match(footer, /导航|j\/k|数字/);
 });
