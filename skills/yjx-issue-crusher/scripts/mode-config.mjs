@@ -12,6 +12,8 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
+import { normalizeTerminalHostId } from './terminal-host.mjs';
+
 export const DEFAULT_MODE = 'review';
 
 /** CLI chain default when neither flag nor repo config sets runtime. */
@@ -100,12 +102,19 @@ export function resolveSubsequentMode({
  * @param {{
  *   mode?: 'review'|'vibe'|null,
  *   autoAdvance?: boolean,
+ *   terminalHost?: string|null,
  *   workers?: Record<string, {model?: string|null, effort?: string|null}>,
  * }} [options]
  */
-export function createMemoryModeConfig({ mode = null, autoAdvance = false, workers = {} } = {}) {
+export function createMemoryModeConfig({
+  mode = null,
+  autoAdvance = false,
+  terminalHost = null,
+  workers = {},
+} = {}) {
   let current = normalizeMode(mode);
   let currentAutoAdvance = normalizeAutoAdvance(autoAdvance);
+  let currentTerminalHost = normalizeTerminalHostId(terminalHost);
   let writeCount = 0;
   /** @type {Record<string, {model: string|null, effort: string|null}>} */
   const buckets = {};
@@ -153,6 +162,13 @@ export function createMemoryModeConfig({ mode = null, autoAdvance = false, worke
       return currentAutoAdvance;
     },
     /**
+     * Optional explicit terminal host override (tab prefer). Detection is never written here.
+     * @returns {string|null}
+     */
+    readTerminalHost() {
+      return currentTerminalHost;
+    },
+    /**
      * Read the workers.<runtime> model/effort bucket.
      * Missing/empty values read as null (omit flag; runtime product default).
      * @param {unknown} runtime
@@ -190,6 +206,8 @@ export function createMemoryModeConfig({ mode = null, autoAdvance = false, worke
  * Default path: <projectRoot>/.issue-crusher/config.json
  * Keys: `mode` (review|vibe), optional `runtime` (grok|claude),
  * optional `autoAdvance` (boolean; fullscreen auto-open-next preference),
+ * optional `terminalHost` (windows-terminal|macos-terminal|iterm2|fallback-window;
+ *   explicit override only — auto-detect is never written back),
  * optional `workers.<runtime>.{model,effort}`.
  * Startup --mode must not call writeMode.
  *
@@ -226,6 +244,15 @@ export function createFileModeConfig({ projectRoot, configPath } = {}) {
     readRuntime() {
       const data = readFile();
       return normalizeRuntime(data?.runtime);
+    },
+    /**
+     * Explicit terminal host override for prefer-tab launch.
+     * Missing/invalid → null (auto-detect). Never written by detection.
+     * @returns {string|null}
+     */
+    readTerminalHost() {
+      const data = readFile();
+      return normalizeTerminalHostId(data?.terminalHost);
     },
     /**
      * Fullscreen auto-open-next preference. Missing/invalid → false.

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -120,6 +120,55 @@ test('file autoAdvance: persists under project root without clobbering mode', ()
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// --- 20260806-1636 / 04: explicit terminalHost override (detection is never written) ---
+
+test('file terminalHost: reads known ids; junk/missing → null; never auto-written', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'issue-crusher-term-'));
+  try {
+    const config = createFileModeConfig({ projectRoot: root });
+    assert.equal(config.readTerminalHost(), null);
+
+    // Operator-authored explicit override only (simulate hand-edited config).
+    const configPath = config.path;
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({ mode: 'review', terminalHost: 'windows-terminal' }, null, 2)}\n`,
+      'utf8',
+    );
+    assert.equal(config.readTerminalHost(), 'windows-terminal');
+
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({ terminalHost: 'not-a-real-host' }, null, 2)}\n`,
+      'utf8',
+    );
+    assert.equal(config.readTerminalHost(), null);
+
+    // writeMode must not invent a detected terminalHost key.
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({ mode: 'vibe' }, null, 2)}\n`,
+      'utf8',
+    );
+    config.writeMode('review');
+    const raw = JSON.parse(readFileSync(config.path, 'utf8'));
+    assert.equal(raw.mode, 'review');
+    assert.equal(Object.hasOwn(raw, 'terminalHost'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('memory terminalHost: constructor seed only; detection is not a write path', () => {
+  const empty = createMemoryModeConfig({});
+  assert.equal(empty.readTerminalHost(), null);
+  const seeded = createMemoryModeConfig({ terminalHost: 'iterm2' });
+  assert.equal(seeded.readTerminalHost(), 'iterm2');
+  const junk = createMemoryModeConfig({ terminalHost: 'weird' });
+  assert.equal(junk.readTerminalHost(), null);
 });
 
 // --- 20260804-1802-tui-model-effort / 01: workers.<runtime>.{model,effort} buckets ---

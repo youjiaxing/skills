@@ -74,6 +74,7 @@ function printHelp() {
 【仓级默认】产品仓可建 .issue-crusher/config.json：
   { "mode": "vibe", "runtime": "claude" }
   可选 workers.<runtime>.model / effort（grok|claude 分桶；缺省=运行时默认不传 flag）
+  可选 terminalHost：windows-terminal|macos-terminal|iterm2|fallback-window（显式覆盖自动探测；探测结果不写仓）
 
 【调度界面按键】m review|vibe  o model/effort  f强制推进  r恢复  y/n确认  s自动开下一张  t刷新  q退出
   （o 仅 dual-TTY 全屏；--once/非 TTY 无选单。操作者显式选模 ≠ 编排器自动换模）
@@ -442,9 +443,14 @@ export async function runChain(options) {
       projectRoot,
       feature,
     });
+    const preferredTerminalHost = typeof modeConfig.readTerminalHost === 'function'
+      ? modeConfig.readTerminalHost()
+      : null;
     const launcher = options.fakeLauncher
       ? createFakeLauncher({ pid: 9000, sessionId: 'fake-chain-session' })
-      : createRealLauncher();
+      : createRealLauncher({
+        preferredTerminalHost: preferredTerminalHost ?? undefined,
+      });
 
     const chain = createChainRun({
       tracker,

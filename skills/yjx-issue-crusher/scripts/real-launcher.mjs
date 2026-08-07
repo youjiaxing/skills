@@ -12,8 +12,10 @@
  *   (default: preallocate UUID via --session-id so needs-resume can fulfill)
  * - Resume: --resume <id> + original cwd/runtime; no fresh skill entry prompt
  *
- * Terminal / window API is intentionally thin: detached child with visible
- * console (Windows new console group). Callers may replace spawnWorker.
+ * Interactive spawn prefers a new tab in the current multi-tab terminal host
+ * (Windows Terminal / iTerm2 / Terminal.app best-effort), then falls back to
+ * an independent OS window. Callers may replace spawnWorker or inject
+ * terminalHostLauncher. Detection is process-local only (not persisted).
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -25,6 +27,10 @@ import process from 'node:process';
 
 import { normalizeOptionalFlag, resolveMorph } from './build-launch-contract.mjs';
 import { attachSessionEndWatcher } from './session-end-adapters.mjs';
+import {
+  createTerminalHostLauncher,
+  normalizeTerminalHostId,
+} from './terminal-host.mjs';
 
 /** Flags never allowed on the default foreground / resumable Worker path. */
 const FORBIDDEN_INTERACTIVE_FLAGS = new Set([
@@ -601,13 +607,12 @@ Write-Output $p.Id
 }
 
 /**
- * Default OS spawn for a foreground, intervenable Worker.
+ * Independent OS window spawn (safe fallback when tab host fails / unavailable).
  * - Windows: new visible window via Start-Process (real worker pid).
- * - POSIX: detached process group (stdio ignored); desktop/terminal emulators
- *   may still be layered by the operator — contract forbids headless -p default.
+ * - POSIX: detached process group (stdio ignored).
  * Does not wait for exit — Chain Run tracks liveness via pid.
  */
-export function defaultSpawnWorker(command, args, options = {}) {
+export function spawnIndependentWindow(command, args, options = {}) {
   const platform = options.platform || process.platform;
   if (platform === 'win32') {
     return spawnWindowsForeground(command, args, options);
@@ -629,6 +634,27 @@ export function defaultSpawnWorker(command, args, options = {}) {
     throw new Error(`failed to spawn ${command}: no pid`);
   }
   return { pid: child.pid, child };
+}
+
+/**
+ * Default OS spawn for a foreground, intervenable Worker.
+ * Prefers a new tab in a detected terminal host; falls back to independent window.
+ * Pass `preferTab: false` to force the window path only.
+ */
+export function defaultSpawnWorker(command, args, options = {}) {
+  if (options.preferTab === false) {
+    return spawnIndependentWindow(command, args, options);
+  }
+  const hostLauncher = options.terminalHostLauncher || createTerminalHostLauncher({
+    preferredHost: options.preferredTerminalHost ?? null,
+    openFallbackWindow: spawnIndependentWindow,
+    platform: options.platform || process.platform,
+    resolveExecutable: (cmd) => resolveExecutable(cmd, {
+      platform: options.platform || process.platform,
+    }),
+    quoteWindowsArgs: windowsArgvToCommandLine,
+  });
+  return hostLauncher.open(command, args, options);
 }
 
 export function defaultIsProcessAlive(pid) {
@@ -660,6 +686,10 @@ export function defaultKillProcess(pid) {
  *
  * @param {object} [options]
  * @param {(command: string, args: string[], options: object) => { pid: number }} [options.spawnWorker]
+ * @param {ReturnType<typeof createTerminalHostLauncher>} [options.terminalHostLauncher]
+ *   Prefer-tab host launcher for interactive morph. Ignored when spawnWorker is injected.
+ * @param {string|null} [options.preferredTerminalHost]
+ *   Explicit config override (windows-terminal|macos-terminal|iterm2|fallback-window).
  * @param {(pid: number) => boolean} [options.isProcessAlive]
  * @param {(pid: number) => void|Promise<void>} [options.killProcess]
  * @param {() => string} [options.generateSessionId]
@@ -673,8 +703,28 @@ export function defaultKillProcess(pid) {
  * @param {boolean} [options.probeResumeHistory=true] attach blank/non-blank on grok resume
  */
 export function createRealLauncher(options = {}) {
+  const preferredTerminalHost = normalizeTerminalHostId(options.preferredTerminalHost)
+    ?? options.preferredTerminalHost
+    ?? null;
+  const terminalHostLauncher = options.terminalHostLauncher
+    ?? (options.spawnWorker
+      ? null
+      : createTerminalHostLauncher({
+        preferredHost: preferredTerminalHost,
+        openFallbackWindow: spawnIndependentWindow,
+        resolveExecutable: (cmd) => resolveExecutable(cmd),
+        quoteWindowsArgs: windowsArgvToCommandLine,
+      }));
+
+  const defaultInteractiveSpawn = (command, args, spawnOptions = {}) => {
+    if (terminalHostLauncher) {
+      return terminalHostLauncher.open(command, args, spawnOptions);
+    }
+    return spawnIndependentWindow(command, args, spawnOptions);
+  };
+
   const {
-    spawnWorker = defaultSpawnWorker,
+    spawnWorker = defaultInteractiveSpawn,
     // When tests inject only spawnWorker, reuse it for observable path too.
     spawnObservable = options.spawnWorker || spawnObservableWorker,
     isProcessAlive = defaultIsProcessAlive,

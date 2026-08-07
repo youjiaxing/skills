@@ -72,6 +72,7 @@ Wayfinder（含 grilling 等）完成：**不**触发自动开下一张；进程
   - 键 **`mode`**：`"review"` \| `"vibe"`  
   - 键 **`runtime`**（可选）：`"grok"` \| `"claude"`，供 CLI 省略 `--runtime` 时使用  
   - 键 **`autoAdvance`**（可选布尔）：全屏「自动开下一张」偏好；缺省 / 非 `true` = **关**；`s` 与干净 Enter 开自动时写仓；`q` 退出**不**抹掉  
+  - 键 **`terminalHost`**（可选）：显式终端宿主，覆盖自动探测。取值 `windows-terminal` \| `macos-terminal` \| `iterm2` \| `fallback-window`。缺省 = 本进程 best-effort 探测（优先新标签，失败回退独立窗）。**探测成功结果不写仓、不跨进程持久化**；同一次 `ic` 进程内可内存缓存  
   - 键 **`workers.<runtime>.{model,effort}`**（可选）：按 runtime 分桶的 subsequent 模型/强度；空或省略 = 不传 flag  
 - 调度 TUI 拨杆：立即写仓，只影响**后续** spawn；当前 Worker 在 spawn 时**钉死** mode  
 - 切到 vibe：一行后果提示（将自动 commit/关票）  
@@ -154,6 +155,7 @@ closed == false
 
 - **编排主 seam：Chain Run** — 注入假 TrackerPort + 假 WorkerLauncher + ModeConfig + 人事件，断言 spawn / 自动门闩 / 强制推进 / resume / 候选 / mode / subsequent model·effort / 单槽 / morph。  
 - **Session-end 适配 seam：** `scripts/session-end-adapters.mjs` + `tests/session-end-adapters.test.mjs` — 假 NDJSON/事件流映射 Grok/Claude → `success|failure|interrupted`；单轮 stop ≠ success；observable morph argv + watcher；**不**开真 Agent 窗。  
+- **Launcher 终端宿主 seam：** `scripts/terminal-host.mjs` + `tests/terminal-host.test.mjs` — 假探测器下 tab 优先 / 回退独立窗 / 同进程缓存 / 显式 `terminalHost` 覆盖 / **不**持久化探测结果。  
 - **全屏交互 seam：Dispatch Surface + 全屏键位** — 初始不自动开、Enter 开高亮或默认、`s` 切换、关自动后 Enter 不恢复自动、自动 tick 忽略高亮；`o` 事务选单与 `setModelEffort` 写仓可测。  
 - **Resume 历史探针：** `classifyGrokChatHistory` / `readGrokChatHistory` 对 `chat_history.jsonl` 做空白 vs 有历史红绿判定（不依赖「进程 spawn 成功」 alone）。  
 - **vibe 接力验收（20260805-1244 起，20260806-1636 收紧）：** `tests/vibe-handoff-acceptance.test.mjs` 三阶段（A Closed 后不杀、无会话结束信号不自动下一张 · B needs-resume 历史非空白 · C 未 Closed 不误杀）；失败信息带稳定 stage/code（`not-closed` / `no-exit` / `resume-blank` / `wrong-kill`）。双真源 / 倒计时单元测在 `chain-run.test.mjs`（可注入时钟与 `reportSessionEnded`）。也可用 `scripts/run-vibe-handoff-acceptance.mjs` 拿进程退出码（0 绿；2/3/4 对应 A/B/C）。  
@@ -166,7 +168,8 @@ closed == false
 
 - **Chain Run** 测试缝与状态机（双条件、边沿、单槽、自动开下一张门闩）  
 - **local-markdown** Tracker 适配 + 只读 `getBoard()`  
-- **假 / 真** WorkerLauncher（同一 launch DTO；**interactive** = 独立前台窗；**observable** = 可订阅结束事件的 AFK 形态；不进调度屏）  
+- **假 / 真** WorkerLauncher（同一 launch DTO；**interactive** = 前台可介入，优先终端新标签、失败回退独立窗；**observable** = 可订阅结束事件的 AFK 形态；不进调度屏）  
+- **终端宿主探测**（`scripts/terminal-host.mjs`）：可注入假探测器；Windows + macOS 各至少一条 best-effort 链；探测不持久化；可选 `terminalHost` 显式覆盖  
 - **Session-end 适配器**（Grok streaming-json `type:end` / Claude result 信封 → 统一 `sessionEnded`）  
 - **mode** 解析与仓文件写回  
 - **subsequent model/effort** 初值（CLI → 仓分桶 → 空）与 `setModelEffort` 写仓  
@@ -244,7 +247,7 @@ ic
 | **当前槽** | 在跑票 / pid / Closed / 钉死 mode；有待确认时显示 HITL |
 | **底栏** | 当前可用键位（含 `[o] model/effort`；与真实行为一致） |
 
-Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 **不内嵌** Worker 输出。多 feature / 多仓 = **多开** `ic` 进程（各管各的调度窗 + Worker 窗）。
+Worker（Grok / Claude）由真启动器开在 **前台可介入** 位置：优先在当前多标签终端宿主（Windows Terminal / iTerm2 / Terminal.app 等 best-effort）**新开标签**，失败则回退 **独立 OS 窗**；调度屏 **不内嵌** Worker 输出。多 feature / 多仓 = **多开** `ic` 进程（各管各的调度窗 + Worker）。
 
 **全屏进门不自动开 Worker**；开第一张用 **Enter**（见「全屏：开始与自动开下一张」）。呈现目标：根布局用 **终端行数（数值高度）** 铺满可用高（Ink 的 `height: 100%` 会塌成内容高）、中部 stretch、底栏贴底、顶栏「自动开下一张/状态」单独成行以免折行后丢失、主/次信息字色分层、选中与当前槽可辨；不追求重动画。
 
@@ -262,6 +265,7 @@ Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 *
   "mode": "vibe",
   "runtime": "claude",
   "autoAdvance": true,
+  "terminalHost": "windows-terminal",
   "workers": {
     "grok": { "model": "grok-4", "effort": "high" },
     "claude": { "model": "opus", "effort": "max" }
@@ -273,6 +277,7 @@ Worker（Grok / Claude）由真启动器开在 **独立前台窗**；调度屏 *
 - **runtime**：`--runtime` → 仓 `runtime` → **交互 dual-TTY 全屏选单**（`grok` / `claude`）；非交互/脚本/`--once` 须显式指定（`--fake-launcher` 冒烟缺省时默认 grok）  
 - **mode**：`--mode` → 仓 `mode` → 默认 **`review`**（全屏拨杆 `m` 仍会写回仓 `mode`）  
 - **autoAdvance**：仓 `autoAdvance === true` 时全屏进门拨杆为开（仍不冷启动 Worker）；否则关；`s` / 干净 Enter 开自动写仓；`q` 不写关  
+- **terminalHost**：仓显式覆盖时优先生效；否则本进程探测（优先标签 → 独立窗）。**自动探测结果不写此键**  
 - **model / effort**：`--model`/`--effort` → 仓 `workers.<当前 runtime>` → 空（不传 flag）；提交 subsequent 后静默写回当前 runtime 分桶  
 - **feature**：位置参数 → 否则 dual-TTY **全屏列出** `.scratch` 下 feature 选取；非交互须显式给出
 
@@ -396,6 +401,7 @@ node skills/yjx-issue-crusher/scripts/run-vibe-handoff-acceptance.mjs
 主 seam：`tests/chain-run.test.mjs`。  
 调度 / 全屏 / 启动选单：`tests/dispatch-surface.test.mjs` · `tests/dispatch-fullscreen.test.mjs` · `tests/startup-select.test.mjs` · `tests/cli-chain.test.mjs` · `tests/interactive-prompts.test.mjs`。  
 model 发现 / effort 提示：`tests/model-catalog.test.mjs`。  
+终端宿主优先标签：`tests/terminal-host.test.mjs`。  
 vibe 接力验收：`tests/vibe-handoff-acceptance.test.mjs` + `scripts/run-vibe-handoff-acceptance.mjs`（A/B/C；失败码 `not-closed`/`no-exit`/`resume-blank`/`wrong-kill`）。  
 local-md fixture：`empty-frontier` / `single-ready` / `mixed-board` / `hitl-only`。
 
