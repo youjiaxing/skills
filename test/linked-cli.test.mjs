@@ -8,9 +8,10 @@ import test from 'node:test';
 const repository = path.resolve(import.meta.dirname, '..');
 const skillsRoot = path.join(repository, 'skills');
 const commands = [
-  ['yjx-local-tracker-setup', 'scripts/setup-local-tracker.mjs'],
   ['yjx-local-kanban', 'scripts/issue-board.mjs'],
   ['yjx-local-ralph', 'scripts/select-issue.mjs'],
+  ['yjx-gh-kanban', 'scripts/issue-board.mjs'],
+  ['yjx-gh-kanban', 'scripts/resolve-board-script.mjs'],
 ];
 
 test('CLI scripts run when installed through a directory link', async (t) => {
@@ -18,12 +19,16 @@ test('CLI scripts run when installed through a directory link', async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, 'skills'));
 
+  const linkedSkills = new Set();
   for (const [skill, script] of commands) {
     const source = path.join(skillsRoot, skill);
     const linked = path.join(root, 'skills', skill);
-    await symlink(source, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    if (!linkedSkills.has(skill)) {
+      await symlink(source, linked, process.platform === 'win32' ? 'junction' : 'dir');
+      linkedSkills.add(skill);
+    }
     const result = spawnSync(process.execPath, [path.join(linked, script), '--help'], { encoding: 'utf8' });
-    assert.equal(result.status, 0, `${skill}: ${result.stderr}`);
-    assert.match(result.stdout, /Usage:/, skill);
+    assert.equal(result.status, 0, `${skill}/${script}: ${result.stderr}`);
+    assert.match(result.stdout, /Usage:/, `${skill}/${script}`);
   }
 });

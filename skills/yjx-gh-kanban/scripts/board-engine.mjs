@@ -2,7 +2,8 @@
  * Pure GitHub Issues board engine for yjx-gh-kanban.
  *
  * Fixture-friendly: inject issues + native relations + triage config.
- * Does not call gh or the network. CLI / path discovery belong in later tickets.
+ * Does not call gh or the network. Thin CLI and path discovery live in
+ * issue-board.mjs and resolve-board-script.mjs.
  */
 
 export const DEFAULT_READY_LABEL = 'ready-for-agent';
