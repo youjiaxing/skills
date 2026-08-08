@@ -5,13 +5,17 @@ import {
   buildBoard,
   classify,
   isSpecIssue,
+  isWayfinderChildTicket,
   isWayfinderIssue,
+  isWayfinderMap,
   parseReadyLabelFromTriageDoc,
   priorityKey,
   renderAgent,
   renderHuman,
   renderReadyOnly,
   selectViewNodes,
+  selectWayfinderFrontier,
+  startCommandForEntry,
 } from '../scripts/board-engine.mjs';
 
 const SPEC_BODY = [
@@ -275,11 +279,126 @@ test('human render has LEGEND, dependency tree, WARNINGS area, NOW', () => {
   assert.match(text, /\[spec\].*规格容器/);
   assert.match(text, /├─|└─/);
   assert.match(text, /7 \[impl\] 依赖基础能力 <- #3/);
-  assert.match(text, /NOW  可新增并行实施：1 \| 进行中：0/);
-  assert.match(text, /可新增并行实施/);
+  assert.match(text, /NOW  READY：1 \| Wayfinder frontier：0 \| 进行中：0/);
+  assert.match(text, /可新增并行实施（READY）/);
+  assert.match(text, /Wayfinder frontier/);
   assert.match(text, /\/rename gh\/#8-/);
-  assert.match(text, /gh issue view 8/);
+  assert.match(text, /\/implement #8/);
+  assert.doesNotMatch(text, /gh issue view 8/);
   assert.match(text, /进行中（assignee 近似/);
+});
+
+test('startCommandForEntry is implement vs wayfinder by type', () => {
+  assert.equal(startCommandForEntry({ number: 8, isWayfinder: false }), '/implement #8');
+  assert.equal(
+    startCommandForEntry({ number: 55, isWayfinder: true, labels: ['wayfinder:grilling'] }),
+    '/wayfinder #55',
+  );
+  assert.equal(isWayfinderChildTicket({ labels: ['wayfinder:grilling'] }), true);
+  assert.equal(isWayfinderChildTicket({ labels: ['wayfinder:map'] }), false);
+  assert.equal(isWayfinderMap({ labels: ['wayfinder:map'] }), true);
+});
+
+test('NOW lists wayfinder frontier grouped by map with /wayfinder commands', () => {
+  const issues = {
+    40: issue(40, '上线探索 map', { labels: ['wayfinder:map'], body: '## Destination\nShip' }),
+    41: issue(41, '已关闭旧 map', {
+      labels: ['wayfinder:map'],
+      state: 'CLOSED',
+      body: '## Destination\nOld',
+    }),
+    55: issue(55, '定价决策', { labels: ['wayfinder:grilling'], body: '## Question\nPrice?' }),
+    56: issue(56, '阻塞中的调研', { labels: ['wayfinder:research'], body: '## Question\nAPI?' }),
+    57: issue(57, '已领取原型', {
+      labels: ['wayfinder:prototype'],
+      assignees: ['bob'],
+      body: '## Question\nUI?',
+    }),
+    58: issue(58, '无父 frontier', { labels: ['wayfinder:task'], body: '## Question\nOps?' }),
+    8: issue(8, '可直接开干'),
+  };
+  const relations = {
+    40: rel(),
+    41: rel(),
+    55: rel(40),
+    56: rel(40, [99]),
+    57: rel(40),
+    58: rel(),
+    8: rel(),
+    99: rel(),
+  };
+  // #99 external open blocker not in issues — still openBlockers on 56 via relation
+  const text = renderHuman(issues, relations);
+  assert.match(text, /NOW  READY：1 \| Wayfinder frontier：2 \| 进行中：1/);
+  assert.match(text, /\/implement #8/);
+  assert.match(text, /## #40 上线探索 map/);
+  assert.match(text, /55 \[grilling\] 定价决策/);
+  assert.match(text, /\/wayfinder #55/);
+  assert.match(text, /## （无 map 归属）/);
+  assert.match(text, /58 \[task\] 无父 frontier/);
+  assert.match(text, /\/wayfinder #58/);
+  // Closed map with no frontier children must not appear as a frontier group.
+  assert.doesNotMatch(text, /## #41 /);
+  // Blocked research may appear in the dependency tree, but not as a startable frontier row.
+  const frontierSection = text.split('Wayfinder frontier\n')[1].split('\n\n进行中')[0];
+  assert.doesNotMatch(frontierSection, /56 \[research\]/);
+  assert.doesNotMatch(frontierSection, /\/wayfinder #56/);
+  assert.match(text, /57 \[prototype\] 已领取原型 \| assignees=bob \| skill=\/wayfinder/);
+  assert.match(text, /wayfinder-missing-parent|code=wayfinder-missing-parent/);
+});
+
+test('wayfinder child missing relations is excluded from frontier with warning', () => {
+  const issues = {
+    55: issue(55, '缺关系', { labels: ['wayfinder:grilling'], body: '## Question\n?' }),
+  };
+  const viewEntries = [
+    {
+      number: 55,
+      title: '缺关系',
+      state: 'OPEN',
+      labels: ['wayfinder:grilling'],
+      assignees: [],
+      parent: null,
+      isSpec: false,
+      isWayfinder: true,
+      blockedBy: [],
+      openBlockers: [],
+    },
+  ];
+  const { frontier, warnings } = selectWayfinderFrontier(viewEntries, {});
+  assert.equal(frontier.length, 0);
+  assert.equal(warnings[0].code, 'wayfinder-relations-missing');
+
+  const text = renderHuman(issues, {});
+  assert.match(text, /Wayfinder frontier：0/);
+  assert.match(text, /wayfinder-relations-missing/);
+});
+
+test('parent filter scopes human NOW READY and wayfinder frontier', () => {
+  const issues = {
+    10: issue(10, 'parent spec', { body: SPEC_BODY, labels: [] }),
+    11: issue(11, 'child ready'),
+    40: issue(40, 'map A', { labels: ['wayfinder:map'], body: '## Destination\nA' }),
+    55: issue(55, 'grill under map', { labels: ['wayfinder:grilling'], body: '## Question\n?' }),
+    99: issue(99, 'unrelated ready'),
+  };
+  const relations = {
+    11: rel(10),
+    40: rel(),
+    55: rel(40),
+    99: rel(),
+  };
+  const text = renderHuman(issues, relations, { parentFilter: 10 });
+  assert.match(text, /parent=#10/);
+  assert.match(text, /\/implement #11/);
+  assert.doesNotMatch(text, /\/implement #99/);
+  assert.doesNotMatch(text, /\/wayfinder #55/);
+  assert.match(text, /Wayfinder frontier：0/);
+
+  const mapText = renderHuman(issues, relations, { parentFilter: 40 });
+  assert.match(mapText, /\/wayfinder #55/);
+  assert.doesNotMatch(mapText, /\/implement #11/);
+  assert.doesNotMatch(mapText, /\/implement #99/);
 });
 
 test('dependency tree mounts on native parent; multi-blockers listed fully; each issue once', () => {
@@ -349,6 +468,9 @@ test('parent filter includes descendant sub-issues and blocker closure with clos
   assert.match(text, /parent=#10/);
   assert.match(text, /✓ 21 \[impl\] external blocker closed|✓ 21 /);
   assert.doesNotMatch(text, /99 \[impl\] unrelated open/);
+  // Human NOW follows parent closure (machine READY stays whole-repo).
+  assert.match(text, /\/implement #11/);
+  assert.doesNotMatch(text, /\/implement #99/);
 });
 
 test('NOW in-progress uses assignee approximation and does not redefine READY', () => {
@@ -366,13 +488,15 @@ test('NOW in-progress uses assignee approximation and does not redefine READY', 
   assert.ok(board.ready.some((entry) => entry.number === 5));
 
   const text = renderHuman(issues, relations);
-  assert.match(text, /NOW  可新增并行实施：2 \| 进行中：1/);
+  assert.match(text, /NOW  READY：2 \| Wayfinder frontier：0 \| 进行中：1/);
   assert.match(text, /进行中（assignee 近似，非 claimed 协议；不改变 READY 契约）/);
   assert.match(text, /assignees=alice/);
-  assert.match(text, /#6/);
+  assert.match(text, /\/implement #6/);
+  // In-progress does not print a start slash command.
+  assert.doesNotMatch(text, /assignees=alice\n {2}\/implement/);
 });
 
-test('ready-only lists implementable READY with rename and gh view hints', () => {
+test('ready-only lists implementable READY with rename and implement command', () => {
   const board = classify(
     { 8: issue(8, '可直接开干') },
     'ready-for-agent',
@@ -382,7 +506,8 @@ test('ready-only lists implementable READY with rename and gh view hints', () =>
   assert.match(text, /ready=1 next=#8/);
   assert.match(text, /○ 8 \[impl\] 可直接开干/);
   assert.match(text, /\/rename gh\/#8-/);
-  assert.match(text, /gh issue view 8/);
+  assert.match(text, /\/implement #8/);
+  assert.doesNotMatch(text, /gh issue view/);
 });
 
 test('buildBoard returns consistent human/agent/json projections', () => {

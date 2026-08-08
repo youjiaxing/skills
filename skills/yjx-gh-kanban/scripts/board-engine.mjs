@@ -8,6 +8,10 @@
 
 export const DEFAULT_READY_LABEL = 'ready-for-agent';
 export const SPEC_HEADINGS = ['Problem Statement', 'Solution', 'User Stories'];
+/** Wayfinder child ticket kinds that can enter frontier (map is excluded). */
+export const WAYFINDER_CHILD_KINDS = new Set(['research', 'prototype', 'grilling', 'task']);
+export const WAYFINDER_REQUIRED_SKILL = '/wayfinder';
+export const IMPLEMENT_REQUIRED_SKILL = '/implement';
 
 const PRIORITY_CRITICAL = ['critical', 'crash', 'blocker', '严重', '崩溃', '阻塞'];
 const PRIORITY_INFRA = ['test', 'type', 'ci', 'build', 'infra', '脚手架', '构建', '验证'];
@@ -183,6 +187,33 @@ export function isWayfinderIssue(issueOrLabels) {
     ? issueOrLabels
     : issueOrLabels?.labels ?? [];
   return labels.some((label) => String(label).startsWith('wayfinder:'));
+}
+
+/** @returns {string|null} kind after `wayfinder:` or null */
+export function wayfinderKind(issueOrLabels) {
+  const labels = Array.isArray(issueOrLabels)
+    ? issueOrLabels
+    : issueOrLabels?.labels ?? [];
+  const way = labels.find((label) => String(label).startsWith('wayfinder:'));
+  if (!way) return null;
+  return String(way).slice('wayfinder:'.length) || 'unknown';
+}
+
+export function isWayfinderChildTicket(issueOrLabels) {
+  const kind = wayfinderKind(issueOrLabels);
+  return kind != null && WAYFINDER_CHILD_KINDS.has(kind);
+}
+
+export function isWayfinderMap(issueOrLabels) {
+  return wayfinderKind(issueOrLabels) === 'map';
+}
+
+/** Human-copyable session entry skill for a board entry. */
+export function startCommandForEntry(entry) {
+  if (entry?.isWayfinder || isWayfinderIssue(entry)) {
+    return `${WAYFINDER_REQUIRED_SKILL} #${entry.number}`;
+  }
+  return `${IMPLEMENT_REQUIRED_SKILL} #${entry.number}`;
 }
 
 export function priorityKey(issue) {
@@ -564,59 +595,235 @@ function slugTitle(title) {
     .slice(0, 48) || 'issue';
 }
 
-function renderReadyIssueLines(entry) {
+function renderStartableIssueLines(entry) {
   return [
     `- ○ ${headline(entry)}`,
     `  /rename gh/#${entry.number}-${slugTitle(entry.title)}`,
-    `  gh issue view ${entry.number}`,
+    `  ${startCommandForEntry(entry)}`,
   ];
 }
 
+/** @deprecated use renderStartableIssueLines; kept as alias for ready-only READY rows */
+function renderReadyIssueLines(entry) {
+  return renderStartableIssueLines(entry);
+}
+
 /**
- * NOW: implementable READY + in-progress (assignee approximation).
- * In-progress is human-only and does not redefine machine READY.
+ * Strict wayfinder frontier from human view entries.
+ * Missing/unreliable native relations → exclude + warning (do not fail whole board).
+ */
+export function selectWayfinderFrontier(viewEntries, relationsMap, options = {}) {
+  const relations = relationsMap instanceof Map
+    ? relationsMap
+    : normalizeRelationsMap(relationsMap);
+  const requireRelations = options.requireRelations !== false;
+  const frontier = [];
+  const warnings = [];
+
+  for (const entry of viewEntries ?? []) {
+    if (String(entry.state).toUpperCase() === 'CLOSED') continue;
+    if (!isWayfinderChildTicket(entry)) continue;
+
+    if (requireRelations && !relations.has(entry.number)) {
+      warnings.push({
+        code: 'wayfinder-relations-missing',
+        issue: issueRef(entry.number),
+        detail: 'open wayfinder child missing native relations; excluded from frontier',
+      });
+      continue;
+    }
+
+    if ((entry.openBlockers?.length ?? 0) > 0) continue;
+    if (entry.assignees?.length) continue;
+
+    const parent = entry.parent ?? relations.get(entry.number)?.parent ?? null;
+    let mapNumber = null;
+    if (parent != null) {
+      const parentEntry = options.entryByNumber?.get?.(parent)
+        ?? options.issues?.get?.(parent)
+        ?? null;
+      const parentLabels = parentEntry?.labels
+        ?? (parentEntry ? normalizeIssue(parentEntry).labels : null);
+      if (parentEntry && isWayfinderMap(parentLabels ?? parentEntry)) {
+        mapNumber = parent;
+      } else if (!parentEntry) {
+        // Parent id present but not loaded — treat as unmapped with warning.
+        warnings.push({
+          code: 'wayfinder-map-unresolved',
+          issue: issueRef(entry.number),
+          detail: `parent #${parent} not loaded; listed under unmapped frontier group`,
+        });
+        mapNumber = null;
+      } else {
+        warnings.push({
+          code: 'wayfinder-parent-not-map',
+          issue: issueRef(entry.number),
+          detail: `parent #${parent} is not wayfinder:map; listed under unmapped frontier group`,
+        });
+        mapNumber = null;
+      }
+    } else {
+      warnings.push({
+        code: 'wayfinder-missing-parent',
+        issue: issueRef(entry.number),
+        detail: 'wayfinder child has no native parent; listed under unmapped frontier group',
+      });
+    }
+
+    frontier.push({ entry, mapNumber });
+  }
+
+  frontier.sort((a, b) => a.entry.number - b.entry.number);
+  return { frontier, warnings };
+}
+
+function resolveMapHeadline(mapNumber, options = {}) {
+  const fromIssues = options.issues?.get?.(mapNumber);
+  if (fromIssues) {
+    const issue = typeof fromIssues.number === 'number' ? fromIssues : normalizeIssue(fromIssues);
+    return `#${mapNumber} ${issue.title}`;
+  }
+  const fromEntries = options.entryByNumber?.get?.(mapNumber);
+  if (fromEntries) return `#${mapNumber} ${fromEntries.title}`;
+  return `#${mapNumber}`;
+}
+
+/**
+ * Group frontier rows by map number; unmapped (null) last.
+ * @returns {Array<{ mapNumber: number|null, headline: string, items: object[] }>}
+ */
+export function groupWayfinderFrontier(frontierRows, options = {}) {
+  const byMap = new Map();
+  for (const row of frontierRows ?? []) {
+    const key = row.mapNumber == null ? null : row.mapNumber;
+    if (!byMap.has(key)) byMap.set(key, []);
+    byMap.get(key).push(row.entry);
+  }
+
+  const mapKeys = [...byMap.keys()].filter((key) => key != null).sort((a, b) => a - b);
+  const groups = [];
+  for (const mapNumber of mapKeys) {
+    const items = byMap.get(mapNumber).sort((a, b) => a.number - b.number);
+    groups.push({
+      mapNumber,
+      headline: resolveMapHeadline(mapNumber, options),
+      items,
+    });
+  }
+  if (byMap.has(null)) {
+    groups.push({
+      mapNumber: null,
+      headline: '（无 map 归属）',
+      items: byMap.get(null).sort((a, b) => a.number - b.number),
+    });
+  }
+  return groups;
+}
+
+/**
+ * NOW: READY (start /implement) + wayfinder frontier (/wayfinder) + in-progress.
+ * Human-only; does not redefine machine READY / next.
+ * When viewEntries is provided (always for human render), READY / frontier / in-progress
+ * are scoped to that view (parent filter applies).
  */
 export function renderNowLines(board, options = {}) {
-  const ready = board.ready ?? [];
-  // In-progress: open + assignees, exclude SPEC and wayfinder. Prefer board entries.
+  const viewEntries = options.viewEntries ?? null;
+  const relationsMap = options.relationsMap instanceof Map
+    ? options.relationsMap
+    : normalizeRelationsMap(options.relationsMap ?? {});
+  const issuesMap = options.issues instanceof Map
+    ? options.issues
+    : options.issues
+      ? asMap(options.issues)
+      : new Map();
+
+  const viewSet = viewEntries
+    ? new Set(viewEntries.map((entry) => entry.number))
+    : null;
+
+  // READY display: machine ready, optionally scoped to human view.
+  let ready = [...(board.ready ?? [])];
+  if (viewSet) ready = ready.filter((entry) => viewSet.has(entry.number));
+  ready.sort((a, b) => a.number - b.number);
+
+  // Universe for in-progress / frontier: prefer view entries; else scan board groups.
+  const universe = viewEntries
+    ? [...viewEntries]
+    : (() => {
+      const list = [];
+      const seen = new Set();
+      for (const group of ['ready', 'blocked', 'otherOpen', 'specs']) {
+        for (const entry of board[group] ?? []) {
+          if (seen.has(entry.number)) continue;
+          seen.add(entry.number);
+          list.push(entry);
+        }
+      }
+      return list;
+    })();
+
+  const entryLookup = new Map(universe.map((entry) => [entry.number, entry]));
+  for (const entry of board.ready ?? []) entryLookup.set(entry.number, entry);
+  for (const entry of board.otherOpen ?? []) entryLookup.set(entry.number, entry);
+
+  const { frontier: frontierRows, warnings: frontierWarnings } = selectWayfinderFrontier(
+    universe,
+    relationsMap,
+    { issues: issuesMap, entryByNumber: entryLookup },
+  );
+  const frontierGroups = groupWayfinderFrontier(frontierRows, {
+    issues: issuesMap,
+    entryByNumber: entryLookup,
+  });
+  const frontierCount = frontierRows.length;
+
   const inProgress = [];
-  const seen = new Set();
-  for (const group of ['ready', 'blocked', 'otherOpen']) {
-    for (const entry of board[group] ?? []) {
-      if (!entry.assignees?.length) continue;
-      if (entry.isSpec || entry.isWayfinder) continue;
-      if (String(entry.state).toUpperCase() === 'CLOSED') continue;
-      if (seen.has(entry.number)) continue;
-      seen.add(entry.number);
-      inProgress.push(entry);
-    }
-  }
-  // Also scan view entries if provided (assignees on non-classified open nodes).
-  for (const entry of options.viewEntries ?? []) {
+  const seenProgress = new Set();
+  for (const entry of universe) {
     if (!entry.assignees?.length) continue;
-    if (entry.isSpec || entry.isWayfinder) continue;
+    if (entry.isSpec) continue;
     if (String(entry.state).toUpperCase() === 'CLOSED') continue;
-    if (seen.has(entry.number)) continue;
-    seen.add(entry.number);
+    if (seenProgress.has(entry.number)) continue;
+    seenProgress.add(entry.number);
     inProgress.push(entry);
   }
   inProgress.sort((a, b) => a.number - b.number);
 
+  if (options.warningsOut && Array.isArray(options.warningsOut)) {
+    options.warningsOut.push(...frontierWarnings);
+  }
+
   const lines = [
     '',
-    `NOW  可新增并行实施：${ready.length} | 进行中：${inProgress.length}`,
+    `NOW  READY：${ready.length} | Wayfinder frontier：${frontierCount} | 进行中：${inProgress.length}`,
     '',
-    '可新增并行实施',
+    '可新增并行实施（READY）',
   ];
   if (ready.length === 0) lines.push('- 无');
-  else for (const entry of ready) lines.push(...renderReadyIssueLines(entry));
+  else for (const entry of ready) lines.push(...renderStartableIssueLines(entry));
+
+  lines.push('', 'Wayfinder frontier');
+  if (frontierCount === 0) {
+    lines.push('- 无');
+  } else {
+    for (const group of frontierGroups) {
+      lines.push(`## ${group.headline}`);
+      for (const entry of group.items) {
+        lines.push(...renderStartableIssueLines(entry));
+      }
+    }
+  }
 
   lines.push('', '进行中（assignee 近似，非 claimed 协议；不改变 READY 契约）');
   if (inProgress.length === 0) lines.push('- 无');
   else {
     for (const entry of inProgress) {
       const who = entry.assignees.join(', ');
-      lines.push(`- > ${headline(entry)} | assignees=${who}`);
+      if (entry.isWayfinder || isWayfinderIssue(entry)) {
+        lines.push(`- > ${headline(entry)} | assignees=${who} | skill=${WAYFINDER_REQUIRED_SKILL}`);
+      } else {
+        lines.push(`- > ${headline(entry)} | assignees=${who}`);
+      }
     }
   }
   return lines;
@@ -695,12 +902,21 @@ export function renderHuman(issuesInput, relationsInput, options = {}) {
   const blockedNumbers = new Set(board.blocked.map((entry) => entry.number));
   const symbolContext = { readyLabel, readyNumbers, blockedNumbers };
 
+  const nowWarnings = [];
   const warnings = [
     ...(options.warnings ?? []),
     ...collectWarnings(issues, relationsMap, board, viewNodeSet),
   ];
 
   const parentNote = options.parentFilter != null ? ` | parent=#${options.parentFilter}` : '';
+  const nowLines = renderNowLines(board, {
+    viewEntries,
+    relationsMap,
+    issues,
+    warningsOut: nowWarnings,
+  });
+  warnings.push(...nowWarnings);
+
   const lines = [
     ...renderLegend(),
     `KANBAN github${parentNote} | ready_label=${readyLabel}`,
@@ -709,7 +925,7 @@ export function renderHuman(issuesInput, relationsInput, options = {}) {
     'DEPENDENCY TREE',
     ...renderDependencyTree(viewEntries, relationsMap, symbolContext),
     ...renderWarnings(warnings),
-    ...renderNowLines(board, { viewEntries }),
+    ...nowLines,
   ];
   return `${lines.join('\n')}\n`;
 }

@@ -72,15 +72,31 @@ node <kanban-skill-dir>/scripts/issue-board.mjs
 
 默认输出对齐 Local 看板版式：`LEGEND`、摘要、`DEPENDENCY TREE`、`WARNINGS`、底部 `NOW`。
 
-按 parent（spec/PRD issue）过滤人类依赖树：
+`NOW` 人类可复制启动（按入口 skill，不是内部解析 skill）：
+
+- READY 实施票：`/rename gh/#N-…` + `/implement #N`
+- Wayfinder frontier 子票：`/rename …` + `/wayfinder #N`（子类型 research/prototype/grilling/task 不拆成其它 slash）
+- frontier **按仍有可领子票的 map 分组**；无开放 frontier 的（含已关闭）map 不出现
+- 无 native parent / parent 非 map：列入「（无 map 归属）」并 WARNING
+- 进行中（含已 claim 的 wayfinder）只展示状态；wayfinder 带 `skill=/wayfinder`，**不**印可复制启动 slash
+
+按 parent（spec / PRD / wayfinder map 等任意母单）过滤**人类**投影：
 
 ```bash
 node <kanban-skill-dir>/scripts/issue-board.mjs --parent 102
 node <kanban-skill-dir>/scripts/issue-board.mjs --parent '#102'
 ```
 
-parent 视图会拉入子票与 **blocker 闭包**（含理解阻塞所需的 closed 票）。  
-**注意**：`--parent` 只缩小默认人类树投影；与 `--json` / `--agent` / `--ready-only` 组合时，机器侧 READY / `next` 仍是当前 limit 窗口的整仓分类（避免改变 Ralph 全局队列语义）。
+parent 视图会拉入子票与 **blocker 闭包**（含理解阻塞所需的 closed 票），并同步裁剪 **DEPENDENCY TREE + NOW**（READY / Wayfinder frontier / 进行中）。  
+**注意**：与 `--json` / `--agent` / `--ready-only` 组合时，机器侧 READY / `next` 仍是当前 limit 窗口的整仓分类（避免改变 Ralph 全局队列语义）。
+
+应用仓常见薄封装（示例）：
+
+```bash
+make kanban           # 整仓人类看板
+make kanban P=102     # → --parent 102
+make kanban-102       # 同上
+```
 
 ## 机器接口
 
@@ -91,7 +107,7 @@ node <kanban-skill-dir>/scripts/issue-board.mjs --json
 # 紧凑 agent 输出：ready=… / next=… / READY 列表
 node <kanban-skill-dir>/scripts/issue-board.mjs --agent
 
-# 仅 READY 候选（含 /rename 与 gh issue view 提示）
+# 仅 READY 候选（含 /rename 与 /implement #N）
 node <kanban-skill-dir>/scripts/issue-board.mjs --ready-only
 ```
 
@@ -114,7 +130,9 @@ node <kanban-skill-dir>/scripts/issue-board.mjs --ready-only
 - 无 parent 的 ready 实施票合法；parent 不是 blocker
 - 候选关系缺失或不可靠 → **fail-closed**，不输出可用 `next`
 - 依赖树：视觉主挂载优先 native parent；行尾 ` <- #a, #b` 列出完整 blockedBy；每票至多一次
-- NOW：可实施 READY + 进行中（assignee 近似，**不**改 READY 契约）
+- NOW：READY（`/implement`）+ Wayfinder frontier（`/wayfinder`，按 map 分组）+ 进行中（assignee 近似，**不**改 READY 契约）
+- Wayfinder frontier：open + `wayfinder:{research,prototype,grilling,task}` + 无 open blocker + 无 assignee；关系缺失则排除并 WARNING（不整板失败）
+- `--parent`：只裁人类树与 NOW；机器 `ready`/`next` 不变
 
 ## 单测
 

@@ -101,8 +101,9 @@ Read-only GitHub Issues board (gh + board engine). Run inside a repo with gh con
 Options:
   --json                Emit structured board JSON (next/ready/...)
   --agent               Emit compact READY + next= output for agents
-  --ready-only          Emit only the READY candidate list
-  --parent N|#N         Scope human dependency tree to parent + blocker closure
+  --ready-only          Emit only the READY candidate list (/implement commands)
+  --parent N|#N         Scope human DEPENDENCY TREE + NOW (READY / wayfinder frontier /
+                        in-progress) to parent + blocker closure
                         (does not change --json / --agent / --ready-only READY pool)
   --limit N             Max issues to fetch (default ${DEFAULT_LIMIT})
   --ready-label LABEL   Override ready-for-agent label mapping
