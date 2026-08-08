@@ -72,6 +72,8 @@ node <kanban-skill-dir>/scripts/issue-board.mjs
 
 默认输出对齐 Local 看板版式：`LEGEND`、摘要、`DEPENDENCY TREE`、`WARNINGS`、底部 `NOW`。
 
+**性能（默认）**：只发起 **一次** `gh issue list --state open`，字段合并 issue 展示 + `parent`/`blockedBy`；closed 的 blocker/parent 从关系节点桩补齐（带 title/state/url），**不**再二次全量拉 closed body。需要历史 closed 全窗口时加 `--include-closed`（更慢）。
+
 `NOW` 人类可复制启动（按入口 skill，不是内部解析 skill）：
 
 - READY 实施票：`/rename gh/#N-…` + `/implement #N`
@@ -116,6 +118,7 @@ node <kanban-skill-dir>/scripts/issue-board.mjs --ready-only
 | 选项 | 含义 |
 | --- | --- |
 | `--limit N` | 拉取 issue 上限，默认 `200` |
+| `--include-closed` | 额外把 closed 也拉进 limit 窗口（默认只拉 open + 关系桩） |
 | `--ready-label LABEL` | 覆盖 ready 标签（默认读 `docs/agents/triage-labels.md` 映射，否则 `ready-for-agent`） |
 | `--project-root PATH` | 解析 triage 文档用的项目根，默认 cwd |
 | `-h` / `--help` | 帮助 |

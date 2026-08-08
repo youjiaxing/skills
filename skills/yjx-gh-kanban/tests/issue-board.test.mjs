@@ -5,14 +5,16 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  BOARD_LIST_FIELDS,
   DEFAULT_LIMIT,
-  loadIssues,
+  loadBoardSnapshot,
   loadNativeRelations,
   main,
   parseArgs,
   parseParentFilter,
   resolveReadyLabel,
   runBoard,
+  stubIssueFromRelationRef,
 } from '../scripts/issue-board.mjs';
 
 const SPEC_BODY = [
@@ -31,7 +33,19 @@ function issueJson(number, title, {
   state = 'OPEN',
   body = TICKET_BODY,
   assignees = [],
+  parent = null,
+  blockedBy = [],
 } = {}) {
+  const nodes = blockedBy.map((item) => (
+    typeof item === 'number'
+      ? { number: item, state: 'OPEN', title: `Issue ${item}`, url: `https://github.com/example/repo/issues/${item}` }
+      : {
+        number: item.number,
+        state: item.state ?? 'OPEN',
+        title: item.title ?? `Issue ${item.number}`,
+        url: item.url ?? `https://github.com/example/repo/issues/${item.number}`,
+      }
+  ));
   return {
     number,
     title,
@@ -41,22 +55,17 @@ function issueJson(number, title, {
     body,
     updatedAt: '2026-07-01T00:00:00Z',
     assignees: assignees.map((login) => ({ login })),
+    parent: parent == null
+      ? null
+      : typeof parent === 'object'
+        ? parent
+        : { number: parent, state: 'OPEN', title: `Parent ${parent}`, url: `https://github.com/example/repo/issues/${parent}` },
+    blockedBy: { nodes, totalCount: nodes.length },
   };
 }
 
-function relationJson(number, parent = null, blockedBy = []) {
-  return {
-    number,
-    parent: parent == null ? null : { number: parent },
-    blockedBy: {
-      nodes: blockedBy.map((item) => (
-        typeof item === 'number'
-          ? { number: item, state: 'OPEN' }
-          : { number: item.number, state: item.state ?? 'OPEN' }
-      )),
-      totalCount: blockedBy.length,
-    },
-  };
+function isBoardListCall(args) {
+  return args.includes('--json') && args.some((part) => String(part).includes('parent') && String(part).includes('blockedBy'));
 }
 
 test('parseArgs covers human default, machine flags, parent filter, and limit', () => {
@@ -68,6 +77,7 @@ test('parseArgs covers human default, machine flags, parent filter, and limit', 
     readyLabel: null,
     parentFilter: null,
     projectRoot: null,
+    includeClosed: false,
     help: false,
   });
 
@@ -75,6 +85,7 @@ test('parseArgs covers human default, machine flags, parent filter, and limit', 
     '--json',
     '--agent',
     '--ready-only',
+    '--include-closed',
     '--limit',
     '50',
     '--ready-label',
@@ -87,6 +98,7 @@ test('parseArgs covers human default, machine flags, parent filter, and limit', 
   assert.equal(parsed.json, true);
   assert.equal(parsed.agent, true);
   assert.equal(parsed.readyOnly, true);
+  assert.equal(parsed.includeClosed, true);
   assert.equal(parsed.limit, 50);
   assert.equal(parsed.readyLabel, 'afk-ready');
   assert.equal(parsed.parentFilter, 102);
@@ -127,57 +139,78 @@ test('resolveReadyLabel falls back when triage doc is missing', async (t) => {
   assert.equal(await resolveReadyLabel({ projectRoot: root }), 'ready-for-agent');
 });
 
-test('loadIssues / loadNativeRelations map gh JSON and fail-closed on missing ready relations', async () => {
+test('loadBoardSnapshot uses one open list call and hydrates closed blockers', async () => {
   const calls = [];
   const runGh = async (args) => {
     calls.push(args);
-    if (args.includes('number,title,state,url,labels,body,updatedAt,assignees')) {
-      return [
-        issueJson(1, 'Spec', { labels: [], body: SPEC_BODY }),
-        issueJson(2, 'Ready work'),
-        issueJson(3, 'Blocked work'),
-      ];
-    }
-    if (args.includes('number,parent,blockedBy')) {
-      return [
-        relationJson(1),
-        relationJson(2),
-        // missing #3 on purpose
-      ];
-    }
-    throw new Error(`unexpected gh args: ${args.join(' ')}`);
+    assert.ok(isBoardListCall(args), `expected combined board fields, got ${args.join(' ')}`);
+    assert.ok(args.includes('open'), 'default fetch is open-only');
+    assert.equal(args.includes(BOARD_LIST_FIELDS), true);
+    return [
+      issueJson(1, 'Spec', { labels: [], body: SPEC_BODY }),
+      issueJson(2, 'Ready work', { parent: 1 }),
+      issueJson(3, 'Blocked work', {
+        parent: 1,
+        blockedBy: [{ number: 9, state: 'CLOSED', title: 'Closed blocker' }],
+      }),
+    ];
   };
 
-  const issues = await loadIssues(200, { runGh });
+  const { issues, relations } = await loadBoardSnapshot(200, 'ready-for-agent', { runGh });
+  assert.equal(calls.length, 1);
   assert.equal(issues.get(2).title, 'Ready work');
   assert.deepEqual(issues.get(2).labels, ['ready-for-agent']);
+  assert.equal(issues.get(9).title, 'Closed blocker');
+  assert.equal(issues.get(9).state, 'CLOSED');
+  assert.equal(issues.get(9)._hydratedStub, true);
+  assert.ok(relations.has(2));
+  assert.ok(relations.has(3));
+});
 
+test('loadNativeRelations fail-closed when ready candidate missing from snapshot', async () => {
+  const runGh = async () => [
+    issueJson(1, 'Spec', { labels: [], body: SPEC_BODY }),
+    issueJson(2, 'Ready work'),
+  ];
+  const issues = new Map([
+    [1, { number: 1, title: 'Spec', state: 'OPEN', labels: [], body: SPEC_BODY, assignees: [] }],
+    [2, { number: 2, title: 'Ready work', state: 'OPEN', labels: ['ready-for-agent'], body: '', assignees: [] }],
+    [3, { number: 3, title: 'Missing', state: 'OPEN', labels: ['ready-for-agent'], body: '', assignees: [] }],
+  ]);
   await assert.rejects(
     () => loadNativeRelations(issues, 'ready-for-agent', { runGh, limit: 200 }),
     /native relations|#3/i,
   );
-  assert.equal(calls.length, 2);
+});
+
+test('stubIssueFromRelationRef copies title/state/url', () => {
+  const stub = stubIssueFromRelationRef({
+    number: 9,
+    state: 'CLOSED',
+    title: 'Done',
+    url: 'https://example/9',
+  });
+  assert.equal(stub.number, 9);
+  assert.equal(stub.title, 'Done');
+  assert.equal(stub._hydratedStub, true);
 });
 
 test('runBoard builds human tree, json, agent, and ready-only outputs via injected gh', async () => {
   const runGh = async (args) => {
-    if (args.includes('number,title,state,url,labels,body,updatedAt,assignees')) {
-      return [
-        issueJson(10, 'Parent spec', { labels: [], body: SPEC_BODY }),
-        issueJson(11, 'Ready child'),
-        issueJson(12, 'Blocked child'),
-        issueJson(9, 'Closed blocker', { state: 'CLOSED', labels: [] }),
-      ];
-    }
-    if (args.includes('number,parent,blockedBy')) {
-      return [
-        relationJson(10),
-        relationJson(11, 10),
-        relationJson(12, 10, [9]),
-        relationJson(9),
-      ];
-    }
-    throw new Error(`unexpected gh args: ${args.join(' ')}`);
+    assert.ok(isBoardListCall(args));
+    // Default open-only: closed blocker arrives only as relation stub on #12.
+    return [
+      issueJson(10, 'Parent spec', { labels: [], body: SPEC_BODY }),
+      issueJson(11, 'Ready child', { parent: 10 }),
+      issueJson(12, 'Blocked child', {
+        parent: 10,
+        // Open blocker keeps #12 out of READY; closed #9 only appears for tree hydration.
+        blockedBy: [
+          { number: 8, state: 'OPEN', title: 'Open blocker' },
+          { number: 9, state: 'CLOSED', title: 'Closed blocker' },
+        ],
+      }),
+    ];
   };
 
   const human = await runBoard({
@@ -190,6 +223,7 @@ test('runBoard builds human tree, json, agent, and ready-only outputs via inject
   assert.match(human, /LEGEND/);
   assert.match(human, /DEPENDENCY TREE/);
   assert.match(human, /○ 11/);
+  assert.match(human, /Closed blocker|✓ 9|Open blocker/);
   assert.match(human, /NOW/);
 
   const jsonText = await runBoard({
@@ -235,13 +269,8 @@ test('main --help exits 0 and prints Usage', async () => {
 
 test('main prints agent board through deps without calling real gh when injected', async () => {
   const runGh = async (args) => {
-    if (args.includes('number,title,state,url,labels,body,updatedAt,assignees')) {
-      return [issueJson(5, 'Only ready')];
-    }
-    if (args.includes('number,parent,blockedBy')) {
-      return [relationJson(5)];
-    }
-    throw new Error(`unexpected gh args: ${args.join(' ')}`);
+    assert.ok(isBoardListCall(args));
+    return [issueJson(5, 'Only ready')];
   };
   const out = [];
   const code = await main(['--agent', '--project-root', os.tmpdir()], {

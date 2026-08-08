@@ -25,8 +25,14 @@ import {
 export const DEFAULT_LIMIT = 200;
 export const TRIAGE_LABELS_RELATIVE = path.join('docs', 'agents', 'triage-labels.md');
 
-const ISSUE_LIST_FIELDS = 'number,title,state,url,labels,body,updatedAt,assignees';
-const RELATION_LIST_FIELDS = 'number,parent,blockedBy';
+/**
+ * Single gh list field set: issue display + native parent/blockedBy.
+ * Default fetch is `--state open` only; closed blockers/parents are hydrated from
+ * relation stubs (nodes already include number/state/title/url) so we avoid
+ * downloading full bodies for every closed issue in the limit window.
+ */
+export const BOARD_LIST_FIELDS =
+  'number,title,state,url,labels,body,updatedAt,assignees,parent,blockedBy';
 
 export function parseParentFilter(raw) {
   if (raw == null || String(raw).trim() === '') {
@@ -49,6 +55,7 @@ export function parseArgs(argv) {
     readyLabel: null,
     parentFilter: null,
     projectRoot: null,
+    includeClosed: false,
     help: false,
   };
   const args = [...argv];
@@ -57,6 +64,7 @@ export function parseArgs(argv) {
     if (argument === '--agent') options.agent = true;
     else if (argument === '--json') options.json = true;
     else if (argument === '--ready-only') options.readyOnly = true;
+    else if (argument === '--include-closed') options.includeClosed = true;
     else if (argument === '--limit') options.limit = args.shift();
     else if (argument === '--ready-label') options.readyLabel = args.shift();
     else if (argument === '--parent') options.parentFilter = args.shift();
@@ -105,12 +113,15 @@ Options:
   --parent N|#N         Scope human DEPENDENCY TREE + NOW (READY / wayfinder frontier /
                         in-progress) to parent + blocker closure
                         (does not change --json / --agent / --ready-only READY pool)
+  --include-closed      Also fetch closed issues in the limit window (slower; default
+                        only fetches open + hydrates closed blockers/parents from relations)
   --limit N             Max issues to fetch (default ${DEFAULT_LIMIT})
   --ready-label LABEL   Override ready-for-agent label mapping
   --project-root PATH   Project root for triage-labels.md (default: cwd)
   -h, --help            Show help
 
 Default output is the human board (LEGEND, dependency tree, WARNINGS, NOW).
+Performance: one \`gh issue list\` (open by default) with body+relations combined.
 Requires: Node.js 20+, GitHub CLI (\`gh\`) authenticated for the current repo.
 `);
 }
@@ -140,73 +151,134 @@ export function runGh(args, { cwd = process.cwd(), spawn = spawnSync } = {}) {
   }
 }
 
-export async function loadIssues(limit, { runGh: gh = runGh, cwd } = {}) {
-  const raw = await gh(
-    ['issue', 'list', '--state', 'all', '--limit', String(limit), '--json', ISSUE_LIST_FIELDS],
-    { cwd },
-  );
-  if (!Array.isArray(raw)) {
-    throw new Error('gh issue list returned a non-array payload');
+function mapLabels(rawLabels) {
+  if (!Array.isArray(rawLabels)) return [];
+  return rawLabels
+    .map((label) => (typeof label === 'string' ? label : label?.name ?? ''))
+    .filter(Boolean);
+}
+
+function mapAssignees(rawAssignees) {
+  if (!Array.isArray(rawAssignees)) return [];
+  return rawAssignees
+    .map((assignee) => {
+      if (typeof assignee === 'string') return assignee;
+      return assignee?.login ?? assignee?.name ?? '';
+    })
+    .filter(Boolean);
+}
+
+function mapIssueRecord(item) {
+  const number = Number(item.number);
+  if (!Number.isFinite(number)) {
+    throw new Error(`gh issue list entry missing number: ${JSON.stringify(item)}`);
   }
-  const issues = new Map();
-  for (const item of raw) {
-    const number = Number(item.number);
-    if (!Number.isFinite(number)) {
-      throw new Error(`gh issue list entry missing number: ${JSON.stringify(item)}`);
-    }
-    const labels = Array.isArray(item.labels)
-      ? item.labels.map((label) => (typeof label === 'string' ? label : label?.name ?? '')).filter(Boolean)
-      : [];
-    const assignees = Array.isArray(item.assignees)
-      ? item.assignees.map((assignee) => {
-        if (typeof assignee === 'string') return assignee;
-        return assignee?.login ?? assignee?.name ?? '';
-      }).filter(Boolean)
-      : [];
-    issues.set(number, {
-      number,
-      title: item.title ?? '',
-      state: item.state ?? 'OPEN',
-      url: item.url ?? '',
-      labels,
-      body: item.body ?? '',
-      updatedAt: item.updatedAt ?? item.updated_at ?? '',
-      assignees,
-    });
+  return {
+    number,
+    title: item.title ?? '',
+    state: item.state ?? 'OPEN',
+    url: item.url ?? '',
+    labels: mapLabels(item.labels),
+    body: item.body ?? '',
+    updatedAt: item.updatedAt ?? item.updated_at ?? '',
+    assignees: mapAssignees(item.assignees),
+  };
+}
+
+function blockedByNodes(blockedBy) {
+  if (blockedBy == null) return [];
+  if (Array.isArray(blockedBy)) return blockedBy;
+  if (typeof blockedBy === 'object' && Array.isArray(blockedBy.nodes)) return blockedBy.nodes;
+  return [];
+}
+
+function parentNumber(parent) {
+  if (parent == null) return null;
+  if (typeof parent === 'object') return Number(parent.number);
+  return Number(parent);
+}
+
+/** Build a minimal issue row from gh parent / blockedBy node stubs. */
+export function stubIssueFromRelationRef(ref) {
+  const number = Number(ref?.number);
+  if (!Number.isFinite(number)) {
+    throw new Error(`invalid relation ref: ${JSON.stringify(ref)}`);
   }
-  return issues;
+  return {
+    number,
+    title: ref.title ?? `(#${number})`,
+    state: ref.state ?? 'CLOSED',
+    url: ref.url ?? '',
+    labels: mapLabels(ref.labels),
+    body: '',
+    updatedAt: '',
+    assignees: mapAssignees(ref.assignees),
+    _hydratedStub: true,
+  };
+}
+
+function ensureIssueFromRef(issues, ref) {
+  if (ref == null) return;
+  const number = parentNumber(ref);
+  if (!Number.isFinite(number) || issues.has(number)) return;
+  issues.set(number, stubIssueFromRelationRef(ref));
 }
 
 function needsNativeRelations(issue, readyLabel) {
   if (String(issue.state).toUpperCase() === 'CLOSED') return false;
+  if (issue._hydratedStub) return false;
   if (!issue.labels.includes(readyLabel)) return false;
   if (isSpecIssue(issue) || isWayfinderIssue(issue)) return false;
   return true;
 }
 
 /**
- * Load native parent / blockedBy for the same limit window.
- * Fail-closed when a READY candidate is missing from the relation payload.
+ * One `gh issue list` with display fields + parent/blockedBy.
+ * Default state=open; hydrate closed (or missing) parents/blockers from relation stubs
+ * so the board does not download bodies for every closed issue in the repo window.
+ *
+ * @returns {Promise<{ issues: Map<number, object>, relations: Map<number, object> }>}
  */
-export async function loadNativeRelations(issues, readyLabel, { runGh: gh = runGh, limit, cwd } = {}) {
+export async function loadBoardSnapshot(
+  limit,
+  readyLabel,
+  { runGh: gh = runGh, cwd, includeClosed = false } = {},
+) {
+  const state = includeClosed ? 'all' : 'open';
   const raw = await gh(
-    ['issue', 'list', '--state', 'all', '--limit', String(limit), '--json', RELATION_LIST_FIELDS],
+    ['issue', 'list', '--state', state, '--limit', String(limit), '--json', BOARD_LIST_FIELDS],
     { cwd },
   );
   if (!Array.isArray(raw)) {
-    throw new Error('gh relation list returned a non-array payload');
+    throw new Error('gh issue list returned a non-array payload');
   }
 
+  const issues = new Map();
   const relations = new Map();
+
   for (const item of raw) {
-    const number = Number(item.number);
-    if (!Number.isFinite(number)) {
-      throw new Error(`gh relation entry missing number: ${JSON.stringify(item)}`);
-    }
-    relations.set(number, {
+    const issue = mapIssueRecord(item);
+    issues.set(issue.number, issue);
+    relations.set(issue.number, {
       parent: item.parent ?? null,
       blockedBy: item.blockedBy,
     });
+  }
+
+  // Hydrate closed/missing parents & blockers referenced by the fetched set.
+  for (const item of raw) {
+    ensureIssueFromRef(issues, item.parent);
+    for (const node of blockedByNodes(item.blockedBy)) {
+      ensureIssueFromRef(issues, node);
+    }
+  }
+
+  // Stub rows need a relations entry so classify/view do not treat them as missing keys.
+  for (const [number, issue] of issues) {
+    if (!relations.has(number)) {
+      relations.set(number, { parent: null, blockedBy: [] });
+    }
+    void issue;
   }
 
   const missing = [...issues.values()]
@@ -217,7 +289,47 @@ export async function loadNativeRelations(issues, readyLabel, { runGh: gh = runG
     const refs = missing.map((number) => `#${number}`).join(', ');
     throw new Error(`GitHub did not return native relations for: ${refs}`);
   }
-  return relations;
+
+  // Ready candidates must appear in the primary list payload (not only as stubs).
+  const missingReady = [...issues.values()]
+    .filter((issue) => needsNativeRelations(issue, readyLabel) && issue._hydratedStub)
+    .map((issue) => issue.number)
+    .sort((a, b) => a - b);
+  if (missingReady.length > 0) {
+    const refs = missingReady.map((number) => `#${number}`).join(', ');
+    throw new Error(`GitHub did not return native relations for: ${refs}`);
+  }
+
+  return { issues, relations };
+}
+
+/**
+ * @deprecated Prefer loadBoardSnapshot. Kept for tests/compat: open+closed full list without relations.
+ */
+export async function loadIssues(limit, { runGh: gh = runGh, cwd, includeClosed = true } = {}) {
+  const { issues } = await loadBoardSnapshot(limit, DEFAULT_READY_LABEL, {
+    runGh: gh,
+    cwd,
+    includeClosed,
+  });
+  return issues;
+}
+
+/**
+ * @deprecated Prefer loadBoardSnapshot. Loads combined payload and returns relations only.
+ */
+export async function loadNativeRelations(issues, readyLabel, { runGh: gh = runGh, limit, cwd, includeClosed = true } = {}) {
+  const snapshot = await loadBoardSnapshot(limit, readyLabel, { runGh: gh, cwd, includeClosed });
+  // Preserve fail-closed against the caller-provided issues map (may differ from snapshot).
+  const missing = [...issues.values()]
+    .filter((issue) => needsNativeRelations(issue, readyLabel) && !snapshot.relations.has(issue.number))
+    .map((issue) => issue.number)
+    .sort((a, b) => a - b);
+  if (missing.length > 0) {
+    const refs = missing.map((number) => `#${number}`).join(', ');
+    throw new Error(`GitHub did not return native relations for: ${refs}`);
+  }
+  return snapshot.relations;
 }
 
 export async function resolveReadyLabel({
@@ -252,11 +364,15 @@ export async function runBoard({
   readyLabel = DEFAULT_READY_LABEL,
   parentFilter = null,
   mode = 'human',
+  includeClosed = false,
   runGh: gh = runGh,
   cwd,
 } = {}) {
-  const issues = await loadIssues(limit, { runGh: gh, cwd });
-  const relations = await loadNativeRelations(issues, readyLabel, { runGh: gh, limit, cwd });
+  const { issues, relations } = await loadBoardSnapshot(limit, readyLabel, {
+    runGh: gh,
+    cwd,
+    includeClosed,
+  });
   const result = buildBoard({
     issues,
     relations,
@@ -298,8 +414,9 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     const text = await runBoard({
       limit: options.limit,
       readyLabel,
-      // Parent filter scopes human dependency tree; machine modes still classify the full fetch.
+      // Parent filter scopes human dependency tree + NOW; machine READY is still this fetch window.
       parentFilter: options.parentFilter,
+      includeClosed: options.includeClosed,
       mode,
       runGh: gh,
       cwd,
