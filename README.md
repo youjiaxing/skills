@@ -23,6 +23,7 @@ npx skills add youjiaxing/skills --skill yjx-discuss
 - `yjx-local-kanban`：只读输出 Local Markdown implementation issues 的人类看板、完整 JSON 依赖图和 Mermaid。
 - `yjx-local-ralph`：从 Local Markdown frontier 手动确认并启动单张 issue，完成后停止；依赖 `yjx-local-kanban`。
 - `yjx-gh-kanban`：只读输出 **GitHub Issues** 人类看板（LEGEND / 依赖树 / NOW）与 `--json` / `--agent` / `--ready-only` 机器契约；通过 `gh` 拉数，脚本路径可从常见 Agent skills 根发现。
+- `yjx-gh-ralph`：从 GitHub Issues READY 池手动确认并启动单张 issue；默认推荐 board `next`，确认后走 implement、验证后自动 commit，并遵守项目 issue-tracker 收尾；**禁止 auto-run / 连续多票**。依赖同根 `yjx-gh-kanban`。
 - `yjx-issue-crusher`：issue 串行接力编排器（Chain Run + **Ink 全屏**调度 TUI；Worker 独立前台窗）。`npm link` 后短命令 `ic <feature>` / `issue-crusher`。**全屏默认不自动开 Worker**（Enter 开始；`s` 切换「自动开下一张」）；`--once` 等非全屏仍可一拍尝试开票。合同与用法见该 skill 的 `SKILL.md`；local-md 软依赖同根 `yjx-local-kanban`；交互全屏依赖 monorepo 根的 **Ink + React**。
 
 ### Local Markdown tracker 组合
@@ -46,17 +47,24 @@ npx skills add youjiaxing/skills --skill yjx-issue-crusher
 
 ```bash
 npx skills add youjiaxing/skills --skill yjx-gh-kanban
+npx skills add youjiaxing/skills --skill yjx-gh-ralph
 ```
+
+`yjx-gh-kanban` 可独立安装；`yjx-gh-ralph` 必须和 `yjx-gh-kanban` 安装在同一个 Agent skills 根目录。
 
 在任意已配置 `gh` 的仓库根目录：
 
 ```bash
-# 将 <kanban-skill-dir> 换成本机 skills 根下的 yjx-gh-kanban 目录
+# 将 <kanban-skill-dir> / <ralph-skill-dir> 换成本机 skills 根下对应目录
 node <kanban-skill-dir>/scripts/issue-board.mjs
 node <kanban-skill-dir>/scripts/issue-board.mjs --json
 node <kanban-skill-dir>/scripts/issue-board.mjs --agent
 node <kanban-skill-dir>/scripts/issue-board.mjs --ready-only
 node <kanban-skill-dir>/scripts/issue-board.mjs --parent 102
+
+# Ralph 选票（只读 READY + 推荐 next；不实施、不循环）
+node <ralph-skill-dir>/scripts/select-issue.mjs
+node <ralph-skill-dir>/scripts/select-issue.mjs --json
 ```
 
 消费者（Makefile、Ralph 等）可用路径发现脚本定位 board CLI，避免写死绝对路径：
@@ -74,11 +82,11 @@ node <kanban-skill-dir>/scripts/resolve-board-script.mjs
 | 作用域 | feature 目录 | 默认整仓；可选 `--parent` |
 | 人类输出 | LEGEND / 依赖树 / NOW | 同构版式（符号语义对齐） |
 | 机器输出 | 完整 JSON 图 / Mermaid | `--json`（含 `next`/`ready`）/ `--agent` |
-| 调度伙伴 | `yjx-local-ralph` | 后续 `yjx-gh-ralph` |
+| 调度伙伴 | `yjx-local-ralph` | `yjx-gh-ralph`（手动单票，无 auto-run） |
 
 依赖分层：
 
-- `yjx-local-tracker-setup` / `yjx-local-kanban` / `yjx-local-ralph` / `yjx-gh-kanban`：以 **Node 标准库**为主（无 Ink）。`yjx-gh-kanban` 另需本机 `gh`。
+- `yjx-local-tracker-setup` / `yjx-local-kanban` / `yjx-local-ralph` / `yjx-gh-kanban` / `yjx-gh-ralph`：以 **Node 标准库**为主（无 Ink）。`yjx-gh-kanban` / `yjx-gh-ralph` 另需本机 `gh`。
 - `yjx-issue-crusher`：编排核心仍以标准库为主；**交互 dual-TTY 全屏调度与启动选单**需要 monorepo 根依赖 **Ink + React**（`npm install` 后使用）。全屏进门不自动 spawn；`--once` / 非 TTY 冒烟路径不挂全屏，行为见该 skill `SKILL.md`。
 
 ## 开发者设置

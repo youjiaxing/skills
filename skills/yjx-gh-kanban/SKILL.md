@@ -130,6 +130,6 @@ npm test
 ## 边界
 
 - 不修改 GitHub issue、label、assignee 或关系
-- 不选择或确认下一张实施票（见后续 `yjx-gh-ralph`）
+- 不选择或确认下一张实施票（见 `yjx-gh-ralph`）
 - 不替代项目 `docs/agents/issue-tracker.md` 中的生命周期约定
 - 不提供 Mermaid 输出（Local 轨专属能力，非本 skill 必达）

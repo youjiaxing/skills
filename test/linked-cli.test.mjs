@@ -12,6 +12,7 @@ const commands = [
   ['yjx-local-ralph', 'scripts/select-issue.mjs'],
   ['yjx-gh-kanban', 'scripts/issue-board.mjs'],
   ['yjx-gh-kanban', 'scripts/resolve-board-script.mjs'],
+  ['yjx-gh-ralph', 'scripts/select-issue.mjs'],
 ];
 
 test('CLI scripts run when installed through a directory link', async (t) => {
