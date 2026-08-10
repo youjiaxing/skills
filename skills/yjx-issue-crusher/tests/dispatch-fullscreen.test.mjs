@@ -46,6 +46,7 @@ import {
   openModelEffortMenu,
   boardDefaultExecutable,
   buildFooterItems,
+  mainCtaRole,
   renderFooter,
   renderMiddlePanel,
   renderModelEffortMenuFrame,
@@ -3349,4 +3350,203 @@ test('shell tall vs short: edges vs 已降级 via terminalRows', () => {
     terminalRows: 18,
   }));
   assert.match(short, /已降级/);
+});
+
+// --- 20260807-1618 char-grid parity / 02: shell chrome + CTA roles + global g ---
+
+test('three-band chrome: short titles 处境·主 CTA / 工作对象 / 键位 are scannable', () => {
+  const snap = snapWithBoard({ status: 'idle', slot: null, autoAdvance: false });
+  const top = renderTopBar(snap);
+  const middle = renderMiddlePanel(snap, { terminalRows: 28 });
+  const footer = renderFooter(snap);
+
+  // Chrome shares the first content line of each band (no extra blank rows).
+  assert.match(top, /处境\s*[·.]\s*主\s*CTA/);
+  assert.match(middle, /工作对象/);
+  assert.match(footer, /键位/);
+
+  // Default middle stays list+neighborhood under the chrome title.
+  assert.match(middle, /列表|邻域|现在可执行/);
+  assert.doesNotMatch(middle, /依赖图 · 全局总览/);
+
+  const frame = renderToString(createElement(DispatchShell, {
+    snap,
+    terminalRows: 28,
+  }));
+  assert.match(frame, /处境.*主\s*CTA|处境 · 主 CTA/);
+  assert.match(frame, /工作对象/);
+  assert.match(frame, /键位/);
+});
+
+test('mainCtaRole: startable vs running/edge are distinct intents (no RGB)', () => {
+  const startable = snapWithBoard({
+    status: 'idle',
+    slot: null,
+    autoAdvance: false,
+  });
+  const running = snapWithBoard({
+    status: 'soft-stuck',
+    slot: { ...occupiedSlot, closed: false },
+    autoAdvance: true,
+  });
+  const edge = snapWithBoard({
+    status: 'needs-confirmation',
+    slot: null,
+    pendingHitl: { issueId: 'h.md', entryClass: 'human' },
+    actions: {
+      confirmHitl: { available: true },
+      rejectHitl: { available: true },
+    },
+  });
+  const forceEdge = snapWithBoard({
+    status: 'awaiting-worker-exit',
+    autoAdvance: false,
+    slot: { ...occupiedSlot, closed: true },
+    actions: { forceAdvance: { available: true } },
+  });
+
+  assert.equal(mainCtaRole(startable), 'startable');
+  assert.equal(mainCtaRole(running), 'running');
+  assert.equal(mainCtaRole(edge), 'edge');
+  assert.equal(mainCtaRole(forceEdge), 'edge');
+  assert.notEqual(mainCtaRole(startable), mainCtaRole(running));
+  assert.notEqual(mainCtaRole(startable), mainCtaRole(edge));
+
+  // Pure text still carries operator-facing CTA lines for both roles.
+  assert.match(renderMainCta(startable) ?? '', /按 Enter|开/);
+  assert.match(renderMainCta(running) ?? '', /Worker|勿再 Enter|等/);
+  assert.match(renderTopBar(startable), /下一步：/);
+  assert.match(renderTopBar(running), /下一步：/);
+});
+
+test('role intents: selected/current-slot marks + footer hot/dim stay distinguishable', () => {
+  const issues = [
+    {
+      id: '01-a.md',
+      title: 'a',
+      closed: false,
+      blockedBy: [],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+    {
+      id: '02-b.md',
+      title: 'b',
+      closed: false,
+      blockedBy: [],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+  ];
+  const middle = renderMiddlePanel(snapWithBoard({
+    status: 'soft-stuck',
+    slot: {
+      issueId: '01-a.md',
+      title: 'a',
+      pid: 7,
+      mode: 'review',
+      closed: false,
+    },
+    board: { feature: 'demo', readOnly: true, issues },
+  }), { selectedIndex: 1, terminalRows: 28 });
+  assert.match(middle, /◀选中/);
+  assert.match(middle, /◀当前槽/);
+  assert.notEqual(
+    (middle.match(/◀选中/g) || [])[0],
+    (middle.match(/◀当前槽/g) || [])[0],
+  );
+
+  const readyItems = buildFooterItems(snapWithBoard({
+    status: 'idle',
+    autoAdvance: false,
+    actions: { setMode: { available: true }, setModelEffort: { available: true } },
+  }));
+  const softItems = buildFooterItems(snapWithBoard({
+    status: 'soft-stuck',
+    slot: { ...occupiedSlot, closed: false },
+    autoAdvance: true,
+    actions: { setMode: { available: true }, setModelEffort: { available: true } },
+  }));
+  const readyEnter = readyItems.find((i) => i.id === 'Enter');
+  const softEnter = softItems.find((i) => i.id === 'Enter');
+  assert.equal(readyEnter?.hot, true);
+  assert.notEqual(readyEnter?.dim, true);
+  assert.equal(softEnter?.dim, true);
+  assert.notEqual(softEnter?.hot, true);
+  // Footer chrome title present; hot key text still names Enter for CTA alignment.
+  assert.match(renderFooter(snapWithBoard({ autoAdvance: false })), /键位/);
+  assert.match(renderFooter(snapWithBoard({ autoAdvance: false })), /\[Enter\].*开始/);
+});
+
+test('global g view: scannable deps with status clues; returnable; not blank-heavy untitled dots', () => {
+  const issues = [
+    {
+      id: '01-done.md',
+      title: '已完成票',
+      closed: true,
+      blockedBy: [],
+      type: 'research',
+      status: 'resolved',
+    },
+    {
+      id: '02-ready.md',
+      title: '可执行票',
+      closed: false,
+      blockedBy: ['01-done.md'],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+    {
+      id: '03-blocked.md',
+      title: '阻塞票',
+      closed: false,
+      blockedBy: ['02-ready.md'],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+  ];
+  const snap = snapWithBoard({
+    status: 'idle',
+    slot: null,
+    board: { feature: 'demo', readOnly: true, issues },
+  });
+
+  const list = renderMiddlePanel(snap, { terminalRows: 28 });
+  assert.match(list, /工作对象/);
+  assert.match(list, /列表|邻域|现在可执行/);
+  assert.doesNotMatch(list, /依赖图 · 全局总览|按 g 返回列表/);
+
+  const global = renderMiddlePanel(snap, { middleView: 'global', terminalRows: 28 });
+  assert.match(global, /工作对象/);
+  assert.match(global, /依赖图|全局/);
+  assert.match(global, /──►|└─|├─/);
+  // Nodes carry mark + id clue + status (not bare ·01 dots only).
+  assert.match(global, /✓.*01|01.*已完成/);
+  assert.match(global, /★.*02|02.*可实施/);
+  assert.match(global, /·.*03|03.*阻塞|阻塞/);
+  assert.match(global, /\[research\]|\[impl\]|已完成|可实施|阻塞/);
+  assert.match(global, /按 g 返回列表|返回列表\+邻域|返回列表/);
+
+  // No large meaningless blank runs dominating the frame.
+  const lines = global.split('\n');
+  let run = 0;
+  let maxRun = 0;
+  let nonEmpty = 0;
+  for (const line of lines) {
+    if (line.trim() === '') {
+      run += 1;
+      if (run > maxRun) maxRun = run;
+    } else {
+      nonEmpty += 1;
+      run = 0;
+    }
+  }
+  assert.ok(maxRun <= 2, `global view blank run too long: ${maxRun}\n${global}`);
+  assert.ok(nonEmpty >= 5, `global view too sparse: nonEmpty=${nonEmpty}\n${global}`);
+
+  // g is a toggle second view; key map unchanged (m opens model/effort overlay).
+  assert.deepEqual(mapFullscreenKey('g'), { type: 'toggleMiddleView' });
+  assert.equal(mapFullscreenKey('m')?.type, 'openModelEffort');
+  assert.equal(mapFullscreenKey('v')?.type, 'setMode');
+  assert.equal(mapFullscreenKey('\r')?.type, 'start');
 });

@@ -504,10 +504,38 @@ export function renderFocusNeighborhood({
 }
 
 /**
+ * Graph node token for ASCII dependency overview.
+ * Default compact: `★01`. Dense (global g): `★01[impl]可实施` so nodes are
+ * scannable rather than untitled dots.
+ *
+ * @param {object | null | undefined} issue
+ * @param {{
+ *   mark?: string,
+ *   dense?: boolean,
+ *   openBlockersById?: Map<string, string[]> | null,
+ * }} [opts]
+ * @returns {string}
+ */
+export function formatGraphNodeToken(issue, {
+  mark = '·',
+  dense = false,
+  openBlockersById = null,
+} = {}) {
+  const id = issue?.id ?? '—';
+  const short = shortIssueLabel(id);
+  const head = `${mark}${short}`;
+  if (!dense) return head;
+  const type = issueTypeLabel(issue);
+  const statusZh = issueBoardStatusLabelZh(issue, { openBlockersById });
+  return `${head}[${type}]${statusZh}`;
+}
+
+/**
  * @param {{
  *   issues: Array<object>,
  *   slotIssueId?: string|null,
  *   executableIds?: string[]|null,
+ *   denseNodes?: boolean,
  * }} options
  * @returns {{ lines: string[], executable: Array<{id:string,title?:string}>, warnings: string[] }}
  */
@@ -515,11 +543,13 @@ export function renderDependencyGraph({
   issues = [],
   slotIssueId = null,
   executableIds = null,
+  denseNodes = false,
 } = {}) {
   const list = Array.isArray(issues) ? issues : [];
   const execIds = executableIds ? [...executableIds] : listExecutableIssueIds(list);
   const execSet = new Set(execIds);
   const byId = new Map(list.map((i) => [i.id, i]));
+  const openMap = openBlockersById(list);
   const executable = execIds.map((id) => ({
     id,
     title: byId.get(id)?.title ?? id,
@@ -538,7 +568,11 @@ export function renderDependencyGraph({
     slotIssueId,
     executableIds: execSet,
   });
-  const token = (id) => `${markOf(id)}${shortIssueLabel(id)}`;
+  const token = (id) => formatGraphNodeToken(byId.get(id) || { id }, {
+    mark: markOf(id),
+    dense: Boolean(denseNodes),
+    openBlockersById: openMap,
+  });
 
   const idSet = new Set(list.map((i) => i.id));
   const succs = new Map(list.map((i) => [i.id, []]));
@@ -615,7 +649,9 @@ export function renderDependencyGraph({
     }
   }
 
-  return { lines, executable, warnings };
+  // Global dense overview must not pad with empty rows (blank-heavy frames).
+  const cleaned = lines.filter((line) => String(line).trim() !== '');
+  return { lines: cleaned, executable, warnings };
 }
 
 /**

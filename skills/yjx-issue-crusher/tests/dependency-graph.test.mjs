@@ -366,3 +366,46 @@ test('renderFocusNeighborhood edges vs compact+已降级', () => {
   assert.match(compactText, /──►/);
   assert.match(compactText, /上游|下游/);
 });
+
+// --- 20260807-1618 char-grid parity / 02: dense global graph tokens ---
+
+test('renderDependencyGraph denseNodes: mark + id + type + status (scannable, not bare dots)', () => {
+  const issues = [
+    {
+      id: '01-a.md',
+      title: '盘点',
+      closed: true,
+      blockedBy: [],
+      type: 'research',
+      status: 'resolved',
+    },
+    {
+      id: '02-b.md',
+      title: '可开',
+      closed: false,
+      blockedBy: ['01-a.md'],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+    {
+      id: '03-c.md',
+      title: '堵住',
+      closed: false,
+      blockedBy: ['02-b.md'],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+  ];
+  const compact = renderDependencyGraph({ issues });
+  assert.match(compact.lines.join('\n'), /✓01/);
+  assert.doesNotMatch(compact.lines.join('\n'), /\[research\].*已完成|已完成.*\[research\]/);
+
+  const dense = renderDependencyGraph({ issues, denseNodes: true });
+  const text = dense.lines.join('\n');
+  assert.match(text, /──►/);
+  assert.match(text, /✓01.*\[research\].*已完成|✓01\[research\]已完成/);
+  assert.match(text, /★02.*\[impl\].*可实施|★02\[impl\]可实施/);
+  assert.match(text, /·03.*\[impl\].*阻塞|·03\[impl\]阻塞/);
+  // Still no gratuitous blank lines inside the graph body.
+  assert.ok(!dense.lines.some((l) => l.trim() === ''), `dense graph has empty line: ${JSON.stringify(dense.lines)}`);
+});

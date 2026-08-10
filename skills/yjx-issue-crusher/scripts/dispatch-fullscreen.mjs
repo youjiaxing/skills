@@ -43,6 +43,11 @@ import {
   resolveNeighborhoodLayout,
   statusLabelZh,
 } from './dependency-graph.mjs';
+
+/** Three-band short chrome titles (prototype character-grid parity). */
+export const BAND_TITLE_TOP = '处境 · 主 CTA';
+export const BAND_TITLE_MIDDLE = '工作对象';
+export const BAND_TITLE_FOOTER = '键位';
 import {
   claudeModelItems,
   defaultEffortItems,
@@ -412,6 +417,43 @@ export function renderMainCta(snap, { selectedIndex = null } = {}) {
 }
 
 /**
+ * Semantic role for the main CTA (character-grid parity).
+ * Locks intent for tests / Ink styling — not RGB.
+ *
+ * - startable: Ready with tickets → Enter is the action
+ * - empty: Ready but no ticket
+ * - running: in-progress wait (soft-stuck / auto handoff wait)
+ * - edge: operator edge keys (f/r/y/n/c) or interrupted recovery
+ * - stop: stopped / error
+ *
+ * @param {object | null | undefined} snap
+ * @returns {'startable' | 'empty' | 'running' | 'edge' | 'stop' | null}
+ */
+export function mainCtaRole(snap) {
+  if (!snap) return null;
+  if (snap.status === 'error' || snap.status === 'stopped') return 'stop';
+  if (snap.status === 'idle') {
+    return readyExecutables(snap).length > 0 ? 'startable' : 'empty';
+  }
+  if (snap.status === 'soft-stuck') return 'running';
+  if (snap.status === 'awaiting-worker-exit' && snap.autoAdvance !== false) {
+    // Auto handoff in progress — wait, not a manual edge key.
+    return 'running';
+  }
+  switch (snap.status) {
+    case 'awaiting-worker-exit':
+    case 'needs-resume':
+    case 'needs-confirmation':
+    case 'handoff-countdown':
+    case 'session-interrupted':
+    case 'awaiting-session-end':
+      return 'edge';
+    default:
+      return 'running';
+  }
+}
+
+/**
  * Operator-facing status line for the top bar.
  * Primary matrix uses operator display names (可开干 / 进行中 / [f] 待收尾 …).
  * Secondary chain states keep short Chinese labels + distinguishability hints.
@@ -546,7 +588,8 @@ export function subsequentFlagLabel(value) {
  */
 export function renderTopBar(snap, { selectedIndex = null } = {}) {
   if (!snap) {
-    return 'Issue Crusher · 调度（启动中…）';
+    // Chrome shares the product line — no extra row (numeric terminal height is tight).
+    return `${BAND_TITLE_TOP}  ·  Issue Crusher · 调度（启动中…）`;
   }
   const mode = snap.subsequentMode ?? '—';
   // Default true when field omitted (older fakes / once path projection).
@@ -554,19 +597,22 @@ export function renderTopBar(snap, { selectedIndex = null } = {}) {
   const feature = truncateDisplayField(snap.feature ?? '—', TOP_FIELD_MAX);
   const modelLabel = subsequentFlagLabel(snap.subsequentModel);
   const effortLabel = subsequentFlagLabel(snap.subsequentEffort);
+  // Band chrome on the primary dial line (scannable, zero extra row cost).
   const primary = [
+    BAND_TITLE_TOP,
     'Issue Crusher · 调度',
     `功能: ${feature}`,
     `runtime: ${snap.runtime ?? '—'}`,
     `后续 mode: ${mode}${modeHint(mode)}`,
   ].join('  ·  ');
   // Critical operator dials on their own line — short enough for narrow TTYs.
-  // subsequent model/effort stay here so operators can trust the model/effort source.
+  // status + auto lead so wrap/clip under numeric height still leaves them scannable;
+  // subsequent model/effort follow (m/v source of truth, slightly less urgent on Ready).
   const critical = [
+    statusLine(snap),
+    `自动开下一张: ${autoLabel}`,
     `后续 model: ${modelLabel}`,
     `后续 effort: ${effortLabel}`,
-    `自动开下一张: ${autoLabel}`,
-    statusLine(snap),
   ].join('  ·  ');
   const cta = renderMainCta(snap, { selectedIndex });
   return cta ? `${primary}\n${critical}\n${cta}` : `${primary}\n${critical}`;
@@ -720,16 +766,20 @@ export function renderMiddlePanel(snap, {
   // Occupied slot / HITL summary merges into middle top (three-band IA).
   const slotBlock = renderSlotPanel(snap);
   if (slotBlock.trim()) {
-    for (const line of slotBlock.split('\n')) lines.push(line);
-    lines.push('');
+    for (const line of slotBlock.split('\n')) {
+      if (String(line).trim() !== '') lines.push(line);
+    }
   }
 
   if (!snap) {
     if (view === 'global') {
-      lines.push('依赖图 · 全局总览（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`);
+      lines.push(
+        `${BAND_TITLE_MIDDLE} · 依赖图 · 全局总览（只读 · 不可图上派票）`,
+        `  ${GRAPH_LEGEND}`,
+      );
       lines.push('  （启动中…）');
     } else {
-      lines.push('列表 · 全板（只读 · 不可图上派票）');
+      lines.push(`${BAND_TITLE_MIDDLE} · 列表 · 全板（只读 · 不可图上派票）`);
       lines.push('现在可执行:');
       lines.push('  （无）');
       lines.push(
@@ -747,18 +797,25 @@ export function renderMiddlePanel(snap, {
   const graph = renderDependencyGraph({
     issues,
     slotIssueId,
+    // Global second view uses dense node tokens (mark+id+[type]+status).
+    denseNodes: view === 'global',
   });
   const execIdSet = new Set(graph.executable.map((item) => item.id));
 
   if (view === 'global') {
     // Second view only — not Ready default main screen.
-    lines.push('依赖图 · 全局总览（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`);
-    for (const line of graph.lines) lines.push(line);
+    // Chrome title shares the view line (no extra blank-heavy row).
+    lines.push(
+      `${BAND_TITLE_MIDDLE} · 依赖图 · 全局总览（只读 · 不可图上派票）`,
+      `  ${GRAPH_LEGEND}`,
+    );
+    for (const line of graph.lines) {
+      if (String(line).trim() !== '') lines.push(line);
+    }
     if (graph.warnings.length) {
       lines.push('警告:');
       for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
     }
-    lines.push('');
     lines.push('现在可执行:');
     appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
     lines.push('  （按 g 返回列表+邻域）');
@@ -766,7 +823,7 @@ export function renderMiddlePanel(snap, {
   }
 
   // Default: dense list + focus neighborhood (edges when tall; compact+已降级 when short).
-  lines.push('列表 · 全板（只读 · 不可图上派票）');
+  lines.push(`${BAND_TITLE_MIDDLE} · 列表 · 全板（只读 · 不可图上派票）`);
   lines.push('现在可执行:');
   appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
   // Short terminals: remainder collapses to one line so 已降级 neighborhood stays on-frame.
@@ -1014,12 +1071,15 @@ export function buildFooterItems(snap) {
  * Bottom bar: available keys from snapshot.actions (+ always Enter/s/nav/t/q).
  * Product key help only (no `[底栏]` debug prefix).
  * Groups: edge → main → m/v → t/q. Chinese short labels; m=模型 v=模式.
+ * Leading band chrome title「键位」keeps three-band duties scannable.
  *
  * @param {object | null | undefined} snap
  * @returns {string}
  */
 export function renderFooter(snap) {
-  return buildFooterItems(snap).map((item) => item.text).join('  ');
+  const keys = buildFooterItems(snap).map((item) => item.text).join('  ');
+  // Single line: chrome title + keys (matches hot/dim row; no extra footer row).
+  return keys ? `${BAND_TITLE_FOOTER}  ${keys}` : BAND_TITLE_FOOTER;
 }
 
 /**
@@ -1359,6 +1419,18 @@ export function DispatchShell({
   const noticeLine = renderNotice(snap, notice);
   const topLines = renderTopBar(snap, { selectedIndex }).split('\n');
   const footerItems = buildFooterItems(snap);
+  const ctaRole = mainCtaRole(snap);
+
+  /** @param {string | null | undefined} role */
+  function ctaColorForRole(role) {
+    // Role intent only — not a locked hex palette.
+    if (role === 'startable') return 'cyan';
+    if (role === 'running') return 'yellow';
+    if (role === 'edge') return 'yellow';
+    if (role === 'stop') return 'red';
+    if (role === 'empty') return undefined;
+    return 'cyan';
+  }
 
   // In-app overlay reuses the same alt-screen session (no nested DECSET on Windows).
   if (modelEffortMenu?.open) {
@@ -1437,16 +1509,33 @@ export function DispatchShell({
         flexDirection: 'column',
         width: '100%',
       },
-      // Primary band: multi-line product title + auto/status + Ready CTA (bold).
-      ...topLines.map((line, index) => createElement(
-        Text,
-        {
-          key: `t${index}`,
-          bold: true,
-          color: /^下一步：/.test(line) ? 'cyan' : undefined,
-        },
-        line || ' ',
-      )),
+      // Primary band: chrome-on-primary dials + role-colored main CTA.
+      ...topLines.map((line, index) => {
+        if (/^下一步：/.test(line)) {
+          return createElement(
+            Text,
+            {
+              key: `t${index}`,
+              bold: true,
+              color: ctaColorForRole(ctaRole),
+            },
+            line || ' ',
+          );
+        }
+        // First dial line carries band chrome title.
+        if (index === 0 && line.includes(BAND_TITLE_TOP)) {
+          return createElement(
+            Text,
+            { key: `t${index}`, bold: true },
+            line || ' ',
+          );
+        }
+        return createElement(
+          Text,
+          { key: `t${index}`, bold: true },
+          line || ' ',
+        );
+      }),
     ),
     createElement(
       Box,
@@ -1462,6 +1551,10 @@ export function DispatchShell({
         const isCurrentSlot = /◀当前槽/.test(line) && !isSelected;
         const isBoth = /◀当前槽/.test(line) && isSelected;
         const isBoardDefault = /←看板默认/.test(line);
+        // Band chrome / view title line.
+        if (line.includes(BAND_TITLE_MIDDLE)) {
+          return createElement(Text, { key: `m${index}`, bold: true }, line || ' ');
+        }
         // Selected row: bold + cyan; current-slot-only: green; both: cyan bold.
         if (isSelected || isBoth) {
           return createElement(Text, { key: `m${index}`, bold: true, color: 'cyan' }, line || ' ');
@@ -1499,7 +1592,12 @@ export function DispatchShell({
         paddingX: 1,
         width: '100%',
       },
-      // Key legend: hot (CTA / edge) bold; others dim (Enter dim when not startable).
+      // Band chrome + key legend on one row: hot bold, else dim.
+      createElement(
+        Text,
+        { key: 'footer-chrome', bold: true, dimColor: true },
+        `${BAND_TITLE_FOOTER}  `,
+      ),
       ...footerItems.flatMap((item, index) => {
         const prefix = index === 0 ? '' : '  ';
         const isHot = Boolean(item.hot) && !item.dim;
