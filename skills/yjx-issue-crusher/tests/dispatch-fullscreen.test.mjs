@@ -46,7 +46,11 @@ import {
   openModelEffortMenu,
   boardDefaultExecutable,
   buildFooterItems,
+  ctaColorForRole,
+  enableWindowsVirtualTerminal,
+  ensureFullscreenColor,
   mainCtaRole,
+  resetWindowsVirtualTerminalCache,
   renderFooter,
   renderMiddlePanel,
   renderModelEffortMenuFrame,
@@ -59,6 +63,9 @@ import {
   resolveShellHeight,
   runFullscreenDispatch,
   shouldUseFullscreenDispatch,
+  styleFooterItem,
+  styleMiddleLine,
+  styleTopLine,
   truncateDisplayField,
 } from '../scripts/dispatch-fullscreen.mjs';
 import { runDispatchTui } from '../scripts/dispatch-tui.mjs';
@@ -135,6 +142,8 @@ function fakeStdin() {
   stdin.unref = () => {};
   return stdin;
 }
+
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('shouldUseFullscreenDispatch: only interactive dual-TTY, never --once / non-TTY', () => {
   const ttyIn = { isTTY: true };
@@ -615,8 +624,8 @@ test('renderMiddlePanel default: 列表+焦点邻域与「现在可执行」(全
     },
   }));
 
-  assert.match(middle, /列表 · 全板|现在可执行/);
-  assert.match(middle, /只读|不可图上派票/);
+  assert.match(middle, /列表|现在可执行/);
+  assert.match(middle, /工作对象|列表|只读|不可图上派票/);
   assert.match(middle, /焦点邻域|邻域/);
   assert.match(middle, /现在可执行/);
   assert.match(middle, /02-ready\.md|★\s*02/);
@@ -688,7 +697,7 @@ test('DispatchShell given snapshot shows top / middle / slot live content (not p
   assert.match(text, /后续 mode:/);
   assert.match(text, /review/);
   assert.match(text, /需人工确认|needs-confirmation/);
-  assert.match(text, /现在可执行|焦点邻域|列表 · 全板/);
+  assert.match(text, /现在可执行|焦点邻域|列表/);
   assert.match(text, /现在可执行/);
   assert.match(text, /02-ready\.md|★\s*02/);
   assert.match(text, /人工确认|需确认|HITL/);
@@ -1115,7 +1124,7 @@ test('nextListSelection + renderMiddlePanel highlight executable via j/k/digits'
   assert.match(middle, /02-b\.md/);
   assert.match(middle, /◀选中|选中|▶选/);
   // Selection is display-only: still declares read-only / no graph dispatch.
-  assert.match(middle, /只读|不可图上派票/);
+  assert.match(middle, /工作对象|列表|只读|不可图上派票/);
 });
 
 test('list selection keys never spawn or claim — display-only, no graph dispatch', async () => {
@@ -1175,10 +1184,8 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
   assert.match(footer, /\[t\].*刷新/);
   assert.match(footer, /\[q\].*退出/);
   assert.doesNotMatch(footer, /\[q\] 退出并停链/);
-  // Navigation + start labels: j/k + arrows + digits, Enter start, s auto dial.
-  assert.match(footer, /j\/k/);
-  assert.match(footer, /↑|↓|方向键/);
-  assert.match(footer, /数字/);
+  // Navigation + start labels: compact [j/k] 导航 (arrows still map in code).
+  assert.match(footer, /\[j\/k\].*导航|j\/k/);
   assert.match(footer, /\[Enter\].*开始|Enter.*开始/);
   assert.match(footer, /\[s\].*自动/);
   // Must not claim selection never starts / is display-only forever.
@@ -1193,7 +1200,7 @@ test('renderFooter lists surface keys; shell has no mouse / worker embed / graph
   }));
   assert.match(text, /mode → vibe|后果提示/);
   assert.doesNotMatch(text, /鼠标|mouse|embed worker|内嵌 Worker|graph dispatch|图上派票\s*开/i);
-  assert.match(text, /不可图上派票|只读/);
+  assert.match(text, /工作对象|列表|不可图上派票|只读/);
   assert.doesNotMatch(text, /键位已改|已 remap/);
 });
 
@@ -1442,7 +1449,7 @@ test('region pure text drops debug bracket labels; keeps product copy', () => {
 
   assert.match(top, /Issue Crusher|调度/);
   assert.match(top, /功能:\s*demo/);
-  assert.match(middle, /现在可执行|焦点邻域|列表 · 全板/);
+  assert.match(middle, /现在可执行|焦点邻域|列表/);
   assert.match(middle, /现在可执行/);
   // Empty slot: no permanent product block (three-band Ready).
   assert.equal(slot.trim(), '');
@@ -2761,7 +2768,7 @@ test('edge occupied slot: 中带顶部最小槽摘要 id/标题/已关票/pid', 
   const slotIdx = middle.indexOf('当前槽');
   const workIdx = Math.max(
     middle.indexOf('现在可执行'),
-    middle.indexOf('列表 · 全板'),
+    middle.indexOf('列表'),
     middle.indexOf('焦点邻域'),
   );
   assert.ok(slotIdx >= 0 && workIdx > slotIdx, 'slot summary must precede middle list/neighborhood');
@@ -2875,7 +2882,7 @@ test('footer groups: 边沿 → 主路径 Enter/s/导航 → m/v → t/g/q；中
   const n = footer.indexOf('[n]');
   const enter = footer.indexOf('[Enter]');
   const s = footer.indexOf('[s]');
-  const nav = footer.search(/↑↓\/j\/k|导航/);
+  const nav = footer.search(/\[j\/k\]|导航/);
   const m = footer.indexOf('[m]');
   const v = footer.indexOf('[v]');
   const t = footer.indexOf('[t]');
@@ -2893,11 +2900,12 @@ test('footer groups: 边沿 → 主路径 Enter/s/导航 → m/v → t/g/q；中
   assert.match(footer, /\[m\] 模型/);
   assert.match(footer, /\[v\] 模式/);
   assert.match(footer, /\[Enter\] 开始/);
-  assert.match(footer, /\[s\] 自动开下一张\(关\)/);
+  assert.match(footer, /\[s\] 自动\(关\)/);
+  assert.match(footer, /\[j\/k\] 导航/);
   assert.match(footer, /\[y\] 同意/);
   assert.match(footer, /\[n\] 拒绝/);
   assert.match(footer, /\[t\] 刷新/);
-  assert.match(footer, /\[g\] 全局总览/);
+  assert.match(footer, /\[g\] 全局/);
   assert.match(footer, /\[q\] 退出/);
   assert.doesNotMatch(footer, /\[o\]/);
 });
@@ -3050,14 +3058,16 @@ test('Ready default middle: list + focus neighborhood, not global-graph-only', (
   assert.match(middle, /现在可执行/);
   assert.match(middle, /02-ready\.md/);
   assert.match(middle, /◀选中|←看板默认|看板默认/);
-  // Full-board remainder stays in the list (not only executables).
-  assert.match(middle, /全板其余/);
-  assert.match(middle, /01-done\.md/);
-  assert.match(middle, /03-blocked\.md/);
+  // Non-executable roster is folded by default; full roster is under g.
+  assert.match(middle, /其余\s+\d+|（其余/);
+  assert.doesNotMatch(middle, /^全板其余:\s*$/m);
+  // Non-executable ids must not dump as full middle rows on the default list.
+  assert.doesNotMatch(middle, /^\s+[·✓].*01-done\.md/m);
+  assert.doesNotMatch(middle, /^\s+[·].*03-blocked\.md/m);
   // Focus neighborhood clues (read-only direct up/down).
   assert.match(middle, /焦点邻域|邻域/);
   assert.match(middle, /上游|下游|直接上下游|──►/);
-  assert.match(middle, /只读|不可图上派票/);
+  assert.match(middle, /工作对象|列表|只读|不可图上派票/);
   // Default is NOT exclusive global overview; list must remain available.
   assert.doesNotMatch(middle, /^依赖图（全局/m);
   // Neighborhood may still mention short ids; the global-only title should be absent by default.
@@ -3126,7 +3136,7 @@ test('middleView global: full overview is second view; list nav / Enter contract
     slot: null,
   }), { middleView: 'global' });
   assert.match(global, /依赖图|全局/);
-  assert.match(global, /只读|不可图上派票/);
+  assert.match(global, /工作对象|全局|只读|不可图上派票/);
   assert.match(global, /──►/);
   // Global may still show executable for orientation, but is explicitly second view chrome.
   assert.match(global, /图例|全局总览|依赖图/);
@@ -3182,7 +3192,7 @@ test('occupied slot middle: list + neighborhood remain; no graph dispatch', () =
   assert.match(middle, /当前槽/);
   assert.match(middle, /现在可执行/);
   assert.match(middle, /焦点邻域|邻域/);
-  assert.match(middle, /只读|不可图上派票/);
+  assert.match(middle, /工作对象|列表|只读|不可图上派票/);
   // Forbid dispatch affordances; "不可图上派票" is the positive read-only label.
   assert.doesNotMatch(middle, /点击派票|派票入口|从图派票/);
 });
@@ -3231,14 +3241,15 @@ test('list rows: mark + id + [type] + 状态显示名 + 标题截断 (multi-stat
     board: { feature: 'demo', readOnly: true, issues },
   }), { terminalRows: 28 });
 
-  // Executable dense columns.
+  // Executable dense columns on the default list.
   assert.match(middle, /★ 02-ready\.md \[impl\] 可实施 .*可执行票/);
   assert.match(middle, /★ 03-grill\.md \[grilling\] .*探路票/);
-  // Full-board remainder also dense (not only bare id tokens).
-  assert.match(middle, /✓ 01-done\.md \[research\] 已完成/);
-  assert.match(middle, /· 04-blocked\.md \[impl\] 阻塞/);
-  // Title truncation visible on long closed title.
-  assert.match(middle, /已完成票/);
+  // Non-executable roster is folded (not expanded under 全板其余).
+  assert.match(middle, /其余\s+\d+|（其余/);
+  assert.doesNotMatch(middle, /^全板其余:\s*$/m);
+  assert.doesNotMatch(middle, /^\s+✓ 01-done\.md/m);
+  // Downstream of focus still appears in neighborhood, not as remainder dump.
+  assert.match(middle, /04-blocked\.md|· 04-blocked/);
 });
 
 test('list marks: 选中 / 当前槽 / 看板默认 distinct and not confused', () => {
@@ -3478,6 +3489,118 @@ test('role intents: selected/current-slot marks + footer hot/dim stay distinguis
   assert.match(renderFooter(snapWithBoard({ autoAdvance: false })), /\[Enter\].*开始/);
 });
 
+test('color roles: CTA / selected / current-slot / footer hot use distinct style intents', () => {
+  assert.equal(ctaColorForRole('startable'), 'cyan');
+  assert.equal(ctaColorForRole('running'), 'yellow');
+  assert.equal(ctaColorForRole('edge'), 'yellow');
+  assert.equal(ctaColorForRole('stop'), 'red');
+  assert.notEqual(ctaColorForRole('startable'), ctaColorForRole('running'));
+
+  assert.equal(styleTopLine('下一步：开票 · 按 Enter', 2, 'startable').color, 'cyan');
+  assert.equal(styleTopLine('下一步：等 Worker', 2, 'running').color, 'yellow');
+  assert.equal(styleTopLine('处境 · 主 CTA  ·  Issue Crusher', 0, 'startable').color, 'blue');
+  assert.equal(styleTopLine('状态: 可开干  ·  自动开下一张: 关', 1, 'startable').color, 'white');
+
+  assert.deepEqual(
+    { ...styleMiddleLine('  ★ 02-x.md [impl] 可实施 demo  ◀选中') },
+    { bold: true, color: 'cyan' },
+  );
+  assert.deepEqual(
+    { ...styleMiddleLine('  ▶ 01-a.md [impl] 可实施 a  ◀当前槽') },
+    { bold: true, color: 'green' },
+  );
+  assert.notEqual(
+    styleMiddleLine('  ★ 02  ◀选中').color,
+    styleMiddleLine('  ▶ 01  ◀当前槽').color,
+  );
+  assert.equal(styleMiddleLine('  （g 全局）').color, 'gray');
+  assert.equal(styleMiddleLine('  （其余 3 · g）').color, 'gray');
+  assert.equal(styleMiddleLine('  图例: ★可执行').color, 'gray');
+
+  const hot = styleFooterItem({ id: 'Enter', hot: true }, 'startable');
+  const sunk = styleFooterItem({ id: 'Enter', hot: false, dim: true }, 'running');
+  assert.equal(hot.bold, true);
+  assert.equal(hot.color, 'cyan');
+  assert.equal(sunk.color, 'gray');
+  assert.notEqual(hot.color, sunk.color);
+});
+
+test('ensureFullscreenColor forces chalk level on TTY and respects NO_COLOR', async () => {
+  const chalk = (await import('chalk')).default;
+  const prevLevel = chalk.level;
+  const prevForce = process.env.FORCE_COLOR;
+  const prevNoColor = process.env.NO_COLOR;
+  try {
+    delete process.env.NO_COLOR;
+    delete process.env.FORCE_COLOR;
+    chalk.level = 0;
+    const level = ensureFullscreenColor({ isTTY: true });
+    assert.ok(level >= 2, `expected chalk level >= 2 on TTY, got ${level}`);
+    assert.ok(chalk.level >= 2);
+
+    process.env.NO_COLOR = '1';
+    chalk.level = 0;
+    const mono = ensureFullscreenColor({ isTTY: true });
+    assert.equal(mono, 0, 'NO_COLOR must keep monochrome');
+  } finally {
+    chalk.level = prevLevel;
+    if (prevForce == null) delete process.env.FORCE_COLOR;
+    else process.env.FORCE_COLOR = prevForce;
+    if (prevNoColor == null) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = prevNoColor;
+  }
+});
+
+test('enableWindowsVirtualTerminal is safe off-Windows and cache-resettable', () => {
+  resetWindowsVirtualTerminalCache();
+  if (process.platform !== 'win32') {
+    assert.equal(enableWindowsVirtualTerminal(), false);
+    return;
+  }
+  // On Windows CI/dev hosts this is best-effort; must not throw.
+  const first = enableWindowsVirtualTerminal();
+  assert.equal(typeof first, 'boolean');
+  // Cached second call returns the same without throwing.
+  assert.equal(enableWindowsVirtualTerminal(), first);
+  resetWindowsVirtualTerminalCache();
+});
+
+test('runFullscreenDispatch reflows terminalRows on stdout resize', async () => {
+  const first = candidate('01-a.md');
+  const second = candidate('02-b.md');
+  const { surface } = makeSurface({ candidates: [first, second] });
+  const stdin = fakeStdin();
+  const stdout = fakeTtyStream();
+  stdout.rows = 40;
+  stdout.columns = 120;
+
+  const runPromise = runFullscreenDispatch({
+    surface,
+    input: stdin,
+    output: stdout,
+    autoTick: false,
+    pollIntervalMs: 50_000,
+    alternateScreen: false,
+  });
+
+  await waitMs(120);
+  // Grow then shrink — listener must accept both without hang.
+  stdout.rows = 18;
+  stdout.emit('resize');
+  await waitMs(80);
+  stdout.rows = 36;
+  stdout.emit('resize');
+  await waitMs(80);
+
+  stdin.write('q');
+  await Promise.race([
+    runPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('resize reflow hang on quit')), 3000);
+    }),
+  ]);
+});
+
 test('global g view: scannable deps with status clues; returnable; not blank-heavy untitled dots', () => {
   const issues = [
     {
@@ -3525,7 +3648,7 @@ test('global g view: scannable deps with status clues; returnable; not blank-hea
   assert.match(global, /★.*02|02.*可实施/);
   assert.match(global, /·.*03|03.*阻塞|阻塞/);
   assert.match(global, /\[research\]|\[impl\]|已完成|可实施|阻塞/);
-  assert.match(global, /按 g 返回列表|返回列表\+邻域|返回列表/);
+  assert.match(global, /g 返回列表|返回列表/);
 
   // No large meaningless blank runs dominating the frame.
   const lines = global.split('\n');

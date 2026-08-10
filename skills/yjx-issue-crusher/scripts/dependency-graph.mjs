@@ -439,29 +439,34 @@ export function renderFocusNeighborhood({
   const showDowns = downstream.slice(0, limit);
 
   if (resolvedLayout === 'edges') {
-    // Multi-line true edges: section + tree branches (no tall │/▼ chrome).
-    // Keep line count modest so Ink three-band frames still show top status.
-    lines.push('焦点邻域（只读 · 直接上下游 · 非全板）');
-    lines.push('  上游:');
+    // Column-aligned tree. Section gaps only when the terminal is tall enough;
+    // mid-height edges keep alignment without blowing the three-band budget.
+    const roomy = Number(terminalRows) >= 30;
+    lines.push('焦点邻域');
+    lines.push('  上游');
     if (showUps.length === 0) {
       lines.push('    （无）');
     } else {
       showUps.forEach((id, idx) => {
         const branch = idx === showUps.length - 1 ? '└─' : '├─';
-        lines.push(`  ${branch} ${denseRow(id)}`);
+        lines.push(`    ${branch} ${denseRow(id)}`);
       });
-      if (upMore > 0) lines.push(`    … +${upMore}`);
+      if (upMore > 0) lines.push(`       … +${upMore}`);
     }
-    lines.push(`  ▶ ${denseRow(focusId, '◀焦点')}`);
-    lines.push('  下游:');
+    if (roomy) lines.push('');
+    lines.push('  焦点');
+    // Same gutter as branch rows: 4 spaces + 2-col marker (`▶ `) + body.
+    lines.push(`    ▶ ${denseRow(focusId, '◀焦点')}`);
+    if (roomy) lines.push('');
+    lines.push('  下游');
     if (showDowns.length === 0) {
       lines.push('    （无）');
     } else {
       showDowns.forEach((id, idx) => {
         const branch = idx === showDowns.length - 1 ? '└─' : '├─';
-        lines.push(`  ${branch} ${denseRow(id)}`);
+        lines.push(`    ${branch} ${denseRow(id)}`);
       });
-      if (downMore > 0) lines.push(`    … +${downMore}`);
+      if (downMore > 0) lines.push(`       … +${downMore}`);
     }
     return {
       lines,
@@ -531,11 +536,56 @@ export function formatGraphNodeToken(issue, {
 }
 
 /**
+ * Lay out a linear dependency chain without one ugly super-wide row.
+ * Short chains stay on one line when they fit; longer chains go vertical.
+ *
+ * @param {string[]} tokens
+ * @param {{
+ *   maxLineWidth?: number,
+ *   maxInlineNodes?: number,
+ *   indent?: string,
+ * }} [opts]
+ * @returns {string[]}
+ */
+export function formatLinearDependencyLines(tokens, {
+  maxLineWidth = 72,
+  maxInlineNodes = 4,
+  indent = '  ',
+} = {}) {
+  const parts = Array.isArray(tokens) ? tokens.filter((t) => String(t || '').trim() !== '') : [];
+  if (parts.length === 0) return [`${indent}（无）`];
+  if (parts.length === 1) return [`${indent}${parts[0]}`];
+
+  const arrow = ' ──► ';
+  const single = `${indent}${parts.join(arrow)}`;
+  const widthBudget = Number.isFinite(Number(maxLineWidth)) && Number(maxLineWidth) > 20
+    ? Math.floor(Number(maxLineWidth))
+    : 72;
+  const inlineCap = Number.isFinite(Number(maxInlineNodes)) && Number(maxInlineNodes) > 0
+    ? Math.floor(Number(maxInlineNodes))
+    : 4;
+
+  // Keep a compact single row only when short and not wider than the band.
+  if (parts.length <= inlineCap && single.length <= widthBudget) {
+    return [single];
+  }
+
+  // Vertical chain: one node per line, easy to scan when the board grows.
+  const lines = [`${indent}${parts[0]}`];
+  for (let i = 1; i < parts.length; i += 1) {
+    lines.push(`${indent}──► ${parts[i]}`);
+  }
+  return lines;
+}
+
+/**
  * @param {{
  *   issues: Array<object>,
  *   slotIssueId?: string|null,
  *   executableIds?: string[]|null,
  *   denseNodes?: boolean,
+ *   maxLineWidth?: number,
+ *   maxInlineNodes?: number,
  * }} options
  * @returns {{ lines: string[], executable: Array<{id:string,title?:string}>, warnings: string[] }}
  */
@@ -544,6 +594,8 @@ export function renderDependencyGraph({
   slotIssueId = null,
   executableIds = null,
   denseNodes = false,
+  maxLineWidth = 72,
+  maxInlineNodes = 4,
 } = {}) {
   const list = Array.isArray(issues) ? issues : [];
   const execIds = executableIds ? [...executableIds] : listExecutableIssueIds(list);
@@ -586,7 +638,10 @@ export function renderDependencyGraph({
   const lines = [];
   const linear = tryLinearOrder(list);
   if (linear) {
-    lines.push(`  ${linear.map(token).join(' ──► ')}`);
+    lines.push(...formatLinearDependencyLines(linear.map(token), {
+      maxLineWidth,
+      maxInlineNodes: denseNodes ? Math.min(3, maxInlineNodes) : maxInlineNodes,
+    }));
   } else {
     // Multi-parent / fork: print each edge group from parents with ≤1 visual style.
     // Strategy: for each node with multiple successors, show fork; chains as arrows.

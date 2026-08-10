@@ -19,6 +19,9 @@ import { fileURLToPath } from 'node:url';
 import { buildLaunchContract, buildResumeContract } from './build-launch-contract.mjs';
 import { createChainRun } from './chain-run.mjs';
 import { createDispatchSurface } from './dispatch-surface.mjs';
+import {
+  ensureFullscreenColor,
+} from './dispatch-fullscreen.mjs';
 import { runDispatchOnce, runDispatchTui } from './dispatch-tui.mjs';
 import { createFakeLauncher } from './fake-launcher.mjs';
 import {
@@ -497,6 +500,9 @@ export async function runChain(options) {
       promptSession.close();
       promptSession = null;
     }
+    // Dual-TTY fullscreen: force chalk level + Windows VT before Ink mounts.
+    // Classic CMD otherwise paints monochrome even when role colors are set.
+    ensureFullscreenColor(output);
     await runDispatchTui({ surface, input, output, once: false });
     return 0;
   } finally {
@@ -518,6 +524,16 @@ export async function main(argv = process.argv.slice(2)) {
   // Bare `ic` → chain + interactive feature pick (not just help).
   if (!options.command) {
     options.command = 'chain';
+  }
+  // Dual-TTY: enable Windows VT + chalk before any Ink mount (startup select or
+  // dispatch shell). Operators just run `ic <feature>` — no FORCE_COLOR.
+  if (
+    options.command === 'chain'
+    && !options.once
+    && process.stdin?.isTTY
+    && process.stdout?.isTTY
+  ) {
+    ensureFullscreenColor(process.stdout);
   }
   if (options.command === 'recommend') return runRecommend(options);
   if (options.command === 'probe-launch') return runProbeLaunch(options);

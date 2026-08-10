@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   formatIssueListRow,
+  formatLinearDependencyLines,
   issueBoardStatusLabelZh,
   issueMark,
   issueTypeLabel,
@@ -95,6 +96,50 @@ test('renderDependencyGraph linear chain with marks', () => {
   assert.match(joined, /·03/);
   assert.match(joined, /──►/);
   assert.deepEqual(executable.map((e) => e.id), ['01-a.md']);
+});
+
+test('formatLinearDependencyLines: short stays inline; long goes vertical', () => {
+  const short = formatLinearDependencyLines(['★01', '·02', '·03'], {
+    maxLineWidth: 72,
+    maxInlineNodes: 4,
+  });
+  assert.equal(short.length, 1);
+  assert.match(short[0], /★01 ──► ·02 ──► ·03/);
+
+  const longTokens = ['★01[impl]可实施', '·02[impl]阻塞', '·03[impl]阻塞', '·04[impl]阻塞', '·05[impl]阻塞'];
+  const long = formatLinearDependencyLines(longTokens, {
+    maxLineWidth: 72,
+    maxInlineNodes: 3,
+  });
+  assert.ok(long.length >= longTokens.length, `expected vertical chain, got ${JSON.stringify(long)}`);
+  assert.match(long[0], /★01\[impl\]可实施/);
+  assert.match(long[1], /^ {2}──► /);
+  assert.doesNotMatch(long.join('\n'), /★01.*──► ·02.*──► ·03.*──► ·04.*──► ·05/);
+});
+
+test('renderDependencyGraph dense long linear chain is not one mega-row', () => {
+  const issues = [];
+  for (let i = 1; i <= 6; i += 1) {
+    const id = `${String(i).padStart(2, '0')}-x.md`;
+    issues.push({
+      id,
+      title: `票${i}`,
+      closed: i === 1,
+      blockedBy: i === 1 ? [] : [`${String(i - 1).padStart(2, '0')}-x.md`],
+      type: 'impl',
+      status: i === 1 ? 'resolved' : 'ready-for-agent',
+    });
+  }
+  const { lines } = renderDependencyGraph({
+    issues,
+    denseNodes: true,
+    maxLineWidth: 72,
+    maxInlineNodes: 3,
+  });
+  assert.ok(lines.length >= 4, `long dense chain should wrap vertically, got ${JSON.stringify(lines)}`);
+  const mega = lines.find((line) => (line.match(/──►/g) || []).length >= 4);
+  assert.equal(mega, undefined, `should not keep one mega-row: ${mega}`);
+  assert.match(lines.join('\n'), /──►/);
 });
 
 test('renderDependencyGraph join shows multi-parent edge', () => {
@@ -210,7 +255,8 @@ test('renderFocusNeighborhood: direct up/down only; +N fold; read-only clues', (
   assert.equal(layout, 'edges');
   assert.equal(degraded, false);
   assert.match(text, /焦点邻域|邻域/);
-  assert.match(text, /只读|直接上下游|非全板/);
+  // Short chrome title (detail parentheticals dropped for density).
+  assert.match(text, /焦点邻域/);
   assert.match(text, /02-b\.md|焦点/);
   assert.match(text, /上游/);
   assert.match(text, /01-a\.md|01/);
@@ -338,15 +384,32 @@ test('renderFocusNeighborhood edges vs compact+已降级', () => {
   const edgesText = edges.lines.join('\n');
   assert.equal(edges.layout, 'edges');
   assert.equal(edges.degraded, false);
-  // Multi-line true edges: section headers + tree branches (not one clue string only).
+  // Multi-line true edges: section headers + column-aligned tree branches.
   assert.match(edgesText, /上游/);
   assert.match(edgesText, /下游/);
+  assert.match(edgesText, /焦点/);
   assert.match(edgesText, /├─|└─/);
   assert.match(edgesText, /01-a\.md/);
   assert.match(edgesText, /\[research\].*已完成|已完成.*上游A|上游A/);
   assert.match(edgesText, /02-b\.md/);
   assert.match(edgesText, /◀焦点/);
   assert.match(edgesText, /03-c\.md/);
+  // Body rows share a common indent gutter (4 spaces + 2-col marker).
+  const body = edges.lines.filter((line) => /├─|└─|▶/.test(line));
+  assert.ok(body.length >= 2, `expected aligned body rows, got ${body.join(' | ')}`);
+  for (const line of body) {
+    assert.match(line, /^ {4}(├─|└─|▶ )/, `misaligned neighborhood row: ${JSON.stringify(line)}`);
+  }
+  // Roomy terminals (>=30 rows) insert section gaps; mid-height stays tight.
+  const roomy = renderFocusNeighborhood({
+    issues,
+    focusId: '02-b.md',
+    layout: 'edges',
+    terminalRows: 32,
+  });
+  const roomyText = roomy.lines.join('\n');
+  assert.match(roomyText, /上游[\s\S]*\n\n  焦点/);
+  assert.match(roomyText, /焦点[\s\S]*\n\n  下游/);
   // Must not be the single-line clue completion shape alone.
   assert.ok(
     edges.lines.length >= 4,

@@ -26,10 +26,45 @@
  * discoverable after wrap, footer pins via stretch middle.
  */
 
+import { createRequire } from 'node:module';
 import { createElement, useEffect, useRef, useState } from 'react';
 import { Box, Text, render, useApp, useInput } from 'ink';
+import chalk from 'chalk';
 
 import { handleDispatchCommand } from './dispatch-commands.mjs';
+
+const require = createRequire(import.meta.url);
+/** @type {boolean | null} */
+let windowsVtEnabled = null;
+
+/**
+ * Load koffi from monorepo root (skill scripts have no local node_modules).
+ * Walks parents of this file until package.json can resolve `koffi`.
+ * @returns {typeof import('koffi')}
+ */
+function loadKoffi() {
+  try {
+    return require('koffi');
+  } catch {
+    // continue walk
+  }
+  const pathMod = require('node:path');
+  const { createRequire: createReq } = require('node:module');
+  const { fileURLToPath } = require('node:url');
+  let dir = pathMod.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i += 1) {
+    const pkg = pathMod.join(dir, 'package.json');
+    try {
+      return createReq(pkg)('koffi');
+    } catch {
+      const parent = pathMod.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  throw new Error('koffi is required for Windows console color (install monorepo deps)');
+}
+
 import {
   formatIssueListRow,
   issueBoardStatusLabelZh,
@@ -43,17 +78,237 @@ import {
   resolveNeighborhoodLayout,
   statusLabelZh,
 } from './dependency-graph.mjs';
-
-/** Three-band short chrome titles (prototype character-grid parity). */
-export const BAND_TITLE_TOP = '处境 · 主 CTA';
-export const BAND_TITLE_MIDDLE = '工作对象';
-export const BAND_TITLE_FOOTER = '键位';
 import {
   claudeModelItems,
   defaultEffortItems,
   degradedModelItems,
   resolveModelItems,
 } from './model-catalog.mjs';
+
+/** Three-band short chrome titles (prototype character-grid parity). */
+export const BAND_TITLE_TOP = '处境 · 主 CTA';
+export const BAND_TITLE_MIDDLE = '工作对象';
+export const BAND_TITLE_FOOTER = '键位';
+
+/**
+ * Enable Windows console VT processing so ANSI SGR (colors) actually paint.
+ * Classic conhost / CMD leave VT off → escape codes are ignored and the frame
+ * looks monochrome even when Ink emits cyan/yellow/gray.
+ *
+ * Primary path: in-process koffi → kernel32 SetConsoleMode on this console (cmd-verified). Fallback: PowerShell AttachConsole helper.
+ *
+ * Best-effort: never throws; returns whether SetConsoleMode reported success.
+ *
+ * @returns {boolean}
+ */
+export function enableWindowsVirtualTerminal() {
+  if (process.platform !== 'win32') return false;
+  if (windowsVtEnabled != null) return windowsVtEnabled;
+
+  // Prefer in-process kernel32 via koffi (same console as this Node).
+  // PowerShell child helpers often fail under classic CMD (no attachable console).
+  try {
+    const koffi = loadKoffi();
+    const kernel32 = koffi.load('kernel32.dll');
+    // int64 handles: void* truncation breaks GetConsoleMode (GLE 6) on Win64.
+    const GetStdHandle = kernel32.func('int64 __stdcall GetStdHandle(int nStdHandle)');
+    const GetConsoleMode = kernel32.func(
+      'bool __stdcall GetConsoleMode(int64 hConsoleHandle, _Out_ uint32 *lpMode)',
+    );
+    const SetConsoleMode = kernel32.func(
+      'bool __stdcall SetConsoleMode(int64 hConsoleHandle, uint32 dwMode)',
+    );
+    const STD_OUTPUT_HANDLE = -11;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x4;
+    const DISABLE_NEWLINE_AUTO_RETURN = 0x8;
+    const handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!handle) {
+      windowsVtEnabled = false;
+      return false;
+    }
+    const modeBox = [0];
+    if (!GetConsoleMode(handle, modeBox)) {
+      windowsVtEnabled = false;
+      return false;
+    }
+    const next = (Number(modeBox[0]) || 0)
+      | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+      | DISABLE_NEWLINE_AUTO_RETURN;
+    windowsVtEnabled = Boolean(SetConsoleMode(handle, next));
+    return windowsVtEnabled;
+  } catch {
+    // Fall through to PowerShell AttachConsole helper.
+  }
+
+  try {
+    const nodePid = Number(process.pid);
+    const script = [
+      'Add-Type -TypeDefinition @"',
+      'using System;',
+      'using System.Runtime.InteropServices;',
+      'public static class IcVt {',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool FreeConsole();',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint dwProcessId);',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetStdHandle(int n);',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(IntPtr h, out uint m);',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleMode(IntPtr h, uint m);',
+      '}',
+      '"@',
+      `\$target = [uint32]${nodePid}`,
+      '[void][IcVt]::FreeConsole()',
+      'if (-not [IcVt]::AttachConsole(\$target)) { Write-Output "fail-attach"; exit 0 }',
+      '\$h = [IcVt]::GetStdHandle(-11)',
+      '\$m = [uint32]0',
+      'if (-not [IcVt]::GetConsoleMode(\$h, [ref]\$m)) { Write-Output "fail-get"; exit 0 }',
+      '\$n = \$m -bor 4 -bor 8',
+      'if ([IcVt]::SetConsoleMode(\$h, \$n)) { Write-Output "ok" } else { Write-Output "fail-set" }',
+    ].join('\n');
+    const { spawnSync } = require('node:child_process');
+    const result = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    windowsVtEnabled = /\bok\b/.test(String(result.stdout || ''));
+    return windowsVtEnabled;
+  } catch {
+    windowsVtEnabled = false;
+    return false;
+  }
+}
+
+/**
+ * Test helper: clear the cached VT probe so a later call re-runs.
+ * @returns {void}
+ */
+export function resetWindowsVirtualTerminalCache() {
+  windowsVtEnabled = null;
+}
+
+/**
+ * Ink/chalk often probe color support as level 0 under ConPTY / classic CMD
+ * even when stdout is a TTY, which strips role colors to plain text. Force a
+ * usable color level + Windows VT so character-grid roles stay scannable.
+ * Respect explicit NO_COLOR; never force for non-TTY sinks.
+ *
+ * @param {NodeJS.WriteStream | { isTTY?: boolean } | null | undefined} stream
+ * @returns {number} chalk level after ensure (0 = monochrome)
+ */
+export function ensureFullscreenColor(stream = process.stdout) {
+  // Explicit opt-out only. Operators must never need to export FORCE_COLOR for `ic`.
+  if (process.env.NO_COLOR != null && process.env.NO_COLOR !== '') {
+    return chalk.level;
+  }
+  // Treat missing isTTY as non-color only when explicitly false; some hosts omit the flag.
+  if (stream && stream.isTTY === false) {
+    return chalk.level;
+  }
+  if (!stream) {
+    return chalk.level;
+  }
+  // Windows: turn on VT before relying on SGR, or colors are emitted but invisible.
+  // This is automatic inside `ic` fullscreen — no manual FORCE_COLOR.
+  if (process.platform === 'win32') {
+    enableWindowsVirtualTerminal();
+  }
+  // 3 = truecolor-capable host; named Ink colors still work at 2+.
+  // Always raise on dual-TTY — do not trust the initial probe (often 0 on ConPTY/CMD).
+  // Mutate the shared chalk instance Ink imports so colors paint without env setup.
+  chalk.level = Math.max(Number(chalk.level) || 0, 3);
+  if (process.env.FORCE_COLOR == null || process.env.FORCE_COLOR === '') {
+    process.env.FORCE_COLOR = '3';
+  }
+  return chalk.level;
+}
+
+/**
+ * Role → Ink color name map (intent only; not a locked hex table).
+ * @param {string | null | undefined} role
+ * @returns {string | undefined}
+ */
+export function ctaColorForRole(role) {
+  if (role === 'startable') return 'cyan';
+  if (role === 'running') return 'yellow';
+  if (role === 'edge') return 'yellow';
+  if (role === 'stop') return 'red';
+  if (role === 'empty') return undefined;
+  return 'cyan';
+}
+
+/**
+ * Presentational style for one middle-band line (role color / dim).
+ * Pure — unit-testable without Ink mount.
+ *
+ * @param {string} line
+ * @returns {{ bold?: boolean, color?: string, dimColor?: boolean }}
+ */
+export function styleMiddleLine(line) {
+  const text = String(line ?? '');
+  if (text.includes(BAND_TITLE_MIDDLE)) return { bold: true, color: 'blue' };
+  if (/◀选中/.test(text)) return { bold: true, color: 'cyan' };
+  if (/◀当前槽/.test(text)) return { bold: true, color: 'green' };
+  if (/←看板默认/.test(text)) return { bold: true, color: 'cyan' };
+  if (/◀焦点/.test(text)) return { bold: true, color: 'white' };
+  // Prefer explicit gray over dimColor: ConPTY/Ink often omit SGR 2, so depth
+  // must ride a real foreground color to stay visible.
+  if (/^\s+session:/.test(text)) return { color: 'gray' };
+  if (/图例:|（其余 |（g |（无）|只读/.test(text)) {
+    return { color: 'gray' };
+  }
+  if (/^  (上游|焦点|下游)$/.test(text)) {
+    return { bold: true, color: 'white' };
+  }
+  if (/现在可执行:|焦点邻域|依赖图|全局/.test(text)) {
+    return { bold: true, color: 'white' };
+  }
+  // Dense list / graph body: keep readable white, not pure default gray soup.
+  if (/^\s*[★·✓▶]/.test(text) || /^\s*[├└│]/.test(text) || /──►/.test(text)) {
+    return { color: 'white' };
+  }
+  return { color: 'white' };
+}
+
+/**
+ * Presentational style for one top-band line.
+ * @param {string} line
+ * @param {number} index
+ * @param {string | null | undefined} ctaRole
+ * @returns {{ bold?: boolean, color?: string, dimColor?: boolean }}
+ */
+export function styleTopLine(line, index, ctaRole) {
+  const text = String(line ?? '');
+  if (/^下一步：/.test(text)) {
+    return { bold: true, color: ctaColorForRole(ctaRole) };
+  }
+  if (index === 0 && text.includes(BAND_TITLE_TOP)) {
+    return { bold: true, color: 'blue' };
+  }
+  if (/^状态:/.test(text) || text.includes('状态:')) {
+    return { bold: true, color: 'white' };
+  }
+  return { bold: true };
+}
+
+/**
+ * Footer key style: hot keys share CTA emphasis; others sink.
+ * @param {{ hot?: boolean, dim?: boolean, id?: string }} item
+ * @param {string | null | undefined} ctaRole
+ * @returns {{ bold?: boolean, color?: string, dimColor?: boolean }}
+ */
+export function styleFooterItem(item, ctaRole) {
+  const isHot = Boolean(item?.hot) && !item?.dim;
+  if (isHot) {
+    return { bold: true, color: ctaColorForRole(ctaRole) || 'green' };
+  }
+  // gray = visible depth on hosts that drop dim (SGR 2).
+  return { color: 'gray' };
+}
+
 import {
   applyStartupSelectKey,
   mapStartupSelectKey,
@@ -773,19 +1028,18 @@ export function renderMiddlePanel(snap, {
 
   if (!snap) {
     if (view === 'global') {
-      lines.push(
-        `${BAND_TITLE_MIDDLE} · 依赖图 · 全局总览（只读 · 不可图上派票）`,
-        `  ${GRAPH_LEGEND}`,
-      );
+      lines.push(`${BAND_TITLE_MIDDLE} · 全局`);
+      lines.push(`  ${GRAPH_LEGEND}`);
       lines.push('  （启动中…）');
     } else {
-      lines.push(`${BAND_TITLE_MIDDLE} · 列表 · 全板（只读 · 不可图上派票）`);
+      lines.push(`${BAND_TITLE_MIDDLE} · 列表`);
       lines.push('现在可执行:');
       lines.push('  （无）');
+      if (neighborhoodLayout === 'edges') lines.push('');
       lines.push(
         neighborhoodLayout === 'compact'
           ? '已降级 · 焦点邻域'
-          : '焦点邻域（只读 · 直接上下游 · 非全板）',
+          : '焦点邻域',
       );
       lines.push('  （启动中…）');
     }
@@ -794,21 +1048,25 @@ export function renderMiddlePanel(snap, {
 
   const issues = snap.board?.issues ?? [];
   const slotIssueId = snap.slot?.issueId ?? null;
+  // Leave room for box padding / chrome when wrapping global chains.
+  const graphWidth = terminalRows != null && Number(terminalRows) < 24 ? 56 : 72;
   const graph = renderDependencyGraph({
     issues,
     slotIssueId,
     // Global second view uses dense node tokens (mark+id+[type]+status).
     denseNodes: view === 'global',
+    // Dense tokens are wide — wrap/verticalize sooner so g never becomes one mega-row.
+    maxLineWidth: graphWidth,
+    maxInlineNodes: view === 'global' ? 3 : 5,
   });
   const execIdSet = new Set(graph.executable.map((item) => item.id));
 
   if (view === 'global') {
     // Second view only — not Ready default main screen.
-    // Chrome title shares the view line (no extra blank-heavy row).
-    lines.push(
-      `${BAND_TITLE_MIDDLE} · 依赖图 · 全局总览（只读 · 不可图上派票）`,
-      `  ${GRAPH_LEGEND}`,
-    );
+    // Short chrome + blank between graph / executable to avoid a log wall.
+    lines.push(`${BAND_TITLE_MIDDLE} · 全局`);
+    lines.push(`  ${GRAPH_LEGEND}`);
+    lines.push('');
     for (const line of graph.lines) {
       if (String(line).trim() !== '') lines.push(line);
     }
@@ -816,21 +1074,23 @@ export function renderMiddlePanel(snap, {
       lines.push('警告:');
       for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
     }
+    lines.push('');
     lines.push('现在可执行:');
     appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
-    lines.push('  （按 g 返回列表+邻域）');
+    lines.push('  （g 返回列表）');
     return lines.join('\n');
   }
 
-  // Default: dense list + focus neighborhood (edges when tall; compact+已降级 when short).
-  lines.push(`${BAND_TITLE_MIDDLE} · 列表 · 全板（只读 · 不可图上派票）`);
+  // Default: executable list + focus neighborhood only.
+  // 「全板其余」folded; short labels + one gap before neighborhood (not two —
+  // extra blanks overflow mid-height Yoga frames and clip band titles).
+  lines.push(`${BAND_TITLE_MIDDLE} · 列表`);
   lines.push('现在可执行:');
   appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
-  // Short terminals: remainder collapses to one line so 已降级 neighborhood stays on-frame.
-  appendBoardRemainderLines(lines, issues, execIdSet, slotIssueId, {
-    dense: neighborhoodLayout === 'edges',
-    maxShow: neighborhoodLayout === 'edges' ? 8 : 4,
-  });
+  const remainderCount = issues.filter((issue) => !execIdSet.has(issue.id)).length;
+  if (remainderCount > 0) {
+    lines.push(`  （其余 ${remainderCount} · g）`);
+  }
 
   const hasSelection = selectedIndex != null
     && Number.isInteger(Number(selectedIndex))
@@ -844,6 +1104,11 @@ export function renderMiddlePanel(snap, {
     slotIssueId,
     defaultIssueId: boardDefaultExecutable(snap)?.id ?? null,
   });
+  // One blank between list and neighborhood on edges layout.
+  // Compact keeps zero gap so 「已降级」stays on-frame.
+  if (neighborhoodLayout === 'edges') {
+    lines.push('');
+  }
   const neighborhood = renderFocusNeighborhood({
     issues,
     focusId,
@@ -857,7 +1122,9 @@ export function renderMiddlePanel(snap, {
     lines.push('警告:');
     for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
   }
-  lines.push('  （按 g 看全局总览）');
+  if (neighborhoodLayout === 'edges') {
+    lines.push('  （g 全局）');
+  }
 
   return lines.join('\n');
 }
@@ -1030,14 +1297,15 @@ export function buildFooterItems(snap) {
   const autoLabel = snap?.autoAdvance === false ? '关' : '开';
   items.push({
     id: 's',
-    text: `[s] 自动开下一张(${autoLabel})`,
+    text: `[s] 自动(${autoLabel})`,
     group: 'main',
     hot: hot.has('s'),
   });
   // Navigation moves highlight only; Enter starts. Arrows ≡ j/k. Never hide for HITL.
+  // Keep label short so the footer stays one line on common 100–120 col terminals.
   items.push({
     id: 'nav',
-    text: '[↑↓/j/k|数字] 导航',
+    text: '[j/k] 导航',
     group: 'main',
   });
 
@@ -1061,7 +1329,7 @@ export function buildFooterItems(snap) {
 
   // D — secondary: refresh + optional global overview + quit.
   items.push({ id: 't', text: '[t] 刷新', group: 'secondary', hot: hot.has('t') });
-  items.push({ id: 'g', text: '[g] 全局总览', group: 'secondary', hot: hot.has('g') });
+  items.push({ id: 'g', text: '[g] 全局', group: 'secondary', hot: hot.has('g') });
   items.push({ id: 'q', text: '[q] 退出', group: 'secondary', hot: hot.has('q') });
 
   return items;
@@ -1077,9 +1345,10 @@ export function buildFooterItems(snap) {
  * @returns {string}
  */
 export function renderFooter(snap) {
-  const keys = buildFooterItems(snap).map((item) => item.text).join('  ');
-  // Single line: chrome title + keys (matches hot/dim row; no extra footer row).
-  return keys ? `${BAND_TITLE_FOOTER}  ${keys}` : BAND_TITLE_FOOTER;
+  // Single spaces keep the whole legend on one ~72–78 col line (box padding).
+  const keys = buildFooterItems(snap).map((item) => item.text).join(' ');
+  // Single line: chrome title + keys (no extra footer row; no mid-label wrap).
+  return keys ? `${BAND_TITLE_FOOTER} ${keys}` : BAND_TITLE_FOOTER;
 }
 
 /**
@@ -1421,17 +1690,6 @@ export function DispatchShell({
   const footerItems = buildFooterItems(snap);
   const ctaRole = mainCtaRole(snap);
 
-  /** @param {string | null | undefined} role */
-  function ctaColorForRole(role) {
-    // Role intent only — not a locked hex palette.
-    if (role === 'startable') return 'cyan';
-    if (role === 'running') return 'yellow';
-    if (role === 'edge') return 'yellow';
-    if (role === 'stop') return 'red';
-    if (role === 'empty') return undefined;
-    return 'cyan';
-  }
-
   // In-app overlay reuses the same alt-screen session (no nested DECSET on Windows).
   if (modelEffortMenu?.open) {
     const menuLines = renderModelEffortMenuFrame(modelEffortMenu).split('\n');
@@ -1453,7 +1711,7 @@ export function DispatchShell({
         },
         ...topLines.map((line, index) => createElement(
           Text,
-          { key: `t${index}`, bold: true },
+          { key: `t${index}`, ...styleTopLine(line, index, ctaRole) },
           line || ' ',
         )),
       ),
@@ -1471,6 +1729,7 @@ export function DispatchShell({
           {
             key: `me${index}`,
             bold: index === 0 || /◀选中/.test(line),
+            color: /◀选中/.test(line) ? 'cyan' : undefined,
             dimColor: index === menuLines.length - 1,
           },
           line || ' ',
@@ -1509,33 +1768,12 @@ export function DispatchShell({
         flexDirection: 'column',
         width: '100%',
       },
-      // Primary band: chrome-on-primary dials + role-colored main CTA.
-      ...topLines.map((line, index) => {
-        if (/^下一步：/.test(line)) {
-          return createElement(
-            Text,
-            {
-              key: `t${index}`,
-              bold: true,
-              color: ctaColorForRole(ctaRole),
-            },
-            line || ' ',
-          );
-        }
-        // First dial line carries band chrome title.
-        if (index === 0 && line.includes(BAND_TITLE_TOP)) {
-          return createElement(
-            Text,
-            { key: `t${index}`, bold: true },
-            line || ' ',
-          );
-        }
-        return createElement(
-          Text,
-          { key: `t${index}`, bold: true },
-          line || ' ',
-        );
-      }),
+      // Primary band: chrome + status + role-colored main CTA.
+      ...topLines.map((line, index) => createElement(
+        Text,
+        { key: `t${index}`, ...styleTopLine(line, index, ctaRole) },
+        line || ' ',
+      )),
     ),
     createElement(
       Box,
@@ -1546,42 +1784,14 @@ export function DispatchShell({
         flexDirection: 'column',
         width: '100%',
       },
-      ...middleLines.map((line, index) => {
-        const isSelected = /◀选中/.test(line);
-        const isCurrentSlot = /◀当前槽/.test(line) && !isSelected;
-        const isBoth = /◀当前槽/.test(line) && isSelected;
-        const isBoardDefault = /←看板默认/.test(line);
-        // Band chrome / view title line.
-        if (line.includes(BAND_TITLE_MIDDLE)) {
-          return createElement(Text, { key: `m${index}`, bold: true }, line || ' ');
-        }
-        // Selected row: bold + cyan; current-slot-only: green; both: cyan bold.
-        if (isSelected || isBoth) {
-          return createElement(Text, { key: `m${index}`, bold: true, color: 'cyan' }, line || ' ');
-        }
-        if (isCurrentSlot) {
-          return createElement(Text, { key: `m${index}`, color: 'green' }, line || ' ');
-        }
-        if (isBoardDefault) {
-          return createElement(Text, { key: `m${index}`, color: 'cyan' }, line || ' ');
-        }
-        // Secondary: session line (from merged slot summary) is indented + dim.
-        if (/^\s+session:/.test(line)) {
-          return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
-        }
-        // Legend / secondary graph or neighborhood chrome stays dim.
-        if (/图例:|按 g |只读 · 直接上下游|全板其余:/.test(line)) {
-          return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
-        }
-        // Focus node line: mild emphasis without competing with list selection cyan.
-        if (/◀焦点/.test(line)) {
-          return createElement(Text, { key: `m${index}`, bold: true }, line || ' ');
-        }
-        return createElement(Text, { key: `m${index}` }, line || ' ');
-      }),
+      ...middleLines.map((line, index) => createElement(
+        Text,
+        { key: `m${index}`, ...styleMiddleLine(line) },
+        line || ' ',
+      )),
       // Notice only when present — no empty placeholder row.
       noticeLine
-        ? createElement(Text, { key: 'notice', color: 'yellow' }, noticeLine)
+        ? createElement(Text, { key: 'notice', color: 'yellow', bold: true }, noticeLine)
         : null,
     ),
     createElement(
@@ -1592,27 +1802,20 @@ export function DispatchShell({
         paddingX: 1,
         width: '100%',
       },
-      // Band chrome + key legend on one row: hot bold, else dim.
+      // One Text = one legend string. Avoid multi-Text fragments (they wrap
+      // mid-label) and avoid end-truncate (it ate `[q] 退出` in 80-col tests).
       createElement(
         Text,
-        { key: 'footer-chrome', bold: true, dimColor: true },
-        `${BAND_TITLE_FOOTER}  `,
+        {
+          key: 'footer-line',
+          bold: footerItems.some((i) => i.hot && !i.dim),
+          color: (() => {
+            const hot = footerItems.find((i) => i.hot && !i.dim);
+            return hot ? (ctaColorForRole(ctaRole) || 'cyan') : 'gray';
+          })(),
+        },
+        renderFooter(snap),
       ),
-      ...footerItems.flatMap((item, index) => {
-        const prefix = index === 0 ? '' : '  ';
-        const isHot = Boolean(item.hot) && !item.dim;
-        return [
-          createElement(
-            Text,
-            {
-              key: `fk-${item.id}`,
-              bold: isHot,
-              dimColor: !isHot,
-            },
-            `${prefix}${item.text}`,
-          ),
-        ];
-      }),
     ),
   );
 }
@@ -1658,6 +1861,7 @@ function DispatchFullscreenApp({
   pollIntervalMs = 2000,
   ticksRef = null,
   terminalRows = null,
+  output = null,
   discoverModels = null,
   resolveModelItemsFn = resolveModelItems,
 } = {}) {
@@ -1669,10 +1873,9 @@ function DispatchFullscreenApp({
   const [middleView, setMiddleView] = useState('list');
   // In-app model→effort overlay (same alt-screen; no nested DECSET).
   const [modelEffortMenu, setModelEffortMenu] = useState(null);
-  // Numeric height from mount stdout.rows (resolved once). Resize re-pin is
-  // optional polish; keep mount path free of stream listeners so PassThrough
-  // tests can exit cleanly on q.
-  const resolvedRows = resolveShellHeight(terminalRows);
+  // Live terminal row budget — updated on stdout `resize` so neighborhood
+  // edges/compact and three-band height reflow with the window.
+  const [liveRows, setLiveRows] = useState(() => resolveShellHeight(terminalRows));
   const busyRef = useRef(false);
   const quittingRef = useRef(false);
   const snapRef = useRef(null);
@@ -1685,6 +1888,31 @@ function DispatchFullscreenApp({
   useEffect(() => {
     selectedRef.current = selectedIndex;
   }, [selectedIndex]);
+
+  // Re-pin shell height when the real TTY is resized. PassThrough test fakes
+  // usually omit `.on` / `isTTY` and are left alone.
+  useEffect(() => {
+    const stream = output;
+    if (!stream || typeof stream.on !== 'function') return undefined;
+    if (stream.isTTY !== true && stream.isTTY !== undefined) {
+      // Explicit non-TTY: do not subscribe.
+      if (stream.isTTY === false) return undefined;
+    }
+    const onResize = () => {
+      const next = resolveShellHeight(stream.rows);
+      setLiveRows((prev) => (prev === next ? prev : next));
+    };
+    stream.on('resize', onResize);
+    // Sync once in case rows changed between mount prop and first paint.
+    onResize();
+    return () => {
+      if (typeof stream.off === 'function') stream.off('resize', onResize);
+      else if (typeof stream.removeListener === 'function') {
+        stream.removeListener('resize', onResize);
+      }
+    };
+  }, [output]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1898,7 +2126,7 @@ function DispatchFullscreenApp({
     notice,
     selectedIndex,
     middleView,
-    terminalRows: resolvedRows,
+    terminalRows: liveRows,
     modelEffortMenu,
   });
 }
@@ -1941,6 +2169,10 @@ export async function runFullscreenDispatch({
   // Any leftover \r/\n would otherwise hit useInput as start → false occupy.
   drainPendingInput(input);
 
+  // ConPTY / some dual-TTY hosts probe chalk at level 0 → Ink emits monochrome.
+  // Force a usable color level so role colors (CTA / selected / slot / hot) show.
+  ensureFullscreenColor(output);
+
   const ticksRef = { current: 0 };
   let enteredAlt = false;
 
@@ -1957,7 +2189,9 @@ export async function runFullscreenDispatch({
       pollIntervalMs,
       ticksRef,
       // Numeric rows so middle flexGrow actually eats leftover terminal height.
+      // `output` is also watched for `resize` to reflow liveRows.
       terminalRows: resolveShellHeight(output?.rows),
+      output,
     }),
     {
       stdin: input,
