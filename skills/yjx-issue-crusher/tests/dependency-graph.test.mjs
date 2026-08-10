@@ -2,13 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  formatIssueListRow,
+  issueBoardStatusLabelZh,
   issueMark,
+  issueTypeLabel,
   listDirectDownstream,
   listDirectUpstream,
   listExecutableIssueIds,
   renderDependencyGraph,
   renderFocusNeighborhood,
   resolveFocusIssueId,
+  resolveNeighborhoodLayout,
   shortIssueLabel,
   statusLabelZh,
 } from '../scripts/dependency-graph.mjs';
@@ -192,17 +196,19 @@ test('resolveFocusIssueId: selected > slot > default > first board', () => {
 
 test('renderFocusNeighborhood: direct up/down only; +N fold; read-only clues', () => {
   const issues = [
-    { id: '01-a.md', title: 'A', closed: true, blockedBy: [] },
-    { id: '02-b.md', title: 'B', closed: false, blockedBy: ['01-a.md'] },
-    { id: '03-c.md', title: 'C', closed: false, blockedBy: ['02-b.md'] },
+    { id: '01-a.md', title: 'A', closed: true, blockedBy: [], type: 'impl' },
+    { id: '02-b.md', title: 'B', closed: false, blockedBy: ['01-a.md'], type: 'impl', status: 'ready-for-agent' },
+    { id: '03-c.md', title: 'C', closed: false, blockedBy: ['02-b.md'], type: 'impl' },
   ];
-  const { lines } = renderFocusNeighborhood({
+  const { lines, layout, degraded } = renderFocusNeighborhood({
     issues,
     focusId: '02-b.md',
     slotIssueId: null,
     maxPerSide: 5,
   });
   const text = lines.join('\n');
+  assert.equal(layout, 'edges');
+  assert.equal(degraded, false);
   assert.match(text, /焦点邻域|邻域/);
   assert.match(text, /只读|直接上下游|非全板/);
   assert.match(text, /02-b\.md|焦点/);
@@ -210,7 +216,9 @@ test('renderFocusNeighborhood: direct up/down only; +N fold; read-only clues', (
   assert.match(text, /01-a\.md|01/);
   assert.match(text, /下游/);
   assert.match(text, /03-c\.md|03/);
-  assert.match(text, /──►/);
+  // Default completion shape is multi-line true edges, not a single clue chain.
+  assert.match(text, /├─|└─|│|▼|──►/);
+  assert.doesNotMatch(text, /已降级/);
 
   // Collapse when many direct neighbors.
   const hub = {
@@ -240,4 +248,121 @@ test('renderFocusNeighborhood: direct up/down only; +N fold; read-only clues', (
     maxPerSide: 3,
   }).lines.join('\n');
   assert.match(folded, /\+\d+/);
+});
+
+// --- 20260807-1618 char-grid parity / 01: dense list row + true neighborhood ---
+
+test('issueTypeLabel / issueBoardStatusLabelZh / formatIssueListRow dense columns', () => {
+  assert.equal(issueTypeLabel({ type: 'grilling' }), 'grilling');
+  assert.equal(issueTypeLabel({ entryClass: 'wayfinder' }), 'wayfinder');
+  assert.equal(issueTypeLabel({ entryClass: 'human' }), 'human');
+  assert.equal(issueTypeLabel({ id: '01-x.md' }), 'impl');
+
+  const ready = {
+    id: '02-ready.md',
+    title: '可执行票标题很长需要截断ABCDEFGHIJKLMNOP',
+    closed: false,
+    blockedBy: [],
+    status: 'ready-for-agent',
+    type: 'impl',
+  };
+  const closed = {
+    id: '01-done.md',
+    title: '已完成票',
+    closed: true,
+    blockedBy: [],
+    type: 'research',
+  };
+  const blocked = {
+    id: '03-blocked.md',
+    title: '阻塞票',
+    closed: false,
+    blockedBy: ['02-ready.md'],
+    type: 'impl',
+  };
+  const human = {
+    id: '04-human.md',
+    title: '人工票',
+    closed: false,
+    blockedBy: [],
+    status: 'ready-for-human',
+    entryClass: 'human',
+  };
+
+  assert.equal(issueBoardStatusLabelZh(ready), '可实施');
+  assert.equal(issueBoardStatusLabelZh(closed), '已完成');
+  assert.equal(issueBoardStatusLabelZh(blocked), '阻塞');
+  assert.equal(issueBoardStatusLabelZh(human), '待人工');
+
+  const row = formatIssueListRow(ready, {
+    mark: '★',
+    titleMax: 12,
+    suffix: '◀选中',
+  });
+  // mark + id + [type] + status display + truncated title + role mark
+  assert.match(row, /^★ 02-ready\.md \[impl\] 可实施 /);
+  assert.match(row, /可执行票/);
+  assert.match(row, /…|◀选中/);
+  assert.match(row, /◀选中/);
+  assert.ok(row.includes('…') || Array.from(ready.title).length <= 12);
+});
+
+test('resolveNeighborhoodLayout: tall → edges; short → compact', () => {
+  assert.equal(resolveNeighborhoodLayout(28), 'edges');
+  assert.equal(resolveNeighborhoodLayout(null), 'edges');
+  assert.equal(resolveNeighborhoodLayout(12), 'compact');
+  assert.equal(resolveNeighborhoodLayout(16), 'compact');
+  assert.equal(resolveNeighborhoodLayout(21), 'compact');
+  assert.equal(resolveNeighborhoodLayout(22), 'edges');
+});
+
+test('renderFocusNeighborhood edges vs compact+已降级', () => {
+  const issues = [
+    { id: '01-a.md', title: '上游A', closed: true, blockedBy: [], type: 'research' },
+    {
+      id: '02-b.md',
+      title: '焦点B',
+      closed: false,
+      blockedBy: ['01-a.md'],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+    { id: '03-c.md', title: '下游C', closed: false, blockedBy: ['02-b.md'], type: 'impl' },
+  ];
+
+  const edges = renderFocusNeighborhood({
+    issues,
+    focusId: '02-b.md',
+    layout: 'edges',
+  });
+  const edgesText = edges.lines.join('\n');
+  assert.equal(edges.layout, 'edges');
+  assert.equal(edges.degraded, false);
+  // Multi-line true edges: section headers + tree branches (not one clue string only).
+  assert.match(edgesText, /上游/);
+  assert.match(edgesText, /下游/);
+  assert.match(edgesText, /├─|└─/);
+  assert.match(edgesText, /01-a\.md/);
+  assert.match(edgesText, /\[research\].*已完成|已完成.*上游A|上游A/);
+  assert.match(edgesText, /02-b\.md/);
+  assert.match(edgesText, /◀焦点/);
+  assert.match(edgesText, /03-c\.md/);
+  // Must not be the single-line clue completion shape alone.
+  assert.ok(
+    edges.lines.length >= 4,
+    `edges layout should span multiple lines, got ${edges.lines.length}`,
+  );
+  assert.doesNotMatch(edgesText, /已降级/);
+
+  const compact = renderFocusNeighborhood({
+    issues,
+    focusId: '02-b.md',
+    layout: 'compact',
+  });
+  const compactText = compact.lines.join('\n');
+  assert.equal(compact.layout, 'compact');
+  assert.equal(compact.degraded, true);
+  assert.match(compactText, /已降级/);
+  assert.match(compactText, /──►/);
+  assert.match(compactText, /上游|下游/);
 });

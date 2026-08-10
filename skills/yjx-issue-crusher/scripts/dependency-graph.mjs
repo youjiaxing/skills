@@ -92,6 +92,148 @@ export function issueMark({ closed, id, slotIssueId = null, executableIds = [] }
 }
 
 /**
+ * Bracket type label for list / neighborhood rows.
+ * Prefer explicit type, then entryClass, else ordinary impl.
+ * @param {object | null | undefined} issue
+ * @returns {string}
+ */
+export function issueTypeLabel(issue) {
+  if (!issue) return 'impl';
+  if (issue.type != null && String(issue.type).trim() !== '') {
+    return String(issue.type).trim();
+  }
+  if (issue.entryClass != null && String(issue.entryClass).trim() !== '') {
+    return String(issue.entryClass).trim();
+  }
+  return 'impl';
+}
+
+/**
+ * Operator-facing board status display name (not chain-run soft-stuck ids).
+ * Prototype target: 可实施 / 已完成 / 阻塞 / 待人工 / 已领取 …
+ *
+ * @param {object | null | undefined} issue
+ * @param {{
+ *   openBlockersById?: Map<string, string[]> | null,
+ * }} [opts]
+ * @returns {string}
+ */
+export function issueBoardStatusLabelZh(issue, { openBlockersById = null } = {}) {
+  if (!issue) return '未知';
+  if (issue.closed) return '已完成';
+  const status = issue.status ?? issue.statusRole ?? null;
+  if (status === 'resolved' || status === 'wontfix') return '已完成';
+  if (status === 'claimed') return '已领取';
+  if (status === 'ready-for-human') return '待人工';
+  if (status === 'needs-info') return '需补充';
+  if (status === 'needs-triage') return '待分诊';
+
+  let openBlockers = null;
+  if (openBlockersById && issue.id != null) {
+    openBlockers = openBlockersById.get(issue.id) ?? [];
+  } else if (Array.isArray(issue.blockedBy) && issue.blockedBy.length > 0) {
+    // Without a board map, non-empty blockedBy is treated as blocked
+    // only when we cannot prove they are all closed — callers with a full
+    // board should pass openBlockersById for accuracy.
+    openBlockers = issue.blockedBy;
+  } else {
+    openBlockers = [];
+  }
+  if (openBlockers.length > 0) return '阻塞';
+
+  if (
+    status == null
+    || status === ''
+    || status === 'ready-for-agent'
+    || status === 'open'
+    || WAYFINDER_TYPE_AS_STATUS.has(status)
+  ) {
+    return '可实施';
+  }
+  // Fall back to raw status so unknown roles stay visible rather than blank.
+  return String(status);
+}
+
+/**
+ * Truncate display text by Unicode code points (TUI column budget).
+ * @param {string | null | undefined} value
+ * @param {number} max
+ * @returns {string}
+ */
+function truncateChars(value, max) {
+  const text = String(value ?? '');
+  const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : 24;
+  const chars = Array.from(text);
+  if (chars.length <= limit) return text;
+  if (limit <= 1) return '…';
+  return `${chars.slice(0, limit - 1).join('')}…`;
+}
+
+/**
+ * Dense list / neighborhood row:
+ * `mark id [type] 状态显示名 标题截断[  roleSuffix]`
+ *
+ * @param {object | null | undefined} issue
+ * @param {{
+ *   mark?: string,
+ *   titleMax?: number,
+ *   suffix?: string | null,
+ *   openBlockersById?: Map<string, string[]> | null,
+ * }} [opts]
+ * @returns {string}
+ */
+export function formatIssueListRow(issue, {
+  mark = '·',
+  titleMax = 24,
+  suffix = null,
+  openBlockersById = null,
+} = {}) {
+  const id = issue?.id ?? '—';
+  const type = issueTypeLabel(issue);
+  const statusZh = issueBoardStatusLabelZh(issue, { openBlockersById });
+  const rawTitle = issue?.title != null && String(issue.title).trim() !== ''
+    ? String(issue.title)
+    : '';
+  // Avoid repeating the bare id as a fake title when title was defaulted to id.
+  const title = rawTitle && rawTitle !== id
+    ? truncateChars(rawTitle, titleMax)
+    : '';
+  const parts = [
+    mark,
+    id,
+    `[${type}]`,
+    statusZh,
+  ];
+  if (title) parts.push(title);
+  let row = parts.join(' ');
+  if (suffix != null && String(suffix).trim() !== '') {
+    row = `${row}  ${String(suffix).trim()}`;
+  }
+  return row;
+}
+
+/**
+ * Minimum terminal rows before focus neighborhood uses multi-line true edges.
+ * Below this, compact clue shape is allowed but must show 「已降级」.
+ * Picked so three-band Ink chrome (top status + footer) still fits with dense list.
+ */
+export const NEIGHBORHOOD_EDGES_MIN_ROWS = 22;
+
+/**
+ * @param {number | null | undefined} terminalRows
+ * @returns {'edges' | 'compact'}
+ */
+export function resolveNeighborhoodLayout(terminalRows) {
+  // Unknown / omitted height → default to full edges (completion shape).
+  // Note: Number(null) === 0, so null/undefined must be rejected before Number().
+  if (terminalRows == null || terminalRows === '') return 'edges';
+  const n = Number(terminalRows);
+  if (!Number.isFinite(n)) return 'edges';
+  if (n < NEIGHBORHOOD_EDGES_MIN_ROWS) return 'compact';
+  return 'edges';
+}
+
+/**
  * @param {Array<object>} issues
  */
 export function collectGraphWarnings(issues) {
@@ -207,18 +349,25 @@ export function resolveFocusIssueId(
  * Read-only direct up/downstream neighborhood of focus (not full-board map).
  * Collapses each side beyond maxPerSide with +N.
  *
+ * Default layout is multi-line **true edges** (tree branches). Compact clue
+ * chain is only for short terminals and must surface 「已降级」.
+ *
  * @param {{
  *   issues?: Array<object>,
  *   focusId?: string | null,
  *   slotIssueId?: string | null,
  *   executableIds?: string[] | Set<string> | null,
  *   maxPerSide?: number,
+ *   layout?: 'edges' | 'compact' | null,
+ *   terminalRows?: number | null,
  * }} [options]
  * @returns {{
  *   lines: string[],
  *   focusId: string | null,
  *   upstream: string[],
  *   downstream: string[],
+ *   layout: 'edges' | 'compact',
+ *   degraded: boolean,
  * }}
  */
 export function renderFocusNeighborhood({
@@ -227,20 +376,37 @@ export function renderFocusNeighborhood({
   slotIssueId = null,
   executableIds = null,
   maxPerSide = 5,
+  layout = null,
+  terminalRows = null,
 } = {}) {
   const list = Array.isArray(issues) ? issues : [];
   const byId = new Map(list.map((issue) => [issue.id, issue]));
   const lines = [];
+  const resolvedLayout = layout === 'compact' || layout === 'edges'
+    ? layout
+    : resolveNeighborhoodLayout(terminalRows);
+  const degraded = resolvedLayout === 'compact';
 
   if (!focusId || !byId.has(focusId)) {
-    lines.push('焦点邻域（只读 · 直接上下游 · 非全板）: （无焦点）');
-    return { lines, focusId: null, upstream: [], downstream: [] };
+    const head = degraded
+      ? '已降级 · 焦点邻域: （无焦点）'
+      : '焦点邻域（只读 · 直接上下游 · 非全板）: （无焦点）';
+    lines.push(head);
+    return {
+      lines,
+      focusId: null,
+      upstream: [],
+      downstream: [],
+      layout: resolvedLayout,
+      degraded,
+    };
   }
 
   const execIds = executableIds == null
     ? listExecutableIssueIds(list)
     : [...executableIds];
   const execSet = new Set(execIds);
+  const openMap = openBlockersById(list);
   const markOf = (id) => issueMark({
     closed: Boolean(byId.get(id)?.closed),
     id,
@@ -251,6 +417,16 @@ export function renderFocusNeighborhood({
   const tok = (id) => `${markOf(id)}${shortIssueLabel(id)}`;
   /** Slightly longer token when side needs id disambiguation. */
   const describe = (id) => `${markOf(id)}${shortIssueLabel(id)} ${id}`;
+  const denseRow = (id, extraSuffix = null) => {
+    const issue = byId.get(id) || { id };
+    const suffix = extraSuffix;
+    return formatIssueListRow(issue, {
+      mark: markOf(id),
+      titleMax: 20,
+      suffix,
+      openBlockersById: openMap,
+    });
+  };
 
   const upstream = listDirectUpstream(list, focusId);
   const downstream = listDirectDownstream(list, focusId);
@@ -262,17 +438,49 @@ export function renderFocusNeighborhood({
   const showUps = upstream.slice(0, limit);
   const showDowns = downstream.slice(0, limit);
 
+  if (resolvedLayout === 'edges') {
+    // Multi-line true edges: section + tree branches (no tall │/▼ chrome).
+    // Keep line count modest so Ink three-band frames still show top status.
+    lines.push('焦点邻域（只读 · 直接上下游 · 非全板）');
+    lines.push('  上游:');
+    if (showUps.length === 0) {
+      lines.push('    （无）');
+    } else {
+      showUps.forEach((id, idx) => {
+        const branch = idx === showUps.length - 1 ? '└─' : '├─';
+        lines.push(`  ${branch} ${denseRow(id)}`);
+      });
+      if (upMore > 0) lines.push(`    … +${upMore}`);
+    }
+    lines.push(`  ▶ ${denseRow(focusId, '◀焦点')}`);
+    lines.push('  下游:');
+    if (showDowns.length === 0) {
+      lines.push('    （无）');
+    } else {
+      showDowns.forEach((id, idx) => {
+        const branch = idx === showDowns.length - 1 ? '└─' : '├─';
+        lines.push(`  ${branch} ${denseRow(id)}`);
+      });
+      if (downMore > 0) lines.push(`    … +${downMore}`);
+    }
+    return {
+      lines,
+      focusId,
+      upstream,
+      downstream,
+      layout: resolvedLayout,
+      degraded,
+    };
+  }
+
+  // Compact clue shape for short terminals — 「已降级」leads so clipping cannot hide it.
   const side = (ids, more) => {
     if (ids.length === 0) return '·';
     const body = ids.map((id) => tok(id)).join('+');
     return more > 0 ? `${body}+${more}` : body;
   };
-
-  // Two-line max: keeps Ready frames under narrow/low terminal height floors.
-  // Clue shape: 上游 ──► 焦点 ──► 下游 (not a full-board map).
   const chain = `${side(showUps, upMore)} ──► ${tok(focusId)}◀焦点 ──► ${side(showDowns, downMore)}`;
-  lines.push(`焦点邻域（只读 · 直接上下游 · 非全板）: ${chain}`);
-  // Detail ids when neighbors exist (still one line; +N already folded into side()).
+  lines.push(`已降级 · 焦点邻域: ${chain}`);
   if (showUps.length || showDowns.length) {
     const upDetail = showUps.length
       ? showUps.map((id) => describe(id)).join(' · ') + (upMore > 0 ? ` · +${upMore}` : '')
@@ -285,7 +493,14 @@ export function renderFocusNeighborhood({
     lines.push('  上游: （无） · 下游: （无）');
   }
 
-  return { lines, focusId, upstream, downstream };
+  return {
+    lines,
+    focusId,
+    upstream,
+    downstream,
+    layout: resolvedLayout,
+    degraded,
+  };
 }
 
 /**

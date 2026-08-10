@@ -31,10 +31,16 @@ import { Box, Text, render, useApp, useInput } from 'ink';
 
 import { handleDispatchCommand } from './dispatch-commands.mjs';
 import {
+  formatIssueListRow,
+  issueBoardStatusLabelZh,
+  issueMark,
+  issueTypeLabel,
   listExecutableIssueIds,
+  openBlockersById,
   renderDependencyGraph,
   renderFocusNeighborhood,
   resolveFocusIssueId,
+  resolveNeighborhoodLayout,
   statusLabelZh,
 } from './dependency-graph.mjs';
 import {
@@ -568,6 +574,7 @@ export function renderTopBar(snap, { selectedIndex = null } = {}) {
 
 /**
  * Append executable rows (highlight / 看板默认 / 当前槽 marks) into middle lines.
+ * Dense columns: mark + id + [type] + 状态显示名 + 标题截断 + role marks.
  * @param {string[]} lines
  * @param {object} snap
  * @param {Array<{id:string,title?:string}>} executable
@@ -584,39 +591,102 @@ function appendExecutableListLines(lines, snap, executable, selectedIndex) {
     && Number(selectedIndex) < executable.length;
   // Same default as Enter without highlight (impl first, else wayfinder).
   const defaultId = boardDefaultExecutable(snap)?.id ?? null;
+  const boardIssues = snap?.board?.issues ?? [];
+  const byId = new Map(boardIssues.map((issue) => [issue.id, issue]));
+  const openMap = openBlockersById(boardIssues);
+  const slotIssueId = snap?.slot?.issueId ?? null;
+  const execSet = new Set(executable.map((item) => item.id));
+
   for (let i = 0; i < executable.length; i += 1) {
     const item = executable[i];
+    const issue = byId.get(item.id) || item;
     const marks = [];
-    if (snap.slot?.issueId === item.id) marks.push('◀当前槽');
+    if (slotIssueId === item.id) marks.push('◀当前槽');
     if (hasSelection && Number(selectedIndex) === i) marks.push('◀选中');
     else if (!hasSelection && defaultId && item.id === defaultId) marks.push('←看板默认');
-    const suffix = marks.length ? `  ${marks.join(' ')}` : '';
-    lines.push(`  ★ ${item.id}${suffix}`);
+    const mark = issueMark({
+      closed: Boolean(issue.closed),
+      id: item.id,
+      slotIssueId,
+      executableIds: execSet,
+    });
+    // Prefer board title; executable projection already carries title.
+    const rowIssue = {
+      ...issue,
+      id: item.id,
+      title: issue.title ?? item.title ?? item.id,
+    };
+    lines.push(`  ${formatIssueListRow(rowIssue, {
+      mark,
+      titleMax: 24,
+      suffix: marks.length ? marks.join(' ') : null,
+      openBlockersById: openMap,
+    })}`);
   }
 }
 
 /**
- * Non-executable board remainder as compact tokens (full roster under 全板其余).
+ * Non-executable board remainder as dense rows (full roster under 全板其余).
+ * Too many rows fold with +N — never silent drop of the whole remainder.
+ * @param {string[]} lines
  * @param {Array<object>} issues
  * @param {Set<string>} execIdSet
  * @param {string | null | undefined} slotIssueId
  * @param {number} [maxShow]
- * @returns {string}
  */
-function boardRemainderSummary(issues, execIdSet, slotIssueId, maxShow = 8) {
-  const tokens = [];
+function appendBoardRemainderLines(lines, issues, execIdSet, slotIssueId, {
+  maxShow = 8,
+  dense = true,
+} = {}) {
+  const openMap = openBlockersById(issues);
+  const remainder = [];
   for (const issue of issues) {
     if (execIdSet.has(issue.id)) continue;
-    const mark = issue.closed
-      ? '✓'
-      : (slotIssueId && issue.id === slotIssueId ? '▶' : '·');
-    // No inter-token " · " — blocked mark is already "·" and would double-dot.
-    tokens.push(`${mark}${issue.id}`);
+    remainder.push(issue);
   }
-  if (tokens.length === 0) return '（无）';
-  if (tokens.length <= maxShow) return tokens.join('  ');
-  const shown = tokens.slice(0, maxShow).join('  ');
-  return `${shown}  +${tokens.length - maxShow}`;
+  if (remainder.length === 0) {
+    lines.push('全板其余: （无）');
+    return;
+  }
+  const limit = Number.isFinite(Number(maxShow)) && Number(maxShow) > 0
+    ? Math.floor(Number(maxShow))
+    : 8;
+  const shown = remainder.slice(0, limit);
+  const more = remainder.length - shown.length;
+
+  // Compact layout (short terminal): one summary line of dense tokens to save rows.
+  if (!dense) {
+    const tokens = shown.map((issue) => {
+      const mark = issueMark({
+        closed: Boolean(issue.closed),
+        id: issue.id,
+        slotIssueId,
+        executableIds: execIdSet,
+      });
+      const type = issueTypeLabel(issue);
+      const statusZh = issueBoardStatusLabelZh(issue, { openBlockersById: openMap });
+      return `${mark}${issue.id}[${type}]${statusZh}`;
+    });
+    const tail = more > 0 ? `  +${more}` : '';
+    lines.push(`全板其余: ${tokens.join('  ')}${tail}`);
+    return;
+  }
+
+  lines.push('全板其余:');
+  for (const issue of shown) {
+    const mark = issueMark({
+      closed: Boolean(issue.closed),
+      id: issue.id,
+      slotIssueId,
+      executableIds: execIdSet,
+    });
+    lines.push(`  ${formatIssueListRow(issue, {
+      mark,
+      titleMax: 24,
+      openBlockersById: openMap,
+    })}`);
+  }
+  if (more > 0) lines.push(`  … +${more}`);
 }
 
 /**
@@ -634,12 +704,18 @@ function boardRemainderSummary(issues, execIdSet, slotIssueId, maxShow = 8) {
  * @param {{
  *   selectedIndex?: number | null,
  *   middleView?: 'list' | 'global',
+ *   terminalRows?: number | null,
  * }} [opts]
  * @returns {string}
  */
-export function renderMiddlePanel(snap, { selectedIndex = null, middleView = 'list' } = {}) {
+export function renderMiddlePanel(snap, {
+  selectedIndex = null,
+  middleView = 'list',
+  terminalRows = null,
+} = {}) {
   const lines = [];
   const view = middleView === 'global' ? 'global' : 'list';
+  const neighborhoodLayout = resolveNeighborhoodLayout(terminalRows);
 
   // Occupied slot / HITL summary merges into middle top (three-band IA).
   const slotBlock = renderSlotPanel(snap);
@@ -656,7 +732,11 @@ export function renderMiddlePanel(snap, { selectedIndex = null, middleView = 'li
       lines.push('列表 · 全板（只读 · 不可图上派票）');
       lines.push('现在可执行:');
       lines.push('  （无）');
-      lines.push('焦点邻域（只读 · 直接上下游 · 非全板）');
+      lines.push(
+        neighborhoodLayout === 'compact'
+          ? '已降级 · 焦点邻域'
+          : '焦点邻域（只读 · 直接上下游 · 非全板）',
+      );
       lines.push('  （启动中…）');
     }
     return lines.join('\n');
@@ -685,11 +765,15 @@ export function renderMiddlePanel(snap, { selectedIndex = null, middleView = 'li
     return lines.join('\n');
   }
 
-  // Default: list + focus neighborhood (compact — keep Ready under height floor).
+  // Default: dense list + focus neighborhood (edges when tall; compact+已降级 when short).
   lines.push('列表 · 全板（只读 · 不可图上派票）');
   lines.push('现在可执行:');
   appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
-  lines.push(`全板其余: ${boardRemainderSummary(issues, execIdSet, slotIssueId)}`);
+  // Short terminals: remainder collapses to one line so 已降级 neighborhood stays on-frame.
+  appendBoardRemainderLines(lines, issues, execIdSet, slotIssueId, {
+    dense: neighborhoodLayout === 'edges',
+    maxShow: neighborhoodLayout === 'edges' ? 8 : 4,
+  });
 
   const hasSelection = selectedIndex != null
     && Number.isInteger(Number(selectedIndex))
@@ -708,6 +792,8 @@ export function renderMiddlePanel(snap, { selectedIndex = null, middleView = 'li
     focusId,
     slotIssueId,
     executableIds: execIdSet,
+    layout: neighborhoodLayout,
+    terminalRows,
   });
   for (const line of neighborhood.lines) lines.push(line);
   if (graph.warnings.length) {
@@ -1265,7 +1351,11 @@ export function DispatchShell({
   const layout = describeShellLayout(
     terminalRows != null ? { rows: terminalRows } : {},
   );
-  const middleLines = renderMiddlePanel(snap, { selectedIndex, middleView }).split('\n');
+  const middleLines = renderMiddlePanel(snap, {
+    selectedIndex,
+    middleView,
+    terminalRows,
+  }).split('\n');
   const noticeLine = renderNotice(snap, notice);
   const topLines = renderTopBar(snap, { selectedIndex }).split('\n');
   const footerItems = buildFooterItems(snap);

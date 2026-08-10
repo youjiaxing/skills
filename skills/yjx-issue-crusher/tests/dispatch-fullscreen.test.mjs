@@ -2478,9 +2478,10 @@ test('Ready 空槽: 中带不出现常驻大块「当前槽（空）」; 壳为�
   assert.match(middle, /现在可执行/);
   assert.match(middle, /02-ready\.md/);
 
+  // Dense list+edges needs a comfortable row budget so Ink does not clip top status.
   const text = renderToString(createElement(DispatchShell, {
     snap: snapWithBoard({ status: 'idle', autoAdvance: false, slot: null }),
-    terminalRows: 20,
+    terminalRows: 28,
   }));
   assert.doesNotMatch(text, /当前槽\s*（空）|当前槽 \(空\)/);
   assert.match(text, /可开干/);
@@ -3183,4 +3184,169 @@ test('occupied slot middle: list + neighborhood remain; no graph dispatch', () =
   assert.match(middle, /只读|不可图上派票/);
   // Forbid dispatch affordances; "不可图上派票" is the positive read-only label.
   assert.doesNotMatch(middle, /点击派票|派票入口|从图派票/);
+});
+
+// --- 20260807-1618 char-grid parity / 01: middle density (list cols + true neighborhood) ---
+
+test('list rows: mark + id + [type] + 状态显示名 + 标题截断 (multi-status sample)', () => {
+  const issues = [
+    {
+      id: '01-done.md',
+      title: '已完成票很长标题需要截断XXXXXXXX',
+      closed: true,
+      blockedBy: [],
+      type: 'research',
+      status: 'resolved',
+    },
+    {
+      id: '02-ready.md',
+      title: '可执行票标题',
+      closed: false,
+      blockedBy: [],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+    {
+      id: '03-grill.md',
+      title: '探路票',
+      closed: false,
+      blockedBy: [],
+      type: 'grilling',
+      entryClass: 'wayfinder',
+      status: 'open',
+    },
+    {
+      id: '04-blocked.md',
+      title: '被挡住',
+      closed: false,
+      blockedBy: ['02-ready.md'],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+  ];
+  const middle = renderMiddlePanel(snapWithBoard({
+    status: 'idle',
+    slot: null,
+    board: { feature: 'demo', readOnly: true, issues },
+  }), { terminalRows: 28 });
+
+  // Executable dense columns.
+  assert.match(middle, /★ 02-ready\.md \[impl\] 可实施 .*可执行票/);
+  assert.match(middle, /★ 03-grill\.md \[grilling\] .*探路票/);
+  // Full-board remainder also dense (not only bare id tokens).
+  assert.match(middle, /✓ 01-done\.md \[research\] 已完成/);
+  assert.match(middle, /· 04-blocked\.md \[impl\] 阻塞/);
+  // Title truncation visible on long closed title.
+  assert.match(middle, /已完成票/);
+});
+
+test('list marks: 选中 / 当前槽 / 看板默认 distinct and not confused', () => {
+  const issues = [
+    {
+      id: '01-a.md',
+      title: 'a',
+      closed: false,
+      blockedBy: [],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+    {
+      id: '02-b.md',
+      title: 'b',
+      closed: false,
+      blockedBy: [],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+    {
+      id: '03-c.md',
+      title: 'c',
+      closed: false,
+      blockedBy: [],
+      type: 'impl',
+      status: 'ready-for-agent',
+    },
+  ];
+  const base = {
+    status: 'soft-stuck',
+    slot: {
+      issueId: '01-a.md',
+      title: 'a',
+      pid: 1,
+      mode: 'review',
+      closed: false,
+    },
+    board: { feature: 'demo', readOnly: true, issues },
+  };
+
+  const noSel = renderMiddlePanel(snapWithBoard(base), { terminalRows: 28 });
+  // No highlight → board default mark on default row; slot keeps 当前槽.
+  assert.match(noSel, /01-a\.md.*◀当前槽/);
+  assert.match(noSel, /←看板默认/);
+  assert.doesNotMatch(noSel, /◀选中/);
+
+  const withSel = renderMiddlePanel(snapWithBoard(base), {
+    selectedIndex: 1,
+    terminalRows: 28,
+  });
+  assert.match(withSel, /02-b\.md.*◀选中/);
+  assert.match(withSel, /01-a\.md.*◀当前槽/);
+  assert.doesNotMatch(withSel, /←看板默认/);
+  // Marks must remain distinguishable tokens.
+  assert.notEqual(
+    (withSel.match(/◀选中/g) || []).length,
+    0,
+  );
+  assert.notEqual(
+    (withSel.match(/◀当前槽/g) || []).length,
+    0,
+  );
+});
+
+test('tall terminal: default neighborhood is true edges, not clue-string completion', () => {
+  const middle = renderMiddlePanel(snapWithBoard({
+    status: 'idle',
+    slot: null,
+  }), { terminalRows: 28 });
+  assert.match(middle, /焦点邻域|邻域/);
+  assert.match(middle, /上游/);
+  assert.match(middle, /下游/);
+  assert.match(middle, /├─|└─/);
+  assert.match(middle, /01-done\.md|✓01|✓ 01/);
+  assert.match(middle, /03-blocked\.md|·03|· 03/);
+  assert.match(middle, /◀焦点|02-ready/);
+  assert.doesNotMatch(middle, /已降级/);
+  // Single-line clue chain must not be the only neighborhood body.
+  const neighborhoodBlock = middle.slice(middle.indexOf('焦点邻域'));
+  const bodyLines = neighborhoodBlock.split('\n').filter((l) => l.trim());
+  assert.ok(bodyLines.length >= 4, `expected multi-line edges, got:\n${neighborhoodBlock}`);
+});
+
+test('short terminal: neighborhood degrades with visible 已降级', () => {
+  const middle = renderMiddlePanel(snapWithBoard({
+    status: 'idle',
+    slot: null,
+  }), { terminalRows: 12 });
+  assert.match(middle, /焦点邻域|邻域/);
+  assert.match(middle, /已降级/);
+  // Compact clue still keeps orientation.
+  assert.match(middle, /──►|上游|下游/);
+});
+
+test('shell tall vs short: edges vs 已降级 via terminalRows', () => {
+  const snap = snapWithBoard({ status: 'idle', slot: null, autoAdvance: false });
+  const tall = renderToString(createElement(DispatchShell, {
+    snap,
+    terminalRows: 32,
+  }));
+  assert.match(tall, /焦点邻域|邻域/);
+  assert.match(tall, /├─|└─|上游/);
+  assert.doesNotMatch(tall, /已降级/);
+
+  // 18 rows → compact layout (< NEIGHBORHOOD_EDGES_MIN_ROWS=22) but still enough chrome for 已降级.
+  const short = renderToString(createElement(DispatchShell, {
+    snap,
+    terminalRows: 18,
+  }));
+  assert.match(short, /已降级/);
 });
