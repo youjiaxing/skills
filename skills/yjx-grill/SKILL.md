@@ -6,17 +6,9 @@ disable-model-invocation: true
 
 Stress-test requirements and system designs rapidly by pruning the decision tree. Minimize human cognitive load: inquire only about root architectural decisions, bundle visible defaults, and turn the discussion into a compact alignment artifact that exposes confirmed behavior, inferred policies, and their exact technical projection rather than a narrative prose summary.
 
-## Design Intent (Preserve When Revising This Skill)
+## Maintenance
 
-This skill exists because a long requirements discussion can feel aligned while the agent and user still hold different implementation models; the mismatch is then discovered only after code is written, during review. Its primary outcome is verified shared intent before implementation, not fewer questions, faster completion, documentation, or an implementation plan.
-
-Preserve these invariants in any revision:
-- Optimize for the user's verification bandwidth and the visibility of agent inference together. Reducing questions by hiding assumptions recreates the original failure.
-- Use fast-forward pruning only when every material attached policy remains visible as agent-inferred and individually adjustable.
-- Keep user-confirmed behavior physically separate from agent-inferred baselines; acceptance never changes provenance or weight.
-- Let the user verify behavior and state changes before reading their technical projection. The contract makes the agent's intended implementation model precise enough to challenge before code exists.
-- Prefer the smallest artifact that accounts for every material behavior and policy. Concision may remove repetition and trivia, never unresolved meaning or decision provenance.
-- End at explicit confirmation of the active slice. Writing code, producing downstream planning artifacts, or broadening the confirmed scope are separate work.
+When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MAINTENANCE.md) first. It contains the skill's design metadata and anti-drift rules; it is not needed for ordinary `/yjx-grill` execution.
 
 ## 1. Fact Autonomy (Never Ask Knowable Facts)
 
@@ -50,17 +42,20 @@ Part 3 is the exact technical projection of the aligned L1 behavior and visible 
 
 - **Batch Discipline**: Keep question batches compact (typically 1 to 3 questions per round to avoid cognitive fatigue); wait for the user's reply before proceeding.
 - **Format**: Every question must be multiple-choice with 1-based numbered options.
-  - **Option 1 (Always Recommended)**: The best fit for current repository conventions and L1 decisions already confirmed in this slice. **MUST state the concrete retry, fallback, threshold, and failure-handling choices that will also apply if the user selects this option.**
+  - Present each option in up to three parts, in this order: **Core decision**, **Key assumptions**, and **Supporting policies**. Omit empty parts.
+  - **Option 1**: Recommend the approach that best fits current repository conventions and L1 decisions already confirmed in this slice. The recommendation settles the current question and adopts attached policies as agent-inferred baselines; it does not make those policies user-confirmed and does not require automatic follow-up questions for each one.
   - **Options 2+**: Alternative approaches, accompanied by clear counter-reasons (why they are not preferred).
-  - **Localization**: Keep this skill file in English. At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text in the user's conversational language. Keep internal tier names such as L1/L2 out of user-facing output. Label attached policies in plain language, for example `Also applied with this option`.
+  - **Review priority**: Mark a material assumption with `❗️` when getting it wrong could change authority, ownership, state meaning or transition, cross-boundary behavior, permission, an irreversible effect, or the protocol shape. Mark other material assumptions that deserve early review with `⚠️`. These markers prioritize attention; they do not create another question.
+  - **Localization**: Keep this skill file in English. At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate the three option-part labels into the user's language. Keep internal tier names such as L1/L2/P0/P1 out of user-facing output.
 
 Example format:
 
 ```markdown
 ### ❓ Q1: <Decision Title>
 1. **<Recommended Approach>** (Recommended)
-   * **Reason**: <Best fit for current repo conventions>
-   * **Also applied with this option**: <Explicit retry/fallback/threshold/failure policies that come with choosing 1>
+   * **Core decision**: <The behavior selected by this question>
+   * **❗️Key assumptions**: <Material assumptions that deserve first review>
+   * **Supporting policies**: <Concrete retry/fallback/threshold/failure policies>
 2. **<Alternative Approach A>**
    * **Counter-reason**: <Why this is not preferred>
 ```
@@ -89,6 +84,7 @@ Translate all artifact headings, labels, and explanatory text into the user's co
 
 2. **Agent-Inferred Baselines (Individually Adjustable)**:
    Group the concrete policies inferred by the agent in the same business order as the behavior model. Give each policy a stable local identifier so the user can revise one item without reopening the slice.
+   - Classify material items by review priority. Put items whose mistake could change authority, ownership, state meaning or transition, cross-boundary behavior, permission, an irreversible effect, or the protocol shape first and mark them with `❗️`. Put other material items that deserve early review next and mark them with `⚠️`. Keep remaining material items after them without a marker. These markers change presentation order only; they do not change provenance or create follow-up questions.
    - For each item, state the concrete baseline and the resulting observable or verifiable consequence. Include implementation impact only when it adds distinct information.
    - Expose material limits, ordering, retries, fallbacks, concurrency, lifecycle, failure handling, and performance policies. Do not hide them inside the technical projection.
    - These remain agent-inferred even when accepted with a recommended option; they are the default implementation baseline, not user-originated decisions.
