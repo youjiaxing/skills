@@ -19,6 +19,7 @@ npx skills add youjiaxing/skills --skill yjx-discuss
 ## 已有 skills
 
 - `yjx-discuss`：通过简短、逐问、敢于纠错的讨论收敛想法，再形成总结。
+- `yjx-grill`：通过决策树剪枝、显式区分用户决策与 Agent 推断，以及实现前的四部分对齐产物，高效校验需求理解。
 - `yjx-local-tracker-setup`：在 Matt Pocock Local Markdown tracker 上增量启用 `Closed` 完成真源和机器配置，默认只预览。
 - `yjx-local-kanban`：只读输出 Local Markdown implementation issues 的人类看板、完整 JSON 依赖图和 Mermaid。
 - `yjx-local-ralph`：从 Local Markdown frontier 手动确认并启动单张 issue，完成后停止；依赖 `yjx-local-kanban`。
