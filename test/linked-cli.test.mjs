@@ -8,9 +8,7 @@ import test from 'node:test';
 const repository = path.resolve(import.meta.dirname, '..');
 const skillsRoot = path.join(repository, 'skills');
 const commands = [
-  ['yjx-local-tracker-setup', 'scripts/setup-local-tracker.mjs'],
   ['yjx-local-kanban', 'scripts/issue-board.mjs'],
-  ['yjx-local-ralph', 'scripts/select-issue.mjs'],
 ];
 
 test('CLI scripts run when installed through a directory link', async (t) => {

@@ -282,4 +282,4 @@ Mermaid 是完整图投影，不是执行候选接口。
 - 不修改 issue、Status、Closed、Comments 或依赖边；
 - 不创建、关闭或重写 issues；
 - 不选择或推荐下一张 issue；
-- 不替代 `/wayfinder`、`to-spec`、`to-tickets`、`implement`、项目 implementation skill 或 `yjx-local-ralph`。
+- 不替代 `/wayfinder`、`to-spec`、`to-tickets`、`implement` 或项目 implementation skill。

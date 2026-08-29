@@ -7,10 +7,6 @@
   "engines": {
     "node": ">=20"
   },
-  "bin": {
-    "issue-crusher": "./skills/yjx-issue-crusher/scripts/cli.mjs",
-    "ic": "./skills/yjx-issue-crusher/scripts/cli.mjs"
-  },
   "scripts": {
     "init": "node scripts/link-skills.mjs init",
     "link": "node scripts/link-skills.mjs link",
@@ -20,9 +16,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "ink": "^6.8.0",
-    "koffi": "^3.1.4",
-    "react": "^19.2.8",
     "yaml": "^2.8.1"
   }
 }
