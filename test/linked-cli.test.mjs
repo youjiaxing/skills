@@ -9,7 +9,6 @@ const repository = path.resolve(import.meta.dirname, '..');
 const skillsRoot = path.join(repository, 'skills');
 const commands = [
   ['yjx-local-kanban', 'scripts/issue-board.mjs'],
-  ['yjx-local-ralph', 'scripts/select-issue.mjs'],
   ['yjx-gh-kanban', 'scripts/issue-board.mjs'],
   ['yjx-gh-kanban', 'scripts/resolve-board-script.mjs'],
   ['yjx-gh-ralph', 'scripts/select-issue.mjs'],

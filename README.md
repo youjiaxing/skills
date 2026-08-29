@@ -20,27 +20,23 @@ npx skills add youjiaxing/skills --skill yjx-discuss
 
 - `yjx-discuss`：通过简短、逐问、敢于纠错的讨论收敛想法，再形成总结。
 - `yjx-grill`：通过决策树剪枝、显式区分用户决策与 Agent 推断，以及实现前的四部分对齐产物，高效校验需求理解。
-- `yjx-local-tracker-setup`：在 Matt Pocock Local Markdown tracker 上增量启用 `Closed` 完成真源和机器配置，默认只预览。
+- `yjx-local-tracker-setup`：为 Matt Pocock Local Markdown tracker 写入 `Status: resolved` 完成协议和机器配置，默认只预览。
 - `yjx-local-kanban`：只读输出 Local Markdown implementation issues 的人类看板、完整 JSON 依赖图和 Mermaid。
-- `yjx-local-ralph`：从 Local Markdown frontier 手动确认并启动单张 issue，完成后停止；依赖 `yjx-local-kanban`。
 - `yjx-gh-kanban`：只读输出 **GitHub Issues** 人类看板（LEGEND / 依赖树 / NOW）与 `--json` / `--agent` / `--ready-only` 机器契约；通过 `gh` 拉数，脚本路径可从常见 Agent skills 根发现。
 - `yjx-gh-ralph`：从 GitHub Issues READY 池手动确认并启动单张 issue；默认推荐 board `next`，确认后走 implement、验证后自动 commit，并遵守项目 issue-tracker 收尾；**禁止 auto-run / 连续多票**。依赖同根 `yjx-gh-kanban`。
-- `yjx-issue-crusher`：issue 串行接力编排器（Chain Run + **Ink 全屏**调度 TUI；Worker 独立前台窗）。`npm link` 后短命令 `ic <feature>` / `issue-crusher`。**全屏默认不自动开 Worker**（Enter 开始；`s` 切换「自动开下一张」）；`--once` 等非全屏仍可一拍尝试开票。合同与用法见该 skill 的 `SKILL.md`；local-md 软依赖同根 `yjx-local-kanban`；交互全屏依赖 monorepo 根的 **Ink + React**。
 
 ### Local Markdown tracker 组合
 
-先通过 Matt Pocock 的 `setup-matt-pocock-skills` 为项目选择 Local Markdown tracker，再安装并运行 `yjx-local-tracker-setup`。该 skill 会生成 `docs/agents/local-tracker.json`，并可在人工确认后为旧 implementation issues 补 `Closed: false`。
+先通过 Matt Pocock 的 `setup-matt-pocock-skills` 为项目选择 Local Markdown tracker，再安装并运行 `yjx-local-tracker-setup`。该 skill 会生成 `docs/agents/local-tracker.json`，并在人工确认后将约束文档对齐到 `Status: resolved` 完成语义；`Closed: true` 仅作为 legacy 只读兼容。
 
 典型安装：
 
 ```bash
 npx skills add youjiaxing/skills --skill yjx-local-tracker-setup
 npx skills add youjiaxing/skills --skill yjx-local-kanban
-npx skills add youjiaxing/skills --skill yjx-local-ralph
-npx skills add youjiaxing/skills --skill yjx-issue-crusher
 ```
 
-`yjx-local-tracker-setup` 和 `yjx-local-kanban` 可独立安装；`yjx-local-ralph` 与 `yjx-issue-crusher`（local-md 适配读图）都必须和 `yjx-local-kanban` 安装在同一个 Agent skills 根目录。脚本要求 Node.js 20 或更高版本，**不**依赖 Claude API、Claude Agent SDK 或 Claude Code 专有运行时，因此可由支持 Agent Skills 和 shell 命令的不同 Agent 使用。
+`yjx-local-tracker-setup` 和 `yjx-local-kanban` 可独立安装。脚本要求 Node.js 20 或更高版本，**不**依赖 Claude API、Claude Agent SDK 或 Claude Code 专有运行时，因此可由支持 Agent Skills 和 shell 命令的不同 Agent 使用。
 
 ### GitHub Issues tracker 组合
 
@@ -83,12 +79,11 @@ node <kanban-skill-dir>/scripts/resolve-board-script.mjs
 | 作用域 | feature 目录 | 默认整仓；可选 `--parent` |
 | 人类输出 | LEGEND / 依赖树 / NOW | 同构版式（符号语义对齐） |
 | 机器输出 | 完整 JSON 图 / Mermaid | `--json`（含 `next`/`ready`）/ `--agent` |
-| 调度伙伴 | `yjx-local-ralph` | `yjx-gh-ralph`（手动单票，无 auto-run） |
+| 调度伙伴 | — | `yjx-gh-ralph`（手动单票，无 auto-run） |
 
 依赖分层：
 
-- `yjx-local-tracker-setup` / `yjx-local-kanban` / `yjx-local-ralph` / `yjx-gh-kanban` / `yjx-gh-ralph`：以 **Node 标准库**为主（无 Ink）。`yjx-gh-kanban` / `yjx-gh-ralph` 另需本机 `gh`。
-- `yjx-issue-crusher`：编排核心仍以标准库为主；**交互 dual-TTY 全屏调度与启动选单**需要 monorepo 根依赖 **Ink + React**（`npm install` 后使用）。全屏进门不自动 spawn；`--once` / 非 TTY 冒烟路径不挂全屏，行为见该 skill `SKILL.md`。
+- `yjx-local-tracker-setup` / `yjx-local-kanban` / `yjx-gh-kanban` / `yjx-gh-ralph`：以 **Node 标准库**为主（无 Ink）。`yjx-gh-kanban` / `yjx-gh-ralph` 另需本机 `gh`。
 
 ## 开发者设置
 
