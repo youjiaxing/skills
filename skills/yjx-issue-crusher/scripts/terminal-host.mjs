@@ -100,10 +100,6 @@ function defaultQuoteWindowsArgs(args) {
   }).join(' ');
 }
 
-function psSingleQuote(value) {
-  return `'${String(value).replace(/'/gu, "''")}'`;
-}
-
 function appleScriptString(value) {
   return `"${String(value).replace(/\\/gu, '\\\\').replace(/"/gu, '\\"')}"`;
 }
@@ -203,20 +199,32 @@ export function createWindowsTerminalHost(options = {}) {
       const exe = resolveExe(command);
       const argLine = quoteArgs(args);
       const pidFile = path.join(os.tmpdir(), `yjx-ic-pid-${randomUUID()}.txt`);
+      // 载荷经环境变量注入(Windows env 为 UTF-16,不经过「脚本文件按系统代码页解码」):
+      // exe / cwd / Arguments(可能含中文路径与多行 prompt)不再写进 .ps1 字面量,
+      // 避免中文系统(CP936)下 PowerShell 5.1 把 UTF-8 脚本读成 GBK 乱码。
+      // 与 real-launcher.spawnWindowsForeground 的 YJX_LAUNCH_* 约定保持一致。
       const scriptBody = [
         '$ErrorActionPreference = \'Stop\'',
         '$psi = New-Object System.Diagnostics.ProcessStartInfo',
-        `$psi.FileName = ${psSingleQuote(exe)}`,
-        `$psi.Arguments = ${psSingleQuote(argLine)}`,
-        `$psi.WorkingDirectory = ${psSingleQuote(cwd)}`,
+        '$psi.FileName = $env:YJX_LAUNCH_CMD',
+        '$psi.Arguments = $env:YJX_LAUNCH_ARGSTR',
+        '$psi.WorkingDirectory = $env:YJX_LAUNCH_CWD',
         '$psi.UseShellExecute = $false',
         '$p = [System.Diagnostics.Process]::Start($psi)',
         'if (-not $p) { throw \'Process.Start returned null\' }',
-        `Set-Content -LiteralPath ${psSingleQuote(pidFile)} -Value $p.Id -Encoding ascii`,
+        'Set-Content -LiteralPath $env:YJX_LAUNCH_PIDFILE -Value $p.Id -Encoding ascii',
         '$p.WaitForExit()',
         'exit $p.ExitCode',
         '',
       ].join('\n');
+      const launchEnv = {
+        ...process.env,
+        ...(openOptions.env || {}),
+        YJX_LAUNCH_CMD: exe,
+        YJX_LAUNCH_CWD: cwd,
+        YJX_LAUNCH_ARGSTR: argLine,
+        YJX_LAUNCH_PIDFILE: pidFile,
+      };
       const scriptFile = writeTempFile('yjx-ic-wt', scriptBody, '.ps1');
       try {
         const wtArgs = [
@@ -229,7 +237,7 @@ export function createWindowsTerminalHost(options = {}) {
           '-ExecutionPolicy', 'Bypass',
           '-File', scriptFile,
         ];
-        const result = runWt(wtArgs, { cwd, env: openOptions.env });
+        const result = runWt(wtArgs, { cwd, env: launchEnv });
         if (result.error && result.status == null) {
           throw new Error(`Windows Terminal tab open failed: ${result.error.message}`);
         }

@@ -136,9 +136,16 @@ export function buildWorkerInvocation(request = {}, options = {}) {
     }
 
     // AFK observable morph: headless + streamable JSON so adapters can map end.
+    //
+    // Grok 0.2+: `-p`/`--single <PROMPT>` is value-taking — the prompt MUST be
+    // the next argv token after `-p`. Putting `-p` before other flags makes the
+    // CLI parse `--output-format` as the missing prompt and exit immediately.
+    // Claude: `-p`/`--print` is a boolean switch; prompt stays a trailing positional.
+    const prompt = request.initialPrompt ?? '';
+
     if (morph === 'observable') {
       if (runtime === 'grok') {
-        args.push('-p', '--output-format', 'streaming-json');
+        args.push('--output-format', 'streaming-json');
       } else {
         // stream-json keeps NDJSON lines for the watcher; result envelope still maps.
         args.push('-p', '--output-format', 'stream-json');
@@ -151,8 +158,12 @@ export function buildWorkerInvocation(request = {}, options = {}) {
         args.push('--session-id', sessionId);
       }
       appendModelEffort(runtime, args, model, effort);
-      const prompt = request.initialPrompt ?? '';
-      if (prompt) args.push(prompt);
+      if (morph === 'observable') {
+        // Value-taking: always attach prompt immediately after -p (empty string ok).
+        args.push('-p', prompt);
+      } else if (prompt) {
+        args.push(prompt);
+      }
     } else {
       // claude: title via -n; working directory is spawn cwd (no --cwd flag).
       if (title) {
@@ -162,7 +173,6 @@ export function buildWorkerInvocation(request = {}, options = {}) {
         args.push('--session-id', sessionId);
       }
       appendModelEffort(runtime, args, model, effort);
-      const prompt = request.initialPrompt ?? '';
       if (prompt) args.push(prompt);
     }
   }

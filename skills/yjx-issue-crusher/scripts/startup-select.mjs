@@ -271,6 +271,14 @@ export async function runFullscreenSelect({
     throw new Error('startup select requires at least one item');
   }
 
+  // Same automatic color path as dispatch fullscreen (`ic` must not need FORCE_COLOR).
+  try {
+    const { ensureFullscreenColor } = await import('./dispatch-fullscreen.mjs');
+    ensureFullscreenColor(output);
+  } catch {
+    // Color is best-effort; select must still run.
+  }
+
   const resultRef = {
     current: { cancelled: true, value: null },
   };

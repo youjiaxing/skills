@@ -1,5 +1,5 @@
 /**
- * Model / effort catalog for fullscreen `o` selection (ticket 03).
+ * Model / effort catalog for fullscreen model/effort (`m`) selection.
  *
  * Orchestrator does **not** own a full universe of models. Lists are
  * hints + passthrough strings:
@@ -237,7 +237,7 @@ export function modelItemsFromIds(ids) {
 }
 
 /**
- * Resolve the model list for the fullscreen `o` flow.
+ * Resolve the model list for the fullscreen model/effort (`m`) flow.
  *
  * - claude → static aliases + 运行时默认 (discoverer ignored)
  * - grok → injectable discoverModels(); default = createGrokModelsDiscoverer()

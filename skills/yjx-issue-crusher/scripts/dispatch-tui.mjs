@@ -16,6 +16,7 @@ import {
   parseDispatchCommand,
 } from './dispatch-commands.mjs';
 import {
+  ensureFullscreenColor,
   runFullscreenDispatch,
   shouldUseFullscreenDispatch,
 } from './dispatch-fullscreen.mjs';
@@ -170,8 +171,10 @@ export async function runDispatchTui({
   });
 
   // Interactive dual-TTY: Ink fullscreen shell (ticket 01). --once / non-TTY stay printable.
-  // discoverModels is only meaningful on the fullscreen `o` path (never --once).
+  // discoverModels is only meaningful on the fullscreen model/effort (`m`) path (never --once).
   if (useFullscreen && maxTicks === Infinity) {
+    // Automatic color for any terminal running `ic` — no FORCE_COLOR required.
+    ensureFullscreenColor(output);
     return runFullscreenDispatch({
       surface,
       input,

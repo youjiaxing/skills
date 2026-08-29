@@ -1,14 +1,21 @@
 /**
- * Ink fullscreen dispatch shell (tickets 01–05).
+ * Ink fullscreen dispatch shell (tickets 01–05 + 20260807 three-band UX).
  *
- * Interactive TTY path: alternate-screen layout with regions
- * 顶栏 / 中部 / 当前槽 / 底栏. Keyboard drives the same Dispatch Surface
+ * Interactive TTY path: alternate-screen layout with **three bands**
+ * 顶带 / 中带 / 底带. Keyboard drives the same Dispatch Surface
  * actions as the printable TUI (`m` mode dial, `f` force, `r` resume,
  * `y`/`n` HITL, `s` toggle auto-open-next, `t` tick, `q` quit;
  * `j`/`k`/digits select executable list highlight; **Enter** starts
  * highlighted (or board default). Orchestration contract is unchanged:
  * board is read-only, single slot, dual-condition handoff still owned by
  * Chain Run / surface.tick. No graph dispatch, no embedded Worker terminal.
+ *
+ * Ready (idle + empty slot): top shows 可开干/暂无票 + 「下一步」主 CTA;
+ * edge matrix uses operator display names (进行中 / [f] 待收尾 / 自动收尾中 /
+ * [r] 需恢复 / 无法恢复 / [y/n] 待确认 / 已停链 …) with matching CTA lines.
+ * Middle is the work object: default **list + focus neighborhood** (full-board
+ * roster + direct up/down of focus); optional `g` second view = global graph.
+ * Empty slot does **not** occupy a permanent band.
  *
  * Ticket 05 polish: full-height column layout (middle flexGrow), product
  * copy without debug bracket labels, primary/secondary field hierarchy,
@@ -19,12 +26,56 @@
  * discoverable after wrap, footer pins via stretch middle.
  */
 
+import { createRequire } from 'node:module';
 import { createElement, useEffect, useRef, useState } from 'react';
 import { Box, Text, render, useApp, useInput } from 'ink';
+import chalk from 'chalk';
 
 import { handleDispatchCommand } from './dispatch-commands.mjs';
+
+const require = createRequire(import.meta.url);
+/** @type {boolean | null} */
+let windowsVtEnabled = null;
+
+/**
+ * Load koffi from monorepo root (skill scripts have no local node_modules).
+ * Walks parents of this file until package.json can resolve `koffi`.
+ * @returns {typeof import('koffi')}
+ */
+function loadKoffi() {
+  try {
+    return require('koffi');
+  } catch {
+    // continue walk
+  }
+  const pathMod = require('node:path');
+  const { createRequire: createReq } = require('node:module');
+  const { fileURLToPath } = require('node:url');
+  let dir = pathMod.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i += 1) {
+    const pkg = pathMod.join(dir, 'package.json');
+    try {
+      return createReq(pkg)('koffi');
+    } catch {
+      const parent = pathMod.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  throw new Error('koffi is required for Windows console color (install monorepo deps)');
+}
+
 import {
+  formatIssueListRow,
+  issueBoardStatusLabelZh,
+  issueMark,
+  issueTypeLabel,
+  listExecutableIssueIds,
+  openBlockersById,
   renderDependencyGraph,
+  renderFocusNeighborhood,
+  resolveFocusIssueId,
+  resolveNeighborhoodLayout,
   statusLabelZh,
 } from './dependency-graph.mjs';
 import {
@@ -33,6 +84,231 @@ import {
   degradedModelItems,
   resolveModelItems,
 } from './model-catalog.mjs';
+
+/** Three-band short chrome titles (prototype character-grid parity). */
+export const BAND_TITLE_TOP = '处境 · 主 CTA';
+export const BAND_TITLE_MIDDLE = '工作对象';
+export const BAND_TITLE_FOOTER = '键位';
+
+/**
+ * Enable Windows console VT processing so ANSI SGR (colors) actually paint.
+ * Classic conhost / CMD leave VT off → escape codes are ignored and the frame
+ * looks monochrome even when Ink emits cyan/yellow/gray.
+ *
+ * Primary path: in-process koffi → kernel32 SetConsoleMode on this console (cmd-verified). Fallback: PowerShell AttachConsole helper.
+ *
+ * Best-effort: never throws; returns whether SetConsoleMode reported success.
+ *
+ * @returns {boolean}
+ */
+export function enableWindowsVirtualTerminal() {
+  if (process.platform !== 'win32') return false;
+  if (windowsVtEnabled != null) return windowsVtEnabled;
+
+  // Prefer in-process kernel32 via koffi (same console as this Node).
+  // PowerShell child helpers often fail under classic CMD (no attachable console).
+  try {
+    const koffi = loadKoffi();
+    const kernel32 = koffi.load('kernel32.dll');
+    // int64 handles: void* truncation breaks GetConsoleMode (GLE 6) on Win64.
+    const GetStdHandle = kernel32.func('int64 __stdcall GetStdHandle(int nStdHandle)');
+    const GetConsoleMode = kernel32.func(
+      'bool __stdcall GetConsoleMode(int64 hConsoleHandle, _Out_ uint32 *lpMode)',
+    );
+    const SetConsoleMode = kernel32.func(
+      'bool __stdcall SetConsoleMode(int64 hConsoleHandle, uint32 dwMode)',
+    );
+    const STD_OUTPUT_HANDLE = -11;
+    const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x4;
+    const DISABLE_NEWLINE_AUTO_RETURN = 0x8;
+    const handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!handle) {
+      windowsVtEnabled = false;
+      return false;
+    }
+    const modeBox = [0];
+    if (!GetConsoleMode(handle, modeBox)) {
+      windowsVtEnabled = false;
+      return false;
+    }
+    const next = (Number(modeBox[0]) || 0)
+      | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+      | DISABLE_NEWLINE_AUTO_RETURN;
+    windowsVtEnabled = Boolean(SetConsoleMode(handle, next));
+    return windowsVtEnabled;
+  } catch {
+    // Fall through to PowerShell AttachConsole helper.
+  }
+
+  try {
+    const nodePid = Number(process.pid);
+    const script = [
+      'Add-Type -TypeDefinition @"',
+      'using System;',
+      'using System.Runtime.InteropServices;',
+      'public static class IcVt {',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool FreeConsole();',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint dwProcessId);',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetStdHandle(int n);',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetConsoleMode(IntPtr h, out uint m);',
+      '  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleMode(IntPtr h, uint m);',
+      '}',
+      '"@',
+      `\$target = [uint32]${nodePid}`,
+      '[void][IcVt]::FreeConsole()',
+      'if (-not [IcVt]::AttachConsole(\$target)) { Write-Output "fail-attach"; exit 0 }',
+      '\$h = [IcVt]::GetStdHandle(-11)',
+      '\$m = [uint32]0',
+      'if (-not [IcVt]::GetConsoleMode(\$h, [ref]\$m)) { Write-Output "fail-get"; exit 0 }',
+      '\$n = \$m -bor 4 -bor 8',
+      'if ([IcVt]::SetConsoleMode(\$h, \$n)) { Write-Output "ok" } else { Write-Output "fail-set" }',
+    ].join('\n');
+    const { spawnSync } = require('node:child_process');
+    const result = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    windowsVtEnabled = /\bok\b/.test(String(result.stdout || ''));
+    return windowsVtEnabled;
+  } catch {
+    windowsVtEnabled = false;
+    return false;
+  }
+}
+
+/**
+ * Test helper: clear the cached VT probe so a later call re-runs.
+ * @returns {void}
+ */
+export function resetWindowsVirtualTerminalCache() {
+  windowsVtEnabled = null;
+}
+
+/**
+ * Ink/chalk often probe color support as level 0 under ConPTY / classic CMD
+ * even when stdout is a TTY, which strips role colors to plain text. Force a
+ * usable color level + Windows VT so character-grid roles stay scannable.
+ * Respect explicit NO_COLOR; never force for non-TTY sinks.
+ *
+ * @param {NodeJS.WriteStream | { isTTY?: boolean } | null | undefined} stream
+ * @returns {number} chalk level after ensure (0 = monochrome)
+ */
+export function ensureFullscreenColor(stream = process.stdout) {
+  // Explicit opt-out only. Operators must never need to export FORCE_COLOR for `ic`.
+  if (process.env.NO_COLOR != null && process.env.NO_COLOR !== '') {
+    return chalk.level;
+  }
+  // Treat missing isTTY as non-color only when explicitly false; some hosts omit the flag.
+  if (stream && stream.isTTY === false) {
+    return chalk.level;
+  }
+  if (!stream) {
+    return chalk.level;
+  }
+  // Windows: turn on VT before relying on SGR, or colors are emitted but invisible.
+  // This is automatic inside `ic` fullscreen — no manual FORCE_COLOR.
+  if (process.platform === 'win32') {
+    enableWindowsVirtualTerminal();
+  }
+  // 3 = truecolor-capable host; named Ink colors still work at 2+.
+  // Always raise on dual-TTY — do not trust the initial probe (often 0 on ConPTY/CMD).
+  // Mutate the shared chalk instance Ink imports so colors paint without env setup.
+  chalk.level = Math.max(Number(chalk.level) || 0, 3);
+  if (process.env.FORCE_COLOR == null || process.env.FORCE_COLOR === '') {
+    process.env.FORCE_COLOR = '3';
+  }
+  return chalk.level;
+}
+
+/**
+ * Role → Ink color name map (intent only; not a locked hex table).
+ * @param {string | null | undefined} role
+ * @returns {string | undefined}
+ */
+export function ctaColorForRole(role) {
+  if (role === 'startable') return 'cyan';
+  if (role === 'running') return 'yellow';
+  if (role === 'edge') return 'yellow';
+  if (role === 'stop') return 'red';
+  if (role === 'empty') return undefined;
+  return 'cyan';
+}
+
+/**
+ * Presentational style for one middle-band line (role color / dim).
+ * Pure — unit-testable without Ink mount.
+ *
+ * @param {string} line
+ * @returns {{ bold?: boolean, color?: string, dimColor?: boolean }}
+ */
+export function styleMiddleLine(line) {
+  const text = String(line ?? '');
+  if (text.includes(BAND_TITLE_MIDDLE)) return { bold: true, color: 'blue' };
+  if (/◀选中/.test(text)) return { bold: true, color: 'cyan' };
+  if (/◀当前槽/.test(text)) return { bold: true, color: 'green' };
+  if (/←看板默认/.test(text)) return { bold: true, color: 'cyan' };
+  if (/◀焦点/.test(text)) return { bold: true, color: 'white' };
+  // Prefer explicit gray over dimColor: ConPTY/Ink often omit SGR 2, so depth
+  // must ride a real foreground color to stay visible.
+  if (/^\s+session:/.test(text)) return { color: 'gray' };
+  if (/图例:|（其余 |（g |（无）|只读/.test(text)) {
+    return { color: 'gray' };
+  }
+  if (/^  (上游|焦点|下游)$/.test(text)) {
+    return { bold: true, color: 'white' };
+  }
+  if (/现在可执行:|焦点邻域|依赖图|全局/.test(text)) {
+    return { bold: true, color: 'white' };
+  }
+  // Dense list / graph body: keep readable white, not pure default gray soup.
+  if (/^\s*[★·✓▶]/.test(text) || /^\s*[├└│]/.test(text) || /──►/.test(text)) {
+    return { color: 'white' };
+  }
+  return { color: 'white' };
+}
+
+/**
+ * Presentational style for one top-band line.
+ * @param {string} line
+ * @param {number} index
+ * @param {string | null | undefined} ctaRole
+ * @returns {{ bold?: boolean, color?: string, dimColor?: boolean }}
+ */
+export function styleTopLine(line, index, ctaRole) {
+  const text = String(line ?? '');
+  if (/^下一步：/.test(text)) {
+    return { bold: true, color: ctaColorForRole(ctaRole) };
+  }
+  if (index === 0 && text.includes(BAND_TITLE_TOP)) {
+    return { bold: true, color: 'blue' };
+  }
+  if (/^状态:/.test(text) || text.includes('状态:')) {
+    return { bold: true, color: 'white' };
+  }
+  return { bold: true };
+}
+
+/**
+ * Footer key style: hot keys share CTA emphasis; others sink.
+ * @param {{ hot?: boolean, dim?: boolean, id?: string }} item
+ * @param {string | null | undefined} ctaRole
+ * @returns {{ bold?: boolean, color?: string, dimColor?: boolean }}
+ */
+export function styleFooterItem(item, ctaRole) {
+  const isHot = Boolean(item?.hot) && !item?.dim;
+  if (isHot) {
+    return { bold: true, color: ctaColorForRole(ctaRole) || 'green' };
+  }
+  // gray = visible depth on hosts that drop dim (SGR 2).
+  return { color: 'gray' };
+}
+
 import {
   applyStartupSelectKey,
   mapStartupSelectKey,
@@ -55,7 +331,7 @@ const DEFAULT_FIELD_MAX = 48;
 /** Top-bar secondary field budget (feature / long status fragments). */
 const TOP_FIELD_MAX = 40;
 /**
- * Minimum usable shell height (rows). Below this, fall back so four regions
+ * Minimum usable shell height (rows). Below this, fall back so three bands
  * still fit; Ink percent height cannot recover a content-shrunk root.
  */
 const SHELL_HEIGHT_FLOOR = 12;
@@ -154,16 +430,288 @@ export function drainPendingInput(input) {
   return drained;
 }
 
+/** Board statuses that are Type values when role is absent (wayfinder-like). */
+const WAYFINDER_TYPE_AS_STATUS = new Set(['research', 'prototype', 'grilling', 'task']);
+
+/**
+ * Executable rows for Ready projection (same order as middle list).
+ * Pure — snapshot board only; never spawns. Shared by CTA and keyboard selection.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {Array<{ id: string, title: string }>}
+ */
+function readyExecutables(snap) {
+  if (!snap?.board?.issues) return [];
+  try {
+    return renderDependencyGraph({
+      issues: snap.board.issues,
+      slotIssueId: snap.slot?.issueId ?? null,
+    }).executable;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether a board issue is wayfinder-like (Enter-startable, not auto-impl default).
+ * Aligns with dependency-graph + classifyEntryClass shape (snapshot-only).
+ *
+ * @param {object | null | undefined} issue
+ * @returns {boolean}
+ */
+function isWayfinderBoardIssue(issue) {
+  if (!issue) return false;
+  if (issue.entryClass === 'wayfinder') return true;
+  if (issue.workflow === 'wayfinder') return true;
+  if (issue.type != null && String(issue.type).trim() !== '') return true;
+  const status = issue.status ?? issue.statusRole ?? null;
+  return WAYFINDER_TYPE_AS_STATUS.has(status);
+}
+
+/**
+ * Board default Enter target from snapshot (mirrors resolveStartIssue null id):
+ * first auto-ready **impl** among executables, else first wayfinder executable.
+ * Pure board projection — no tracker I/O.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {{ id: string, title: string } | null}
+ */
+export function boardDefaultExecutable(snap) {
+  const issues = snap?.board?.issues;
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  let execIds;
+  try {
+    execIds = listExecutableIssueIds(issues);
+  } catch {
+    return null;
+  }
+  if (execIds.length === 0) return null;
+  const byId = new Map(issues.map((issue) => [issue.id, issue]));
+  const execIssues = execIds.map((id) => byId.get(id)).filter(Boolean);
+
+  const byNumber = (left, right) => {
+    const ln = Number.parseInt(String(left.id || '').replace(/\.md$/i, ''), 10);
+    const rn = Number.parseInt(String(right.id || '').replace(/\.md$/i, ''), 10);
+    if (Number.isFinite(ln) && Number.isFinite(rn) && ln !== rn) return ln - rn;
+    return String(left.id).localeCompare(String(right.id));
+  };
+
+  const pick = (list) => {
+    if (!list.length) return null;
+    const sorted = [...list].sort(byNumber);
+    const issue = sorted[0];
+    return { id: issue.id, title: issue.title ?? issue.id };
+  };
+
+  return pick(execIssues.filter((issue) => !isWayfinderBoardIssue(issue)))
+    || pick(execIssues.filter((issue) => isWayfinderBoardIssue(issue)))
+    || pick(execIssues);
+}
+
+/**
+ * Ready-path operator status display name (not internal idle id).
+ * - idle + has executable → 可开干
+ * - idle + no executable → 暂无票
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string | null} null when not Ready idle
+ */
+function readyStatusDisplayName(snap) {
+  if (!snap || snap.status !== 'idle') return null;
+  return readyExecutables(snap).length > 0 ? '可开干' : '暂无票';
+}
+
+/**
+ * Whether needs-resume can advertise r (same gate as footer / surface.actions).
+ * @param {object | null | undefined} snap
+ * @returns {boolean}
+ */
+function resumeSessionAvailable(snap) {
+  const resume = snap?.actions?.resume;
+  if (resume?.reason === 'no-session-id') return false;
+  if (resume?.available === true) return true;
+  if (resume?.available === false) return false;
+  return Boolean(snap?.slot?.sessionId);
+}
+
+/**
+ * Operator-facing chain status display name (not internal status ids).
+ * Covers Ready + primary edge matrix from the fullscreen UX redesign.
+ * Secondary chain states (countdown / interrupted / …) return null so the
+ * status line can keep their existing distinguishability hints.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {string | null}
+ */
+export function operatorStatusDisplayName(snap) {
+  if (!snap) return null;
+
+  if (snap.status === 'error') return '启动失败';
+  if (snap.status === 'stopped') return '已停链';
+
+  const readyName = readyStatusDisplayName(snap);
+  if (readyName) return readyName;
+
+  switch (snap.status) {
+    case 'soft-stuck':
+      return '进行中';
+    case 'awaiting-worker-exit':
+      // Omitted autoAdvance projects as 开 (same as Ready CTA / top dial).
+      return snap.autoAdvance === false ? '[f] 待收尾' : '自动收尾中';
+    case 'needs-resume':
+      return resumeSessionAvailable(snap) ? '[r] 需恢复' : '无法恢复';
+    case 'needs-confirmation':
+      return '[y/n] 待确认';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Ready-path main CTA line for the top band.
+ * Templates (operator language):
+ * - has highlight → 下一步：开 {id} {title} · 按 Enter
+ * - no highlight → 下一步：开「看板默认」{id} · 按 Enter
+ * - none → 下一步：无票可开 · 刷新列表/等待
+ * autoAdvance on may suffix 自动接力开中（忽略高亮）.
+ *
+ * @param {object | null | undefined} snap
+ * @param {{ selectedIndex?: number | null }} [opts]
+ * @returns {string | null}
+ */
+export function renderReadyMainCta(snap, { selectedIndex = null } = {}) {
+  if (!snap || snap.status !== 'idle' || snap.stopped) return null;
+  const exec = readyExecutables(snap);
+  if (exec.length === 0) {
+    return '下一步：无票可开 · 刷新列表/等待';
+  }
+
+  let line;
+  const idx = selectedIndex == null ? -1 : Number(selectedIndex);
+  if (Number.isInteger(idx) && idx >= 0 && idx < exec.length) {
+    const item = exec[idx];
+    const title = item.title && item.title !== item.id
+      ? ` ${truncateDisplayField(item.title, 24)}`
+      : '';
+    line = `下一步：开 ${item.id}${title} · 按 Enter`;
+  } else {
+    const def = boardDefaultExecutable(snap) ?? exec[0];
+    line = `下一步：开「看板默认」${def.id} · 按 Enter`;
+  }
+
+  // Omitted autoAdvance projects as 开 (same as top-bar dial).
+  if (snap.autoAdvance !== false) {
+    line += ' · 自动接力开中（忽略高亮）';
+  }
+  return line;
+}
+
+/**
+ * Main CTA line for the top band (Ready + edge matrix).
+ * Phrase shape: 下一步：… · 按 X (wait states may recommend「等」).
+ * Expression only — does not redefine orchestration gates.
+ *
+ * @param {object | null | undefined} snap
+ * @param {{ selectedIndex?: number | null }} [opts]
+ * @returns {string | null}
+ */
+export function renderMainCta(snap, { selectedIndex = null } = {}) {
+  if (!snap) return null;
+
+  if (snap.status === 'error') {
+    return '下一步：查看错误 · 按 q 退出';
+  }
+  if (snap.status === 'stopped') {
+    return '下一步：链已停 · 按 q 退出或重新进入';
+  }
+
+  const ready = renderReadyMainCta(snap, { selectedIndex });
+  if (ready) return ready;
+
+  switch (snap.status) {
+    case 'soft-stuck':
+      return '下一步：等当前 Worker · 勿再 Enter 开票';
+    case 'awaiting-worker-exit':
+      return snap.autoAdvance === false
+        ? '下一步：Worker 已关票 · 按 f 强制推进'
+        : '下一步：可自动收尾 · 无需手开下一张';
+    case 'needs-resume':
+      return resumeSessionAvailable(snap)
+        ? '下一步：按 r 恢复历史会话'
+        : '下一步：无法恢复 · 无 session id';
+    case 'needs-confirmation':
+      return '下一步：按 y 同意 / n 拒绝';
+    case 'handoff-countdown': {
+      const remMs = Number(snap.handoffCountdownRemainingMs);
+      const sec = Number.isFinite(remMs)
+        ? Math.max(0, Math.ceil(remMs / 1000))
+        : null;
+      return sec != null
+        ? `下一步：${sec}s 后开下一张 · 按 c 取消`
+        : '下一步：倒计时后开下一张 · 按 c 取消';
+    }
+    case 'session-interrupted': {
+      const reason = snap.interruptReason != null && String(snap.interruptReason).trim() !== ''
+        ? String(snap.interruptReason).trim()
+        : null;
+      const resume = snap.actions?.resume;
+      const rPart = resume?.available === true
+        ? '；可按 r 挂回'
+        : resume?.reason === 'no-session-id'
+          ? '；无 session id'
+          : '';
+      return reason
+        ? `下一步：会话中断（${reason}）· 可按 f${rPart}`
+        : `下一步：会话中断 · 可按 f${rPart}`;
+    }
+    case 'awaiting-session-end':
+      return '下一步：缺会话结束信号 · 可按 f 或 Enter';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Semantic role for the main CTA (character-grid parity).
+ * Locks intent for tests / Ink styling — not RGB.
+ *
+ * - startable: Ready with tickets → Enter is the action
+ * - empty: Ready but no ticket
+ * - running: in-progress wait (soft-stuck / auto handoff wait)
+ * - edge: operator edge keys (f/r/y/n/c) or interrupted recovery
+ * - stop: stopped / error
+ *
+ * @param {object | null | undefined} snap
+ * @returns {'startable' | 'empty' | 'running' | 'edge' | 'stop' | null}
+ */
+export function mainCtaRole(snap) {
+  if (!snap) return null;
+  if (snap.status === 'error' || snap.status === 'stopped') return 'stop';
+  if (snap.status === 'idle') {
+    return readyExecutables(snap).length > 0 ? 'startable' : 'empty';
+  }
+  if (snap.status === 'soft-stuck') return 'running';
+  if (snap.status === 'awaiting-worker-exit' && snap.autoAdvance !== false) {
+    // Auto handoff in progress — wait, not a manual edge key.
+    return 'running';
+  }
+  switch (snap.status) {
+    case 'awaiting-worker-exit':
+    case 'needs-resume':
+    case 'needs-confirmation':
+    case 'handoff-countdown':
+    case 'session-interrupted':
+    case 'awaiting-session-end':
+      return 'edge';
+    default:
+      return 'running';
+  }
+}
+
 /**
  * Operator-facing status line for the top bar.
- * Edge states must stay distinguishable without reading SKILL.md:
- * - awaiting-worker-exit → wait for natural Worker exit (never auto-kill)
- * - awaiting-worker-exit + auto off → may use f after Closed
- * - awaiting-session-end → Closed/wayfinder waiting end; may use f or Enter
- * - session-interrupted → no success (death/failure/interrupted); reason summary; f
- * - handoff-countdown → seconds left; press c to cancel auto next
- * - needs-resume + r available → press r (history, not next ticket)
- * - needs-resume + no session id → explicit dead-end, no silent empty window
+ * Primary matrix uses operator display names (可开干 / 进行中 / [f] 待收尾 …).
+ * Secondary chain states keep short Chinese labels + distinguishability hints.
  *
  * @param {object | null | undefined} snap
  * @returns {string}
@@ -171,17 +719,18 @@ export function drainPendingInput(input) {
 function statusLine(snap) {
   if (!snap) return '状态: （启动中）';
   const status = snap.status;
-  const label = status ? statusLabelZh(status) : '—';
   // Avoid "已停链 [已停链]" when status is already the stopped label.
   const stoppedMark = snap.stopped && status !== 'stopped' ? ' [已停链]' : '';
 
+  const operatorName = operatorStatusDisplayName(snap);
+  if (operatorName) {
+    return `状态: ${operatorName}${stoppedMark}`;
+  }
+
+  const label = status ? statusLabelZh(status) : '—';
+
   let hint = '';
-  if (status === 'awaiting-worker-exit') {
-    // Closed + still alive: wait natural exit / session-end signal (never auto-kill).
-    hint = snap.autoAdvance === false
-      ? '（等会话结束/进程自退；可按 f 强制推进）'
-      : '（等会话结束/进程自退，不强制杀）';
-  } else if (status === 'awaiting-session-end') {
+  if (status === 'awaiting-session-end') {
     hint = '（缺会话结束信号；可按 f 或 Enter）';
   } else if (status === 'session-interrupted') {
     const reason = snap.interruptReason != null && String(snap.interruptReason).trim() !== ''
@@ -204,21 +753,6 @@ function statusLine(snap) {
     hint = sec != null
       ? `（${sec}s 后开下一张；按 c 取消）`
       : '（倒计时后开下一张；按 c 取消）';
-  } else if (status === 'needs-resume') {
-    // Prefer action projection (same gate as footer [r]); fall back to slot id.
-    const resume = snap.actions?.resume;
-    if (resume?.reason === 'no-session-id') {
-      hint = '（无 session id）';
-    } else if (resume?.available === true) {
-      hint = '（按 r）';
-    } else if (resume?.available === false) {
-      // Unavailable for a reason other than no-id: do not advertise r.
-      hint = resume.reason ? `（${resume.reason}）` : '';
-    } else if (snap.slot?.sessionId) {
-      hint = '（按 r）';
-    } else {
-      hint = '（无 session id）';
-    }
   }
 
   return `状态: ${label}${hint}${stoppedMark}`;
@@ -250,8 +784,9 @@ export function truncateDisplayField(value, max = DEFAULT_FIELD_MAX) {
 
 /**
  * Structural layout contract for the fullscreen shell (CI-assertable).
- * Middle is the stretch main region; other bands stay content-sized.
- * No animation — static four-region column only.
+ * Three bands: top (situation + CTA) · middle (work object, stretch) · footer (keys).
+ * Empty slot does not get its own region; occupied summary lives in middle.
+ * No animation — static three-band column only.
  *
  * When `rows` is provided, root height is a numeric terminal line budget so
  * Yoga can flex-grow the middle and pin the footer. Without `rows`, height
@@ -263,14 +798,13 @@ export function truncateDisplayField(value, max = DEFAULT_FIELD_MAX) {
  *   root: { height: string | number, width: string, flexDirection: string },
  *   top: { flexGrow: number },
  *   middle: { flexGrow: number, stretch: boolean },
- *   slot: { flexGrow: number },
  *   footer: { flexGrow: number },
  *   animation: boolean,
  * }}
  */
 export function describeShellLayout({ rows } = {}) {
   return {
-    regions: ['top', 'middle', 'slot', 'footer'],
+    regions: ['top', 'middle', 'footer'],
     root: {
       height: rows != null ? resolveShellHeight(rows) : '100%',
       width: '100%',
@@ -278,7 +812,6 @@ export function describeShellLayout({ rows } = {}) {
     },
     top: { flexGrow: 0 },
     middle: { flexGrow: 1, stretch: true },
-    slot: { flexGrow: 0 },
     footer: { flexGrow: 0 },
     animation: false,
   };
@@ -295,20 +828,23 @@ export function subsequentFlagLabel(value) {
 }
 
 /**
- * Top bar: feature / runtime / subsequent mode / model / effort /
- * auto-open-next / chain status.
+ * Top band: feature / runtime / subsequent mode / model / effort /
+ * auto-open-next / chain status display name + 主 CTA.
  * Pure — safe for unit tests without a terminal.
  * Product copy only (no `[顶栏]` debug prefix).
  *
- * Two lines so model/effort, 「自动开下一张」and chain status stay discoverable
- * after wrap on narrow terminals.
+ * Lines so model/effort, 「自动开下一张」and chain status stay discoverable
+ * after wrap on narrow terminals. Adds a dedicated 「下一步」CTA line when
+ * the snapshot maps to Ready or a primary/secondary edge CTA.
  *
  * @param {object | null | undefined} snap
+ * @param {{ selectedIndex?: number | null }} [opts]
  * @returns {string}
  */
-export function renderTopBar(snap) {
+export function renderTopBar(snap, { selectedIndex = null } = {}) {
   if (!snap) {
-    return 'Issue Crusher · 调度（启动中…）';
+    // Chrome shares the product line — no extra row (numeric terminal height is tight).
+    return `${BAND_TITLE_TOP}  ·  Issue Crusher · 调度（启动中…）`;
   }
   const mode = snap.subsequentMode ?? '—';
   // Default true when field omitted (older fakes / once path projection).
@@ -316,76 +852,286 @@ export function renderTopBar(snap) {
   const feature = truncateDisplayField(snap.feature ?? '—', TOP_FIELD_MAX);
   const modelLabel = subsequentFlagLabel(snap.subsequentModel);
   const effortLabel = subsequentFlagLabel(snap.subsequentEffort);
+  // Band chrome on the primary dial line (scannable, zero extra row cost).
   const primary = [
+    BAND_TITLE_TOP,
     'Issue Crusher · 调度',
     `功能: ${feature}`,
     `runtime: ${snap.runtime ?? '—'}`,
     `后续 mode: ${mode}${modeHint(mode)}`,
   ].join('  ·  ');
   // Critical operator dials on their own line — short enough for narrow TTYs.
-  // subsequent model/effort stay here so operators can trust the o-flow source.
+  // status + auto lead so wrap/clip under numeric height still leaves them scannable;
+  // subsequent model/effort follow (m/v source of truth, slightly less urgent on Ready).
   const critical = [
+    statusLine(snap),
+    `自动开下一张: ${autoLabel}`,
     `后续 model: ${modelLabel}`,
     `后续 effort: ${effortLabel}`,
-    `自动开下一张: ${autoLabel}`,
-    statusLine(snap),
   ].join('  ·  ');
-  return `${primary}\n${critical}`;
+  const cta = renderMainCta(snap, { selectedIndex });
+  return cta ? `${primary}\n${critical}\n${cta}` : `${primary}\n${critical}`;
 }
 
 /**
- * Middle panel: Chinese dependency graph legend + graph + 「现在可执行」.
+ * Append executable rows (highlight / 看板默认 / 当前槽 marks) into middle lines.
+ * Dense columns: mark + id + [type] + 状态显示名 + 标题截断 + role marks.
+ * @param {string[]} lines
+ * @param {object} snap
+ * @param {Array<{id:string,title?:string}>} executable
+ * @param {number | null} selectedIndex
+ */
+function appendExecutableListLines(lines, snap, executable, selectedIndex) {
+  if (executable.length === 0) {
+    lines.push('  （无）');
+    return;
+  }
+  const hasSelection = selectedIndex != null
+    && Number.isInteger(Number(selectedIndex))
+    && Number(selectedIndex) >= 0
+    && Number(selectedIndex) < executable.length;
+  // Same default as Enter without highlight (impl first, else wayfinder).
+  const defaultId = boardDefaultExecutable(snap)?.id ?? null;
+  const boardIssues = snap?.board?.issues ?? [];
+  const byId = new Map(boardIssues.map((issue) => [issue.id, issue]));
+  const openMap = openBlockersById(boardIssues);
+  const slotIssueId = snap?.slot?.issueId ?? null;
+  const execSet = new Set(executable.map((item) => item.id));
+
+  for (let i = 0; i < executable.length; i += 1) {
+    const item = executable[i];
+    const issue = byId.get(item.id) || item;
+    const marks = [];
+    if (slotIssueId === item.id) marks.push('◀当前槽');
+    if (hasSelection && Number(selectedIndex) === i) marks.push('◀选中');
+    else if (!hasSelection && defaultId && item.id === defaultId) marks.push('←看板默认');
+    const mark = issueMark({
+      closed: Boolean(issue.closed),
+      id: item.id,
+      slotIssueId,
+      executableIds: execSet,
+    });
+    // Prefer board title; executable projection already carries title.
+    const rowIssue = {
+      ...issue,
+      id: item.id,
+      title: issue.title ?? item.title ?? item.id,
+    };
+    lines.push(`  ${formatIssueListRow(rowIssue, {
+      mark,
+      titleMax: 24,
+      suffix: marks.length ? marks.join(' ') : null,
+      openBlockersById: openMap,
+    })}`);
+  }
+}
+
+/**
+ * Non-executable board remainder as dense rows (full roster under 全板其余).
+ * Too many rows fold with +N — never silent drop of the whole remainder.
+ * @param {string[]} lines
+ * @param {Array<object>} issues
+ * @param {Set<string>} execIdSet
+ * @param {string | null | undefined} slotIssueId
+ * @param {number} [maxShow]
+ */
+function appendBoardRemainderLines(lines, issues, execIdSet, slotIssueId, {
+  maxShow = 8,
+  dense = true,
+} = {}) {
+  const openMap = openBlockersById(issues);
+  const remainder = [];
+  for (const issue of issues) {
+    if (execIdSet.has(issue.id)) continue;
+    remainder.push(issue);
+  }
+  if (remainder.length === 0) {
+    lines.push('全板其余: （无）');
+    return;
+  }
+  const limit = Number.isFinite(Number(maxShow)) && Number(maxShow) > 0
+    ? Math.floor(Number(maxShow))
+    : 8;
+  const shown = remainder.slice(0, limit);
+  const more = remainder.length - shown.length;
+
+  // Compact layout (short terminal): one summary line of dense tokens to save rows.
+  if (!dense) {
+    const tokens = shown.map((issue) => {
+      const mark = issueMark({
+        closed: Boolean(issue.closed),
+        id: issue.id,
+        slotIssueId,
+        executableIds: execIdSet,
+      });
+      const type = issueTypeLabel(issue);
+      const statusZh = issueBoardStatusLabelZh(issue, { openBlockersById: openMap });
+      return `${mark}${issue.id}[${type}]${statusZh}`;
+    });
+    const tail = more > 0 ? `  +${more}` : '';
+    lines.push(`全板其余: ${tokens.join('  ')}${tail}`);
+    return;
+  }
+
+  lines.push('全板其余:');
+  for (const issue of shown) {
+    const mark = issueMark({
+      closed: Boolean(issue.closed),
+      id: issue.id,
+      slotIssueId,
+      executableIds: execIdSet,
+    });
+    lines.push(`  ${formatIssueListRow(issue, {
+      mark,
+      titleMax: 24,
+      openBlockersById: openMap,
+    })}`);
+  }
+  if (more > 0) lines.push(`  … +${more}`);
+}
+
+/**
+ * Middle band work object.
+ * Default: full-board list (可执行 + 其余) + focus direct neighborhood (read-only).
+ * Secondary `middleView: 'global'`: full dependency overview (not the default main screen).
  * Board remains read-only display; no graph dispatch.
+ * Empty slot does **not** add a permanent placeholder block.
  * Optional selectedIndex highlights an executable list row (keyboard ↑↓/j/k/digits).
+ * No highlight → first executable marked ←看板默认 so default Enter intent is visible.
  * Selected vs current-slot use distinct marks.
+ * Focus for neighborhood: list highlight → slot → board default (reasonable default).
  *
  * @param {object | null | undefined} snap
- * @param {{ selectedIndex?: number | null }} [opts]
+ * @param {{
+ *   selectedIndex?: number | null,
+ *   middleView?: 'list' | 'global',
+ *   terminalRows?: number | null,
+ * }} [opts]
  * @returns {string}
  */
-export function renderMiddlePanel(snap, { selectedIndex = null } = {}) {
-  const lines = ['依赖图（只读 · 不可图上派票）', `  ${GRAPH_LEGEND}`];
+export function renderMiddlePanel(snap, {
+  selectedIndex = null,
+  middleView = 'list',
+  terminalRows = null,
+} = {}) {
+  const lines = [];
+  const view = middleView === 'global' ? 'global' : 'list';
+  const neighborhoodLayout = resolveNeighborhoodLayout(terminalRows);
+
+  // Occupied slot / HITL summary merges into middle top (three-band IA).
+  const slotBlock = renderSlotPanel(snap);
+  if (slotBlock.trim()) {
+    for (const line of slotBlock.split('\n')) {
+      if (String(line).trim() !== '') lines.push(line);
+    }
+  }
 
   if (!snap) {
-    lines.push('  （启动中…）');
-    lines.push('');
-    lines.push('现在可执行:');
-    lines.push('  （无）');
+    if (view === 'global') {
+      lines.push(`${BAND_TITLE_MIDDLE} · 全局`);
+      lines.push(`  ${GRAPH_LEGEND}`);
+      lines.push('  （启动中…）');
+    } else {
+      lines.push(`${BAND_TITLE_MIDDLE} · 列表`);
+      lines.push('现在可执行:');
+      lines.push('  （无）');
+      if (neighborhoodLayout === 'edges') lines.push('');
+      lines.push(
+        neighborhoodLayout === 'compact'
+          ? '已降级 · 焦点邻域'
+          : '焦点邻域',
+      );
+      lines.push('  （启动中…）');
+    }
     return lines.join('\n');
   }
 
   const issues = snap.board?.issues ?? [];
+  const slotIssueId = snap.slot?.issueId ?? null;
+  // Leave room for box padding / chrome when wrapping global chains.
+  const graphWidth = terminalRows != null && Number(terminalRows) < 24 ? 56 : 72;
   const graph = renderDependencyGraph({
     issues,
-    slotIssueId: snap.slot?.issueId ?? null,
+    slotIssueId,
+    // Global second view uses dense node tokens (mark+id+[type]+status).
+    denseNodes: view === 'global',
+    // Dense tokens are wide — wrap/verticalize sooner so g never becomes one mega-row.
+    maxLineWidth: graphWidth,
+    maxInlineNodes: view === 'global' ? 3 : 5,
   });
+  const execIdSet = new Set(graph.executable.map((item) => item.id));
 
-  for (const line of graph.lines) lines.push(line);
+  if (view === 'global') {
+    // Second view only — not Ready default main screen.
+    // Short chrome + blank between graph / executable to avoid a log wall.
+    lines.push(`${BAND_TITLE_MIDDLE} · 全局`);
+    lines.push(`  ${GRAPH_LEGEND}`);
+    lines.push('');
+    for (const line of graph.lines) {
+      if (String(line).trim() !== '') lines.push(line);
+    }
+    if (graph.warnings.length) {
+      lines.push('警告:');
+      for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
+    }
+    lines.push('');
+    lines.push('现在可执行:');
+    appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
+    lines.push('  （g 返回列表）');
+    return lines.join('\n');
+  }
+
+  // Default: executable list + focus neighborhood only.
+  // 「全板其余」folded; short labels + one gap before neighborhood (not two —
+  // extra blanks overflow mid-height Yoga frames and clip band titles).
+  lines.push(`${BAND_TITLE_MIDDLE} · 列表`);
+  lines.push('现在可执行:');
+  appendExecutableListLines(lines, snap, graph.executable, selectedIndex);
+  const remainderCount = issues.filter((issue) => !execIdSet.has(issue.id)).length;
+  if (remainderCount > 0) {
+    lines.push(`  （其余 ${remainderCount} · g）`);
+  }
+
+  const hasSelection = selectedIndex != null
+    && Number.isInteger(Number(selectedIndex))
+    && Number(selectedIndex) >= 0
+    && Number(selectedIndex) < graph.executable.length;
+  const selectedIssueId = hasSelection
+    ? graph.executable[Number(selectedIndex)].id
+    : null;
+  const focusId = resolveFocusIssueId(issues, {
+    selectedIssueId,
+    slotIssueId,
+    defaultIssueId: boardDefaultExecutable(snap)?.id ?? null,
+  });
+  // One blank between list and neighborhood on edges layout.
+  // Compact keeps zero gap so 「已降级」stays on-frame.
+  if (neighborhoodLayout === 'edges') {
+    lines.push('');
+  }
+  const neighborhood = renderFocusNeighborhood({
+    issues,
+    focusId,
+    slotIssueId,
+    executableIds: execIdSet,
+    layout: neighborhoodLayout,
+    terminalRows,
+  });
+  for (const line of neighborhood.lines) lines.push(line);
   if (graph.warnings.length) {
     lines.push('警告:');
     for (const warning of graph.warnings) lines.push(`  ⚠ ${warning}`);
   }
-
-  lines.push('');
-  lines.push('现在可执行:');
-  if (graph.executable.length === 0) {
-    lines.push('  （无）');
-  } else {
-    for (let i = 0; i < graph.executable.length; i += 1) {
-      const item = graph.executable[i];
-      const marks = [];
-      if (snap.slot?.issueId === item.id) marks.push('◀当前槽');
-      if (selectedIndex === i) marks.push('◀选中');
-      const suffix = marks.length ? `  ${marks.join(' ')}` : '';
-      lines.push(`  ★ ${item.id}${suffix}`);
-    }
+  if (neighborhoodLayout === 'edges') {
+    lines.push('  （g 全局）');
   }
 
   return lines.join('\n');
 }
 
 /**
- * Lower panel: current slot (empty or ticket/pid/closed/mode) + pending HITL.
+ * Occupied-slot / HITL summary text for the middle band.
+ * Empty slot returns '' — Ready must not keep a permanent「当前槽（空）」block.
  * Primary fields on the first line; session is a secondary indented line.
  * Long title/session values are truncated so the band does not collapse layout.
  *
@@ -397,9 +1143,7 @@ export function renderSlotPanel(snap, { maxFieldWidth = DEFAULT_FIELD_MAX } = {}
   const lines = [];
   const max = maxFieldWidth;
 
-  if (!snap || !snap.slot) {
-    lines.push('当前槽 （空）');
-  } else {
+  if (snap?.slot) {
     const slot = snap.slot;
     // Long issue ids / titles must not blow the primary slot row (pid/closed stay visible).
     const issueId = truncateDisplayField(slot.issueId ?? '—', max);
@@ -444,33 +1188,171 @@ export function renderSlotPanel(snap, { maxFieldWidth = DEFAULT_FIELD_MAX } = {}
 }
 
 /**
- * Bottom bar: available keys from snapshot.actions (+ always t/q and list nav).
- * Product key help only (no `[底栏]` debug prefix). Dimmed in the shell.
+ * Keys that should read "hot" in the footer (main CTA + available edge keys).
+ * Expression only — mirrors CTA emphasis, does not change command availability.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {Set<string>}
+ */
+export function footerHotKeys(snap) {
+  const hot = new Set();
+  if (!snap) return hot;
+
+  const actions = snap.actions || {};
+  // Available edge keys are always hot when shown.
+  if (actions.forceAdvance?.available) hot.add('f');
+  if (actions.cancelHandoffCountdown?.available) hot.add('c');
+  if (actions.resume?.available) hot.add('r');
+  if (actions.confirmHitl?.available) hot.add('y');
+  if (actions.rejectHitl?.available) hot.add('n');
+
+  if (snap.status === 'stopped' || snap.status === 'error') {
+    hot.add('q');
+    return hot;
+  }
+
+  if (snap.status === 'idle' && !snap.stopped) {
+    if (readyExecutables(snap).length > 0) hot.add('Enter');
+    return hot;
+  }
+
+  switch (snap.status) {
+    case 'soft-stuck':
+      // Wait — Enter stays visible but not hot.
+      break;
+    case 'awaiting-worker-exit':
+      if (snap.autoAdvance === false) hot.add('f');
+      break;
+    case 'needs-resume':
+      if (resumeSessionAvailable(snap)) hot.add('r');
+      break;
+    case 'needs-confirmation':
+      hot.add('y');
+      hot.add('n');
+      break;
+    case 'handoff-countdown':
+      hot.add('c');
+      break;
+    case 'session-interrupted':
+      hot.add('f');
+      if (actions.resume?.available) hot.add('r');
+      break;
+    case 'awaiting-session-end':
+      hot.add('f');
+      hot.add('Enter');
+      break;
+    default:
+      break;
+  }
+  return hot;
+}
+
+/**
+ * Structured footer key legend.
+ * Group order (left → right): edge (available only) → main path (always) →
+ * m/v (hidden when stopped) → t / q.
+ * Hot = main CTA named key or available edge; Enter dim when not startable.
+ *
+ * @param {object | null | undefined} snap
+ * @returns {Array<{
+ *   id: string,
+ *   text: string,
+ *   group: 'edge' | 'main' | 'config' | 'secondary',
+ *   hot?: boolean,
+ *   dim?: boolean,
+ * }>}
+ */
+export function buildFooterItems(snap) {
+  const actions = snap?.actions || {};
+  const hot = footerHotKeys(snap);
+  /** @type {Array<{ id: string, text: string, group: 'edge' | 'main' | 'config' | 'secondary', hot?: boolean, dim?: boolean }>} */
+  const items = [];
+
+  // A — edge keys only when available.
+  if (actions.forceAdvance?.available) {
+    items.push({ id: 'f', text: '[f] 强制推进', group: 'edge', hot: true });
+  }
+  if (actions.cancelHandoffCountdown?.available) {
+    items.push({ id: 'c', text: '[c] 取消倒计时', group: 'edge', hot: true });
+  }
+  if (actions.resume?.available) {
+    items.push({ id: 'r', text: '[r] 恢复历史', group: 'edge', hot: true });
+  }
+  if (actions.confirmHitl?.available) {
+    items.push({ id: 'y', text: '[y] 同意', group: 'edge', hot: true });
+  }
+  if (actions.rejectHitl?.available) {
+    items.push({ id: 'n', text: '[n] 拒绝', group: 'edge', hot: true });
+  }
+
+  // B — main path always (Enter / s / nav). Enter dim when not recommended.
+  const enterHot = hot.has('Enter');
+  items.push({
+    id: 'Enter',
+    text: '[Enter] 开始',
+    group: 'main',
+    hot: enterHot,
+    dim: !enterHot,
+  });
+  const autoLabel = snap?.autoAdvance === false ? '关' : '开';
+  items.push({
+    id: 's',
+    text: `[s] 自动(${autoLabel})`,
+    group: 'main',
+    hot: hot.has('s'),
+  });
+  // Navigation moves highlight only; Enter starts. Arrows ≡ j/k. Never hide for HITL.
+  // Keep label short so the footer stays one line on common 100–120 col terminals.
+  items.push({
+    id: 'nav',
+    text: '[j/k] 导航',
+    group: 'main',
+  });
+
+  // C — m/v when subsequent config is available (hidden when stopped).
+  if (actions.setModelEffort?.available !== false) {
+    items.push({
+      id: 'm',
+      text: '[m] 模型',
+      group: 'config',
+      hot: hot.has('m'),
+    });
+  }
+  if (actions.setMode?.available !== false) {
+    items.push({
+      id: 'v',
+      text: '[v] 模式',
+      group: 'config',
+      hot: hot.has('v'),
+    });
+  }
+
+  // D — secondary: refresh + optional global overview + quit.
+  items.push({ id: 't', text: '[t] 刷新', group: 'secondary', hot: hot.has('t') });
+  items.push({ id: 'g', text: '[g] 全局', group: 'secondary', hot: hot.has('g') });
+  items.push({ id: 'q', text: '[q] 退出', group: 'secondary', hot: hot.has('q') });
+
+  return items;
+}
+
+/**
+ * Bottom bar: available keys from snapshot.actions (+ always Enter/s/nav/t/q).
+ * Product key help only (no `[底栏]` debug prefix).
+ * Groups: edge → main → m/v → t/q. Chinese short labels; m=模型 v=模式.
+ * Leading band chrome title「键位」keeps three-band duties scannable.
  *
  * @param {object | null | undefined} snap
  * @returns {string}
  */
 export function renderFooter(snap) {
-  const actions = snap?.actions || {};
-  const keys = [];
-  if (actions.setMode?.available !== false) keys.push('[m] mode 拨杆');
-  // o opens model→effort transactional menu (subsequent only; no live hot-switch).
-  if (actions.setModelEffort?.available !== false) keys.push('[o] model/effort');
-  if (actions.forceAdvance?.available) keys.push('[f] 强制推进');
-  if (actions.cancelHandoffCountdown?.available) keys.push('[c] 取消倒计时');
-  if (actions.resume?.available) keys.push('[r] 恢复历史');
-  if (actions.confirmHitl?.available) keys.push('[y] 同意');
-  if (actions.rejectHitl?.available) keys.push('[n] 拒绝');
-  // s is the auto-open-next dial (not chain stop). Show current state plainly.
-  const autoLabel = snap?.autoAdvance === false ? '关' : '开';
-  keys.push(`[s] 自动开下一张(${autoLabel})`);
-  // Navigation moves highlight only; Enter starts. Arrows ≡ j/k.
-  keys.push('[t] 刷新', '[↑↓/j/k|数字] 导航', '[Enter] 开始', '[q] 退出');
-  return keys.join('  ');
+  // Single spaces keep the whole legend on one ~72–78 col line (box padding).
+  const keys = buildFooterItems(snap).map((item) => item.text).join(' ');
+  // Single line: chrome title + keys (no extra footer row; no mid-label wrap).
+  return keys ? `${BAND_TITLE_FOOTER} ${keys}` : BAND_TITLE_FOOTER;
 }
 
 /**
- * Sync model list fallback for the fullscreen `o` flow.
+ * Sync model list fallback for the fullscreen model/effort (`m`) flow.
  * Prefer async {@link resolveModelItems} (injectable Grok discovery) at open time.
  * - claude: static alias hints + 运行时默认
  * - grok (sync, no discovery): 运行时默认 only — real list comes from discovery
@@ -592,7 +1474,7 @@ export function renderModelEffortMenuFrame(state) {
   if (!state || !state.open) return '';
   const items = state.stage === 'model' ? state.modelItems : state.effortItems;
   const title = state.stage === 'model'
-    ? '选择 subsequent model（确认后选 effort；整次 o 事务）'
+    ? '选择 subsequent model（确认后选 effort；整次 m 事务）'
     : '选择 subsequent effort（确认后提交；q/Esc 取消整次事务）';
   // Reuse startup list chrome so j/k/digits/Enter/q match operator muscle memory.
   return renderStartupSelectFrame({
@@ -624,7 +1506,7 @@ export function renderNotice(snap, notice = null) {
 
 /**
  * Map one fullscreen keypress to a dispatch command or list-selection intent.
- * Mode dial: bare `m` toggles subsequent review ↔ vibe (no readline args).
+ * `m` → model/effort menu (was o); `v` → mode dial review↔vibe (was m).
  * Enter / return → start (highlighted id resolved by handleFullscreenKey).
  * Arrow ↓ ≡ j (selectNext); arrow ↑ ≡ k (selectPrev) — highlight only.
  *
@@ -659,14 +1541,18 @@ export function mapFullscreenKey(input, { subsequentMode = null, key = null } = 
   if (lower === 'r') return { type: 'resume' };
   if (lower === 'y') return { type: 'confirmHitl' };
   if (lower === 'n') return { type: 'rejectHitl' };
-  if (lower === 'm') {
+  // m opens model→effort transactional menu (was o).
+  if (lower === 'm') return { type: 'openModelEffort' };
+  // v dials subsequent mode review↔vibe (was m).
+  if (lower === 'v') {
     const next = subsequentMode === 'vibe' ? 'review' : 'vibe';
     return { type: 'setMode', arg: next };
   }
-  // o opens model→effort transactional menu (not mode; m stays mode-only).
-  if (lower === 'o') return { type: 'openModelEffort' };
+  // o intentionally unbound — no dual-key teaching split with m.
   if (lower === 'j') return { type: 'selectNext' };
   if (lower === 'k') return { type: 'selectPrev' };
+  // g toggles middle second view (global dependency overview) — shell-owned, no dispatch.
+  if (lower === 'g') return { type: 'toggleMiddleView' };
   if (/^[1-9]$/.test(lower)) return { type: 'selectIndex', arg: Number(lower) - 1 };
   return null;
 }
@@ -711,6 +1597,7 @@ export function nextListSelection(command, current, count) {
  *   message?: string,
  *   selectedIndex?: number | null,
  *   selectionOnly?: boolean,
+ *   toggleMiddleView?: boolean,
  *   ok?: boolean,
  *   spawned?: boolean,
  *   reason?: string,
@@ -754,14 +1641,20 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
     return { openModelEffort: true };
   }
 
+  // g toggles list+neighborhood ↔ global overview (presentation only).
+  if (command.type === 'toggleMiddleView') {
+    return { toggleMiddleView: true };
+  }
+
   return handleDispatchCommand(surface, command);
 }
 
 /**
- * Presentational shell: four fixed regions filling terminal height.
+ * Presentational shell: three bands filling terminal height.
  * Middle flexGrow=1 eats remaining vertical space. Safe for renderToString.
- * Hierarchy: top/status primary; middle content; footer dim; session secondary
- * (already dimmed in pure text via indent); selection bold; current-slot green.
+ * Hierarchy: top/status+CTA primary; middle work object; footer dim; session
+ * secondary (indent in pure text); selection bold; current-slot green.
+ * Empty slot: no permanent slot band. Notice (when present) sits in middle.
  *
  * Pass `terminalRows` (stdout.rows) so root height is numeric — required for
  * middle stretch + footer pin. Without it, height stays `'100%'` (content-sized
@@ -771,24 +1664,31 @@ export async function handleFullscreenKey(surface, input, ctx = {}) {
  *   snap?: object | null,
  *   notice?: string | null,
  *   selectedIndex?: number | null,
+ *   middleView?: 'list' | 'global',
  *   terminalRows?: number | null,
+ *   modelEffortMenu?: object | null,
  * }} props
  */
 export function DispatchShell({
   snap = null,
   notice = null,
   selectedIndex = null,
+  middleView = 'list',
   terminalRows = null,
   modelEffortMenu = null,
 } = {}) {
   const layout = describeShellLayout(
     terminalRows != null ? { rows: terminalRows } : {},
   );
-  const middleLines = renderMiddlePanel(snap, { selectedIndex }).split('\n');
-  const slotLines = renderSlotPanel(snap).split('\n');
+  const middleLines = renderMiddlePanel(snap, {
+    selectedIndex,
+    middleView,
+    terminalRows,
+  }).split('\n');
   const noticeLine = renderNotice(snap, notice);
-  const topLines = renderTopBar(snap).split('\n');
-  const footer = renderFooter(snap);
+  const topLines = renderTopBar(snap, { selectedIndex }).split('\n');
+  const footerItems = buildFooterItems(snap);
+  const ctaRole = mainCtaRole(snap);
 
   // In-app overlay reuses the same alt-screen session (no nested DECSET on Windows).
   if (modelEffortMenu?.open) {
@@ -811,7 +1711,7 @@ export function DispatchShell({
         },
         ...topLines.map((line, index) => createElement(
           Text,
-          { key: `t${index}`, bold: true },
+          { key: `t${index}`, ...styleTopLine(line, index, ctaRole) },
           line || ' ',
         )),
       ),
@@ -829,6 +1729,7 @@ export function DispatchShell({
           {
             key: `me${index}`,
             bold: index === 0 || /◀选中/.test(line),
+            color: /◀选中/.test(line) ? 'cyan' : undefined,
             dimColor: index === menuLines.length - 1,
           },
           line || ' ',
@@ -867,10 +1768,10 @@ export function DispatchShell({
         flexDirection: 'column',
         width: '100%',
       },
-      // Primary band: multi-line product title + auto/status (bold).
+      // Primary band: chrome + status + role-colored main CTA.
       ...topLines.map((line, index) => createElement(
         Text,
-        { key: `t${index}`, bold: true },
+        { key: `t${index}`, ...styleTopLine(line, index, ctaRole) },
         line || ' ',
       )),
     ),
@@ -883,42 +1784,14 @@ export function DispatchShell({
         flexDirection: 'column',
         width: '100%',
       },
-      ...middleLines.map((line, index) => {
-        const isSelected = /◀选中/.test(line);
-        const isCurrentSlot = /◀当前槽/.test(line) && !isSelected;
-        const isBoth = /◀当前槽/.test(line) && isSelected;
-        // Selected row: bold + cyan; current-slot-only: green; both: cyan bold.
-        if (isSelected || isBoth) {
-          return createElement(Text, { key: `m${index}`, bold: true, color: 'cyan' }, line || ' ');
-        }
-        if (isCurrentSlot) {
-          return createElement(Text, { key: `m${index}`, color: 'green' }, line || ' ');
-        }
-        // Legend / secondary graph chrome stays dim.
-        if (index === 1 || line.startsWith('  图例')) {
-          return createElement(Text, { key: `m${index}`, dimColor: true }, line || ' ');
-        }
-        return createElement(Text, { key: `m${index}` }, line || ' ');
-      }),
-    ),
-    createElement(
-      Box,
-      {
-        flexGrow: layout.slot.flexGrow,
-        borderStyle: 'single',
-        paddingX: 1,
-        flexDirection: 'column',
-        width: '100%',
-      },
-      ...slotLines.map((line, index) => {
-        // Secondary: session line is indented + dim.
-        if (/^\s+session:/.test(line)) {
-          return createElement(Text, { key: `s${index}`, dimColor: true }, line || ' ');
-        }
-        return createElement(Text, { key: `s${index}` }, line || ' ');
-      }),
+      ...middleLines.map((line, index) => createElement(
+        Text,
+        { key: `m${index}`, ...styleMiddleLine(line) },
+        line || ' ',
+      )),
+      // Notice only when present — no empty placeholder row.
       noticeLine
-        ? createElement(Text, { key: 'notice', color: 'yellow' }, noticeLine)
+        ? createElement(Text, { key: 'notice', color: 'yellow', bold: true }, noticeLine)
         : null,
     ),
     createElement(
@@ -929,22 +1802,27 @@ export function DispatchShell({
         paddingX: 1,
         width: '100%',
       },
-      // Weak band: key help.
-      createElement(Text, { dimColor: true }, footer),
+      // One Text = one legend string. Avoid multi-Text fragments (they wrap
+      // mid-label) and avoid end-truncate (it ate `[q] 退出` in 80-col tests).
+      createElement(
+        Text,
+        {
+          key: 'footer-line',
+          bold: footerItems.some((i) => i.hot && !i.dim),
+          color: (() => {
+            const hot = footerItems.find((i) => i.hot && !i.dim);
+            return hot ? (ctaColorForRole(ctaRole) || 'cyan') : 'gray';
+          })(),
+        },
+        renderFooter(snap),
+      ),
     ),
   );
 }
 
 function executableFromSnap(snap) {
-  if (!snap?.board?.issues) return [];
-  try {
-    return renderDependencyGraph({
-      issues: snap.board.issues,
-      slotIssueId: snap.slot?.issueId ?? null,
-    }).executable;
-  } catch {
-    return [];
-  }
+  // Single helper with Ready CTA / middle list / keyboard selection.
+  return readyExecutables(snap);
 }
 
 function executableCountFromSnap(snap) {
@@ -983,6 +1861,7 @@ function DispatchFullscreenApp({
   pollIntervalMs = 2000,
   ticksRef = null,
   terminalRows = null,
+  output = null,
   discoverModels = null,
   resolveModelItemsFn = resolveModelItems,
 } = {}) {
@@ -990,12 +1869,13 @@ function DispatchFullscreenApp({
   const [snap, setSnap] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  // Middle band: default list+neighborhood; g toggles global dependency overview.
+  const [middleView, setMiddleView] = useState('list');
   // In-app model→effort overlay (same alt-screen; no nested DECSET).
   const [modelEffortMenu, setModelEffortMenu] = useState(null);
-  // Numeric height from mount stdout.rows (resolved once). Resize re-pin is
-  // optional polish; keep mount path free of stream listeners so PassThrough
-  // tests can exit cleanly on q.
-  const resolvedRows = resolveShellHeight(terminalRows);
+  // Live terminal row budget — updated on stdout `resize` so neighborhood
+  // edges/compact and three-band height reflow with the window.
+  const [liveRows, setLiveRows] = useState(() => resolveShellHeight(terminalRows));
   const busyRef = useRef(false);
   const quittingRef = useRef(false);
   const snapRef = useRef(null);
@@ -1008,6 +1888,31 @@ function DispatchFullscreenApp({
   useEffect(() => {
     selectedRef.current = selectedIndex;
   }, [selectedIndex]);
+
+  // Re-pin shell height when the real TTY is resized. PassThrough test fakes
+  // usually omit `.on` / `isTTY` and are left alone.
+  useEffect(() => {
+    const stream = output;
+    if (!stream || typeof stream.on !== 'function') return undefined;
+    if (stream.isTTY !== true && stream.isTTY !== undefined) {
+      // Explicit non-TTY: do not subscribe.
+      if (stream.isTTY === false) return undefined;
+    }
+    const onResize = () => {
+      const next = resolveShellHeight(stream.rows);
+      setLiveRows((prev) => (prev === next ? prev : next));
+    };
+    stream.on('resize', onResize);
+    // Sync once in case rows changed between mount prop and first paint.
+    onResize();
+    return () => {
+      if (typeof stream.off === 'function') stream.off('resize', onResize);
+      else if (typeof stream.removeListener === 'function') {
+        stream.removeListener('resize', onResize);
+      }
+    };
+  }, [output]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1040,7 +1945,7 @@ function DispatchFullscreenApp({
 
     const intervalMs = Math.max(250, pollIntervalMs);
     const pollId = setInterval(() => {
-      // Freeze poll while the o-menu owns the keyboard (avoid mid-menu redraw races).
+      // Freeze poll while the model/effort menu owns the keyboard (avoid mid-menu redraw races).
       if (cancelled || busyRef.current || quittingRef.current || menuRef.current?.open) return;
       busyRef.current = true;
       (async () => {
@@ -1162,6 +2067,11 @@ function DispatchFullscreenApp({
           return;
         }
 
+        if (result.toggleMiddleView) {
+          setMiddleView((current) => (current === 'global' ? 'list' : 'global'));
+          return;
+        }
+
         if (result.openModelEffort) {
           // Gate on surface action availability when projection is ready.
           if (currentSnap?.actions?.setModelEffort?.available === false) {
@@ -1215,7 +2125,8 @@ function DispatchFullscreenApp({
     snap,
     notice,
     selectedIndex,
-    terminalRows: resolvedRows,
+    middleView,
+    terminalRows: liveRows,
     modelEffortMenu,
   });
 }
@@ -1258,6 +2169,10 @@ export async function runFullscreenDispatch({
   // Any leftover \r/\n would otherwise hit useInput as start → false occupy.
   drainPendingInput(input);
 
+  // ConPTY / some dual-TTY hosts probe chalk at level 0 → Ink emits monochrome.
+  // Force a usable color level so role colors (CTA / selected / slot / hot) show.
+  ensureFullscreenColor(output);
+
   const ticksRef = { current: 0 };
   let enteredAlt = false;
 
@@ -1274,7 +2189,9 @@ export async function runFullscreenDispatch({
       pollIntervalMs,
       ticksRef,
       // Numeric rows so middle flexGrow actually eats leftover terminal height.
+      // `output` is also watched for `resize` to reflow liveRows.
       terminalRows: resolveShellHeight(output?.rows),
+      output,
     }),
     {
       stdin: input,

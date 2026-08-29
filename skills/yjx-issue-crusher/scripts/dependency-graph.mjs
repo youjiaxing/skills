@@ -92,6 +92,148 @@ export function issueMark({ closed, id, slotIssueId = null, executableIds = [] }
 }
 
 /**
+ * Bracket type label for list / neighborhood rows.
+ * Prefer explicit type, then entryClass, else ordinary impl.
+ * @param {object | null | undefined} issue
+ * @returns {string}
+ */
+export function issueTypeLabel(issue) {
+  if (!issue) return 'impl';
+  if (issue.type != null && String(issue.type).trim() !== '') {
+    return String(issue.type).trim();
+  }
+  if (issue.entryClass != null && String(issue.entryClass).trim() !== '') {
+    return String(issue.entryClass).trim();
+  }
+  return 'impl';
+}
+
+/**
+ * Operator-facing board status display name (not chain-run soft-stuck ids).
+ * Prototype target: 可实施 / 已完成 / 阻塞 / 待人工 / 已领取 …
+ *
+ * @param {object | null | undefined} issue
+ * @param {{
+ *   openBlockersById?: Map<string, string[]> | null,
+ * }} [opts]
+ * @returns {string}
+ */
+export function issueBoardStatusLabelZh(issue, { openBlockersById = null } = {}) {
+  if (!issue) return '未知';
+  if (issue.closed) return '已完成';
+  const status = issue.status ?? issue.statusRole ?? null;
+  if (status === 'resolved' || status === 'wontfix') return '已完成';
+  if (status === 'claimed') return '已领取';
+  if (status === 'ready-for-human') return '待人工';
+  if (status === 'needs-info') return '需补充';
+  if (status === 'needs-triage') return '待分诊';
+
+  let openBlockers = null;
+  if (openBlockersById && issue.id != null) {
+    openBlockers = openBlockersById.get(issue.id) ?? [];
+  } else if (Array.isArray(issue.blockedBy) && issue.blockedBy.length > 0) {
+    // Without a board map, non-empty blockedBy is treated as blocked
+    // only when we cannot prove they are all closed — callers with a full
+    // board should pass openBlockersById for accuracy.
+    openBlockers = issue.blockedBy;
+  } else {
+    openBlockers = [];
+  }
+  if (openBlockers.length > 0) return '阻塞';
+
+  if (
+    status == null
+    || status === ''
+    || status === 'ready-for-agent'
+    || status === 'open'
+    || WAYFINDER_TYPE_AS_STATUS.has(status)
+  ) {
+    return '可实施';
+  }
+  // Fall back to raw status so unknown roles stay visible rather than blank.
+  return String(status);
+}
+
+/**
+ * Truncate display text by Unicode code points (TUI column budget).
+ * @param {string | null | undefined} value
+ * @param {number} max
+ * @returns {string}
+ */
+function truncateChars(value, max) {
+  const text = String(value ?? '');
+  const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : 24;
+  const chars = Array.from(text);
+  if (chars.length <= limit) return text;
+  if (limit <= 1) return '…';
+  return `${chars.slice(0, limit - 1).join('')}…`;
+}
+
+/**
+ * Dense list / neighborhood row:
+ * `mark id [type] 状态显示名 标题截断[  roleSuffix]`
+ *
+ * @param {object | null | undefined} issue
+ * @param {{
+ *   mark?: string,
+ *   titleMax?: number,
+ *   suffix?: string | null,
+ *   openBlockersById?: Map<string, string[]> | null,
+ * }} [opts]
+ * @returns {string}
+ */
+export function formatIssueListRow(issue, {
+  mark = '·',
+  titleMax = 24,
+  suffix = null,
+  openBlockersById = null,
+} = {}) {
+  const id = issue?.id ?? '—';
+  const type = issueTypeLabel(issue);
+  const statusZh = issueBoardStatusLabelZh(issue, { openBlockersById });
+  const rawTitle = issue?.title != null && String(issue.title).trim() !== ''
+    ? String(issue.title)
+    : '';
+  // Avoid repeating the bare id as a fake title when title was defaulted to id.
+  const title = rawTitle && rawTitle !== id
+    ? truncateChars(rawTitle, titleMax)
+    : '';
+  const parts = [
+    mark,
+    id,
+    `[${type}]`,
+    statusZh,
+  ];
+  if (title) parts.push(title);
+  let row = parts.join(' ');
+  if (suffix != null && String(suffix).trim() !== '') {
+    row = `${row}  ${String(suffix).trim()}`;
+  }
+  return row;
+}
+
+/**
+ * Minimum terminal rows before focus neighborhood uses multi-line true edges.
+ * Below this, compact clue shape is allowed but must show 「已降级」.
+ * Picked so three-band Ink chrome (top status + footer) still fits with dense list.
+ */
+export const NEIGHBORHOOD_EDGES_MIN_ROWS = 22;
+
+/**
+ * @param {number | null | undefined} terminalRows
+ * @returns {'edges' | 'compact'}
+ */
+export function resolveNeighborhoodLayout(terminalRows) {
+  // Unknown / omitted height → default to full edges (completion shape).
+  // Note: Number(null) === 0, so null/undefined must be rejected before Number().
+  if (terminalRows == null || terminalRows === '') return 'edges';
+  const n = Number(terminalRows);
+  if (!Number.isFinite(n)) return 'edges';
+  if (n < NEIGHBORHOOD_EDGES_MIN_ROWS) return 'compact';
+  return 'edges';
+}
+
+/**
  * @param {Array<object>} issues
  */
 export function collectGraphWarnings(issues) {
@@ -142,10 +284,308 @@ function tryLinearOrder(issues) {
 }
 
 /**
+ * Immediate upstream of focus = blockedBy entries that exist on the board.
+ * @param {Array<object>} issues
+ * @param {string | null | undefined} focusId
+ * @returns {string[]}
+ */
+export function listDirectUpstream(issues, focusId) {
+  if (!focusId) return [];
+  const list = Array.isArray(issues) ? issues : [];
+  const byId = new Map(list.map((issue) => [issue.id, issue]));
+  const focus = byId.get(focusId);
+  if (!focus) return [];
+  const idSet = new Set(byId.keys());
+  return sortIds((focus.blockedBy || []).filter((blockerId) => idSet.has(blockerId)));
+}
+
+/**
+ * Immediate downstream = open issues that list focus in blockedBy.
+ * @param {Array<object>} issues
+ * @param {string | null | undefined} focusId
+ * @returns {string[]}
+ */
+export function listDirectDownstream(issues, focusId) {
+  if (!focusId) return [];
+  const list = Array.isArray(issues) ? issues : [];
+  const idSet = new Set(list.map((issue) => issue.id));
+  if (!idSet.has(focusId)) return [];
+  return sortIds(
+    list
+      .filter((issue) => (issue.blockedBy || []).includes(focusId))
+      .map((issue) => issue.id),
+  );
+}
+
+/**
+ * Focus for neighborhood: list highlight → current slot → board default → first board id.
+ * Spec allows either list highlight or slot as reasonable default.
+ *
+ * @param {Array<object>} issues
+ * @param {{
+ *   selectedIssueId?: string | null,
+ *   slotIssueId?: string | null,
+ *   defaultIssueId?: string | null,
+ * }} [opts]
+ * @returns {string | null}
+ */
+export function resolveFocusIssueId(
+  issues,
+  {
+    selectedIssueId = null,
+    slotIssueId = null,
+    defaultIssueId = null,
+  } = {},
+) {
+  const list = Array.isArray(issues) ? issues : [];
+  const ids = new Set(list.map((issue) => issue.id));
+  for (const candidate of [selectedIssueId, slotIssueId, defaultIssueId]) {
+    if (candidate != null && candidate !== '' && ids.has(candidate)) return candidate;
+  }
+  return list[0]?.id ?? null;
+}
+
+/**
+ * Read-only direct up/downstream neighborhood of focus (not full-board map).
+ * Collapses each side beyond maxPerSide with +N.
+ *
+ * Default layout is multi-line **true edges** (tree branches). Compact clue
+ * chain is only for short terminals and must surface 「已降级」.
+ *
+ * @param {{
+ *   issues?: Array<object>,
+ *   focusId?: string | null,
+ *   slotIssueId?: string | null,
+ *   executableIds?: string[] | Set<string> | null,
+ *   maxPerSide?: number,
+ *   layout?: 'edges' | 'compact' | null,
+ *   terminalRows?: number | null,
+ * }} [options]
+ * @returns {{
+ *   lines: string[],
+ *   focusId: string | null,
+ *   upstream: string[],
+ *   downstream: string[],
+ *   layout: 'edges' | 'compact',
+ *   degraded: boolean,
+ * }}
+ */
+export function renderFocusNeighborhood({
+  issues = [],
+  focusId = null,
+  slotIssueId = null,
+  executableIds = null,
+  maxPerSide = 5,
+  layout = null,
+  terminalRows = null,
+} = {}) {
+  const list = Array.isArray(issues) ? issues : [];
+  const byId = new Map(list.map((issue) => [issue.id, issue]));
+  const lines = [];
+  const resolvedLayout = layout === 'compact' || layout === 'edges'
+    ? layout
+    : resolveNeighborhoodLayout(terminalRows);
+  const degraded = resolvedLayout === 'compact';
+
+  if (!focusId || !byId.has(focusId)) {
+    const head = degraded
+      ? '已降级 · 焦点邻域: （无焦点）'
+      : '焦点邻域（只读 · 直接上下游 · 非全板）: （无焦点）';
+    lines.push(head);
+    return {
+      lines,
+      focusId: null,
+      upstream: [],
+      downstream: [],
+      layout: resolvedLayout,
+      degraded,
+    };
+  }
+
+  const execIds = executableIds == null
+    ? listExecutableIssueIds(list)
+    : [...executableIds];
+  const execSet = new Set(execIds);
+  const openMap = openBlockersById(list);
+  const markOf = (id) => issueMark({
+    closed: Boolean(byId.get(id)?.closed),
+    id,
+    slotIssueId,
+    executableIds: execSet,
+  });
+  /** Dense token: mark + short number (or short id). */
+  const tok = (id) => `${markOf(id)}${shortIssueLabel(id)}`;
+  /** Slightly longer token when side needs id disambiguation. */
+  const describe = (id) => `${markOf(id)}${shortIssueLabel(id)} ${id}`;
+  const denseRow = (id, extraSuffix = null) => {
+    const issue = byId.get(id) || { id };
+    const suffix = extraSuffix;
+    return formatIssueListRow(issue, {
+      mark: markOf(id),
+      titleMax: 20,
+      suffix,
+      openBlockersById: openMap,
+    });
+  };
+
+  const upstream = listDirectUpstream(list, focusId);
+  const downstream = listDirectDownstream(list, focusId);
+  const limit = Number.isFinite(Number(maxPerSide)) && Number(maxPerSide) > 0
+    ? Math.floor(Number(maxPerSide))
+    : 5;
+  const upMore = Math.max(0, upstream.length - limit);
+  const downMore = Math.max(0, downstream.length - limit);
+  const showUps = upstream.slice(0, limit);
+  const showDowns = downstream.slice(0, limit);
+
+  if (resolvedLayout === 'edges') {
+    // Column-aligned tree. Section gaps only when the terminal is tall enough;
+    // mid-height edges keep alignment without blowing the three-band budget.
+    const roomy = Number(terminalRows) >= 30;
+    lines.push('焦点邻域');
+    lines.push('  上游');
+    if (showUps.length === 0) {
+      lines.push('    （无）');
+    } else {
+      showUps.forEach((id, idx) => {
+        const branch = idx === showUps.length - 1 ? '└─' : '├─';
+        lines.push(`    ${branch} ${denseRow(id)}`);
+      });
+      if (upMore > 0) lines.push(`       … +${upMore}`);
+    }
+    if (roomy) lines.push('');
+    lines.push('  焦点');
+    // Same gutter as branch rows: 4 spaces + 2-col marker (`▶ `) + body.
+    lines.push(`    ▶ ${denseRow(focusId, '◀焦点')}`);
+    if (roomy) lines.push('');
+    lines.push('  下游');
+    if (showDowns.length === 0) {
+      lines.push('    （无）');
+    } else {
+      showDowns.forEach((id, idx) => {
+        const branch = idx === showDowns.length - 1 ? '└─' : '├─';
+        lines.push(`    ${branch} ${denseRow(id)}`);
+      });
+      if (downMore > 0) lines.push(`       … +${downMore}`);
+    }
+    return {
+      lines,
+      focusId,
+      upstream,
+      downstream,
+      layout: resolvedLayout,
+      degraded,
+    };
+  }
+
+  // Compact clue shape for short terminals — 「已降级」leads so clipping cannot hide it.
+  const side = (ids, more) => {
+    if (ids.length === 0) return '·';
+    const body = ids.map((id) => tok(id)).join('+');
+    return more > 0 ? `${body}+${more}` : body;
+  };
+  const chain = `${side(showUps, upMore)} ──► ${tok(focusId)}◀焦点 ──► ${side(showDowns, downMore)}`;
+  lines.push(`已降级 · 焦点邻域: ${chain}`);
+  if (showUps.length || showDowns.length) {
+    const upDetail = showUps.length
+      ? showUps.map((id) => describe(id)).join(' · ') + (upMore > 0 ? ` · +${upMore}` : '')
+      : '（无）';
+    const downDetail = showDowns.length
+      ? showDowns.map((id) => describe(id)).join(' · ') + (downMore > 0 ? ` · +${downMore}` : '')
+      : '（无）';
+    lines.push(`  上游: ${upDetail} · 下游: ${downDetail}`);
+  } else {
+    lines.push('  上游: （无） · 下游: （无）');
+  }
+
+  return {
+    lines,
+    focusId,
+    upstream,
+    downstream,
+    layout: resolvedLayout,
+    degraded,
+  };
+}
+
+/**
+ * Graph node token for ASCII dependency overview.
+ * Default compact: `★01`. Dense (global g): `★01[impl]可实施` so nodes are
+ * scannable rather than untitled dots.
+ *
+ * @param {object | null | undefined} issue
+ * @param {{
+ *   mark?: string,
+ *   dense?: boolean,
+ *   openBlockersById?: Map<string, string[]> | null,
+ * }} [opts]
+ * @returns {string}
+ */
+export function formatGraphNodeToken(issue, {
+  mark = '·',
+  dense = false,
+  openBlockersById = null,
+} = {}) {
+  const id = issue?.id ?? '—';
+  const short = shortIssueLabel(id);
+  const head = `${mark}${short}`;
+  if (!dense) return head;
+  const type = issueTypeLabel(issue);
+  const statusZh = issueBoardStatusLabelZh(issue, { openBlockersById });
+  return `${head}[${type}]${statusZh}`;
+}
+
+/**
+ * Lay out a linear dependency chain without one ugly super-wide row.
+ * Short chains stay on one line when they fit; longer chains go vertical.
+ *
+ * @param {string[]} tokens
+ * @param {{
+ *   maxLineWidth?: number,
+ *   maxInlineNodes?: number,
+ *   indent?: string,
+ * }} [opts]
+ * @returns {string[]}
+ */
+export function formatLinearDependencyLines(tokens, {
+  maxLineWidth = 72,
+  maxInlineNodes = 4,
+  indent = '  ',
+} = {}) {
+  const parts = Array.isArray(tokens) ? tokens.filter((t) => String(t || '').trim() !== '') : [];
+  if (parts.length === 0) return [`${indent}（无）`];
+  if (parts.length === 1) return [`${indent}${parts[0]}`];
+
+  const arrow = ' ──► ';
+  const single = `${indent}${parts.join(arrow)}`;
+  const widthBudget = Number.isFinite(Number(maxLineWidth)) && Number(maxLineWidth) > 20
+    ? Math.floor(Number(maxLineWidth))
+    : 72;
+  const inlineCap = Number.isFinite(Number(maxInlineNodes)) && Number(maxInlineNodes) > 0
+    ? Math.floor(Number(maxInlineNodes))
+    : 4;
+
+  // Keep a compact single row only when short and not wider than the band.
+  if (parts.length <= inlineCap && single.length <= widthBudget) {
+    return [single];
+  }
+
+  // Vertical chain: one node per line, easy to scan when the board grows.
+  const lines = [`${indent}${parts[0]}`];
+  for (let i = 1; i < parts.length; i += 1) {
+    lines.push(`${indent}──► ${parts[i]}`);
+  }
+  return lines;
+}
+
+/**
  * @param {{
  *   issues: Array<object>,
  *   slotIssueId?: string|null,
  *   executableIds?: string[]|null,
+ *   denseNodes?: boolean,
+ *   maxLineWidth?: number,
+ *   maxInlineNodes?: number,
  * }} options
  * @returns {{ lines: string[], executable: Array<{id:string,title?:string}>, warnings: string[] }}
  */
@@ -153,11 +593,15 @@ export function renderDependencyGraph({
   issues = [],
   slotIssueId = null,
   executableIds = null,
+  denseNodes = false,
+  maxLineWidth = 72,
+  maxInlineNodes = 4,
 } = {}) {
   const list = Array.isArray(issues) ? issues : [];
   const execIds = executableIds ? [...executableIds] : listExecutableIssueIds(list);
   const execSet = new Set(execIds);
   const byId = new Map(list.map((i) => [i.id, i]));
+  const openMap = openBlockersById(list);
   const executable = execIds.map((id) => ({
     id,
     title: byId.get(id)?.title ?? id,
@@ -176,7 +620,11 @@ export function renderDependencyGraph({
     slotIssueId,
     executableIds: execSet,
   });
-  const token = (id) => `${markOf(id)}${shortIssueLabel(id)}`;
+  const token = (id) => formatGraphNodeToken(byId.get(id) || { id }, {
+    mark: markOf(id),
+    dense: Boolean(denseNodes),
+    openBlockersById: openMap,
+  });
 
   const idSet = new Set(list.map((i) => i.id));
   const succs = new Map(list.map((i) => [i.id, []]));
@@ -190,7 +638,10 @@ export function renderDependencyGraph({
   const lines = [];
   const linear = tryLinearOrder(list);
   if (linear) {
-    lines.push(`  ${linear.map(token).join(' ──► ')}`);
+    lines.push(...formatLinearDependencyLines(linear.map(token), {
+      maxLineWidth,
+      maxInlineNodes: denseNodes ? Math.min(3, maxInlineNodes) : maxInlineNodes,
+    }));
   } else {
     // Multi-parent / fork: print each edge group from parents with ≤1 visual style.
     // Strategy: for each node with multiple successors, show fork; chains as arrows.
@@ -253,7 +704,9 @@ export function renderDependencyGraph({
     }
   }
 
-  return { lines, executable, warnings };
+  // Global dense overview must not pad with empty rows (blank-heavy frames).
+  const cleaned = lines.filter((line) => String(line).trim() !== '');
+  return { lines: cleaned, executable, warnings };
 }
 
 /**
