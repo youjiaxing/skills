@@ -1,10 +1,10 @@
 ---
 name: yjx-grill
-description: Stress-test a design, architecture, or plan with dynamic decision tree exploration, autonomous fact-finding, explicit discarded alternatives, and clear separation of user decisions from agent inferences. Use when the user runs /yjx-grill to align deeply and efficiently without questionnaire fatigue.
+description: Stress-test a plan, architecture, or complex decision with dynamic decision-tree exploration, autonomous fact-finding, balanced trade-off cards, and clear separation of human commitments from agent inferences. Use when the user runs /yjx-grill to align deeply and efficiently across any domain without questionnaire fatigue.
 disable-model-invocation: true
 ---
 
-Stress-test requirements and system designs thoroughly by exploring and pruning the decision tree. Maximize alignment depth and clarity while minimizing human cognitive fatigue: inquire only about high-impact architectural and business forks, bundle transparent agent inferences with explicit discarded alternatives and reasons, and turn the discussion into a compact alignment artifact that exposes confirmed behavior, inferred companion rules, and their exact technical contract rather than a narrative prose summary.
+Stress-test requirements, system architectures, and plans thoroughly by exploring and pruning a decision tree. Maximize alignment depth and clarity while minimizing human cognitive fatigue: inquire only about high-impact architectural and business forks, present balanced options with explicit inherent costs, bundle transparent agent inferences with discarded alternatives, and deliver a compact 4-part alignment artifact that exposes confirmed behavior, inferred companion rules, and a domain-adaptive execution contract rather than a narrative prose summary.
 
 ## Maintenance
 
@@ -12,102 +12,126 @@ When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MA
 
 ## 1. Fact Autonomy (Never Ask Knowable Facts)
 
-Before formulating questions, independently investigate the codebase, schemas, configuration files, and existing protocols using available search/read tools and subagents.
-- Never ask the user about existing code behavior, current data models, or system facts that can be discovered locally.
+Before formulating questions, independently investigate the environment (codebase, schemas, configuration files, existing protocols, research notes, or domain materials) using available search/read tools and subagents.
+- Never ask the user about discoverable facts, existing models, or verifiable context.
 - Use discovered facts to prune impossible or irrelevant branches before presenting questions.
 
 ## 2. Scope Slicing & Decision Taxonomy
 
-### Scope Slicing (For Large Features)
-When a feature spans multiple distinct subsystems or lifecycle boundaries (e.g., Signup vs. Matchmaking vs. Settlement):
+### Scope Slicing (For Large Endeavors)
+When an initiative spans multiple distinct subsystems, phases, or lifecycle boundaries (e.g., Auth vs. Billing vs. Reporting; or Transport vs. Lodging vs. Activities):
 - Do NOT mix all subsystems into one monolithic grilling session.
 - Decompose into naturally cohesive **Capability Slices** based on independent domain or lifecycle boundaries, and process them sequentially: complete and confirm the artifact for Slice N before starting Slice N+1.
 - Do not merge contracts across slices.
 
 ### Two-Tier Decision Taxonomy (Strict Weight Separation)
 Classify every element in the design silently into one of two tiers:
-- **User Decisions (P0 / Highest Weight -> User-Confirmed Decisions)**:
-  - Scope: True source of truth / authority ownership, core architectural trade-offs, cross-boundary data flows, irreversible state transitions, and concurrency/transaction boundaries.
-  - Action: **The ONLY tier presented as direct questions to the user.** These form the active nodes of the decision tree. When an option is chosen, any downstream architectural or business forks it unlocks must continue to be explored across rounds until all high-impact forks on the chosen path are resolved. Once agreed, these become high-weight commitments in Part 1 of the artifact.
+- **User Decisions (P0 / Highest Weight -> User-Confirmed Commitments)**:
+  - Scope: True source of truth / authority ownership, foundational architecture/strategy trade-offs, boundary contracts, irreversible state transitions, and hard constraints.
+  - Action: **The ONLY tier presented as direct questions to the user.** These form the active nodes of the decision tree. When an option is chosen, any downstream forks it unlocks must continue to be explored across rounds until all high-impact forks on the chosen path are resolved. Once agreed, these become high-weight commitments in Part 1 of the artifact.
 - **Agent Inferences (P1 / Default Companion Rules -> Agent-Inferred Defaults)**:
-  - Scope: Concrete edge cases, fallback strategies, retry limits, backoff algorithms, timeouts, dead-letter alarms, and localized threshold values.
+  - Scope: Concrete edge cases, fallback strategies, retry limits, backoff rules, timeouts, localized thresholds, validation rules, or default parameters.
   - Action: **Never asked as standalone questions.** Instead, bundle them visibly into Option 1 (or the matching companion package for a custom user decision) as adopted defaults accompanied by **explicitly discarded alternative approaches and their discard rationale**. Once accepted or inferred, they appear in Part 2 for fast, individual review and override.
-- **Implementation Details (Sub-P1)**: Localized helper functions, internal variable names, minor error strings — decided autonomously per codebase conventions and neither asked nor highlighted.
+- **Implementation Details (Sub-P1)**: Localized helper functions, internal variable names, minor phrasing — decided autonomously per domain conventions and neither asked nor highlighted.
 
-## 3. Dynamic Frontier Exploration & Question Round Discipline
+## 3. Dynamic Frontier Exploration & Balanced Question Cards
 
-- **Dynamic Frontier Exploration**:
-  - The grilling session is a **decision tree traversal along the active path**.
-  - Settling a decision prunes unchosen alternative branches, but **unblocks any downstream architectural forks (the new frontier)** on the chosen branch.
-  - Evaluate the chosen path after each round. If it introduces new non-trivial architectural trade-offs, irreversible state paths, or boundary conflicts, **advance to the next round of questions (1 to 3 questions per round)**.
-  - **No arbitrary depth/round limit**: Continue iterating across rounds until the active frontier contains no more unresolved architectural/business forks and is reduced entirely to deterministic agent inferences.
-- **Batch Discipline**: Keep each round compact (typically 1 to 3 questions) to avoid cognitive overload; wait for the user's reply before proceeding.
-- **Question & Option Format**: Every question must be multiple-choice with 1-based numbered options.
-  - Present each option in up to three parts, in this order: **Core decision**, **Key assumptions**, and **Agent inferences**. Omit empty parts.
-  - **Option 1**: Recommend the approach that best fits current repository conventions and confirmed decisions in this slice. Include:
-    - `Core decision`: The specific behavioral/architectural path selected.
-    - `❗️Key assumptions`: Material assumptions that deserve early review (marked with `❗️` for critical risks or `⚠️` for notable assumptions).
-    - `Agent inferences`: Concrete companion rules adopted, formatted as: `[<Rule Name>]: <Adopted default> (Discarded: ❌ <Alternative A> [<reason>]; ❌ <Alternative B> [<reason>])`.
-  - **Options 2+**: Alternative approaches, accompanied by clear **Discard reason** (why they are not preferred as the primary approach).
-  - **Custom User Decisions**: When the user provides a custom answer or rejects all options, extract their core commitment, autonomously derive a matching set of Agent Inferences (with discarded alternatives and reasons), and evaluate whether new downstream frontier questions must be asked in the next round.
-- **Localization**: Keep this skill file in English. At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate the option-part labels (`Core decision` -> `核心决策`, `Key assumptions` -> `关键假设`, `Agent inferences` -> `AI推断`). Keep internal tier labels (P0/P1) out of user-facing output.
+### Strict Orthogonality & Frontier Traversal
+- **Dynamic Frontier Exploration**: The grilling session is a decision-tree traversal along the active path. Settling a decision unblocks downstream forks (the new frontier) on the chosen branch.
+- **Strict Orthogonality Gate**: In any round, batch ONLY questions (1 to 3 questions) that must still be answered regardless of how other open questions in that round resolve. If question B depends on an option in question A, defer B to a later round.
+- **Pivots First**: Prioritize questions that could fundamentally reshape the tree or architecture over detail questions.
+- **No Arbitrary Depth Limit**: Continue iterating across rounds until the active frontier contains no more unresolved forks and is reduced entirely to deterministic agent inferences.
+
+### Balanced Question & Option Format
+Never present biased, one-sided sales pitches. Force critical evaluation by exposing trade-offs, inherent costs, and falsifiable assumptions symmetrically across all choices:
+
+- **Option 1 (Recommended)**:
+  - `Core decision`: The primary structural/behavioral path selected.
+  - `✅ Core gains`: The definitive benefits achieved.
+  - `⚠️ Inherent costs`: The unavoidable friction, complexity, risk, or trade-offs accepted by choosing this path.
+  - `❗️ Key assumptions`: Critical falsifiable assumptions whose invalidity immediately breaks the recommendation (marked with `❗️` for critical risks or `⚠️` for notable assumptions).
+  - `Agent inferences`: Concrete companion rules adopted, formatted as: `[<Rule Name>]: <Adopted default> (Discarded: ❌ <Alternative A> [<reason>]; ❌ <Alternative B> [<reason>])`.
+- **Options 2+ (Alternative Paths)**:
+  - `Core decision`: The alternative path.
+  - `💡 When to prefer`: Specific scenarios, priorities, or constraint shifts where this option becomes strictly superior to Option 1.
+  - `Discard reason`: Why it was deprioritized under current baseline assumptions.
+- **Localization**: Keep this skill file in English. At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Core gains` -> `核心收益`, `Inherent costs` -> `固有代价`, `Key assumptions` -> `关键假设`, `Agent inferences` -> `AI推断`, `When to prefer` -> `何时应选`).
 
 Example format:
 
 ```markdown
 ### ❓ Q1: <Decision Title>
+<Brief context or situation description>
+
 1. **<Recommended Approach>** (Recommended)
    * **Core decision**: <The primary behavior selected by this question>
-   * **❗️Key assumptions**: <Material assumptions that deserve first review>
+   * **✅ Core gains**: <The decisive benefits achieved>
+   * **⚠️ Inherent costs**: <The unavoidable trade-offs, friction, or risks accepted>
+   * **❗️ Key assumptions**: <Material assumptions that must hold true for this option>
    * **Agent inferences**:
      - [<Rule Name>]: <Adopted default rule> (Discarded: ❌ <Alternative A> [<reason>]; ❌ <Alternative B> [<reason>])
 2. **<Alternative Approach A>**
-   * **Discard reason**: <Why this alternative is not preferred as the primary approach>
+   * **Core decision**: <Alternative path>
+   * **💡 When to prefer**: <Conditions or shifted priorities where this alternative is superior>
+   * **Discard reason**: <Why this alternative is deprioritized under current baseline>
 ```
 
-## 4. Decision Resolution & Branch Pruning
+## 4. Special Interactions (Clarifications & Inquiries)
 
-Interpret replies by meaning rather than format. **Only an unambiguous commitment changes decision state; everything else informs the analysis without settling a decision.**
+If the user asks for more context, background explanation, or clarification before answering (e.g., "What does this term mean?" or "Why did you discard B?"):
+- **Pause the round immediately.**
+- Provide the explanation in plain conversational text and wait.
+- Do NOT re-ask or re-dump the unanswered questions in the same turn.
+- After the user understands the context, resume the unanswered questions.
 
-- Extract every explicit commitment from the reply, whether expressed as an option number, natural language, or a custom decision. Preserve its scope and conditions, and resolve multiple commitments independently.
-- For each settled decision, echo the concrete interpretation in one line and prune all unchosen alternative branches.
-- Expand the active frontier along the selected branch. If downstream trade-offs remain open, formulate the next round of questions.
-- If meaning is ambiguous or conflicts with a settled decision, keep only that point unsettled and ask the minimum question needed to resolve it before advancing.
+## 5. Resolution, Custom Overrides & Cascade Impact Protocol
 
-## 5. 4-Part Alignment Artifact & Verification Order
+Interpret replies by meaning rather than rigid format. **Only an unambiguous commitment changes decision state; non-committal input informs analysis without settling a decision.**
 
-Once the active frontier is empty (all User Decisions on the active path are settled and only Agent Inferences remain), output ONLY a compact 4-part alignment artifact in the order below. Do NOT write a narrative prose summary. The artifact exists to expose a mismatch between the user's intent and the agent's implementation model before code is written.
+### Modular Overrides & Custom Decisions
+When the user provides a custom answer, a modular override (e.g., "Option 1 core, but replace inference I-1 with Alternative B"), or rejects all options:
+1. **Semantic Disassembly**: Extract the user's P0 core commitment, explicit P1 companion overrides, and newly introduced hard constraints.
+2. **Coherence Check**: Check for internal contradictions. If conflicting, do not force-merge; explain the tension in one sentence and ask a pinpoint alignment question.
+3. **Companion Re-derivation**: Autonomously derive a matching set of Agent Inferences (with discarded alternatives and reasons) tailored to the custom decision.
 
-Every behavior or policy that can materially change the implementation must appear in exactly one of the first two sections. Keep them physically separate: a user-confirmed decision always takes precedence over an agent inference, and accepting a recommended option never turns an inferred companion rule into a user-confirmed requirement.
+### Forward Expansion & Backward Cascade Impact
+Every settled decision propagates both forward and backward across the dependency graph:
+- **Forward Expansion**: Expand the active frontier along the selected path. If downstream trade-offs open, formulate the next round.
+- **Backward Impact (Premise Change & Invalidation)**: If a new decision contradicts or invalidates previously settled nodes:
+  - **Prune Dead Branches**: Immediately prune and invalidate all orphaned historical branches, old P1 inferences, and outdated contract drafts. Never allow dead assumptions to leak into the final artifact.
+  - **Targeted Re-opening**: If a previously settled P0 node is in direct conflict, pause and re-open only that specific conflicting node for clarification.
+  - **Silent Re-computation**: Silently update dependent historical P1 inferences without burdening the user.
+- **Cascade Echo**: Before presenting the next round or the final artifact, echo the interpreted commitment and any backward adjustments in a single clear line:
+  `🎯 Confirmed Decision [Q<N>]: <interpretation>; (Cascade note: <pruned/updated historical assumptions>)`.
 
-Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep the skill's internal P0/P1 vocabulary out of the artifact.
+## 6. Domain-Adaptive 4-Part Alignment Artifact
 
-1. **User Decisions & State Model (用户决策与状态模型)**:
-   Present only explicit user commitments. Start with the business states and their meanings, then show the lifecycle in the form that makes change easiest to verify: a state/sequence diagram when order or transition matters, otherwise a compact transition table using `Before State | Trigger / Condition | After State | Observable Result`. Place no agent-inferred limits, retries, fallbacks, performance targets, or implementation choices here.
-   - Preserve every confirmed condition, scope, unchanged outcome, failure path, and forbidden transition.
-   - State cross-cutting invariants beside the model rather than duplicating them across transitions.
-   - This section is high weight: later work may change it only after an explicit user revision.
+Once the active frontier is empty (all User Decisions on the active path are settled and only Agent Inferences remain), output ONLY a compact 4-part alignment artifact in the order below. Do NOT write a narrative prose summary. The artifact exists to expose any mismatch between human intent and the agent's execution model before work begins.
 
-2. **Agent Inferences (AI推断 - Individually Adjustable & Transparent)**:
-   Group the concrete inferred companion rules in the same business order as the behavior model. Give each rule a stable local identifier (e.g., `I-1`, `I-2`) so the user can revise or override one item without reopening the slice.
+Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
+
+1. **User Commitments & Core Model (用户决策与核心模型)**:
+   Present only explicit user commitments. Model the core lifecycle, state machine, sequence flow, or chronological milestones in the form that makes verification easiest:
+   - For stateful systems: A state transition table (`Before State | Trigger / Condition | After State | Observable Result`) or sequence diagram.
+   - For processes, workflows, or planning (e.g., travel, event, product rollout): A structured phase/timeline matrix with explicit ownership, stage gates, and key transition triggers.
+   - Preserve every confirmed condition, scope, unchanged outcome, failure path, and forbidden transition. Place no agent-inferred parameters or implementation choices here.
+
+2. **Agent Inferences (AI推断 - Transparent & Individually Adjustable)**:
+   Group the concrete inferred companion rules in the same domain order as the core model. Give each rule a stable local identifier (e.g., `I-1`, `I-2`) so the user can revise or override one item without reopening the entire slice.
    - Present as a structured table with columns: `ID | Inferred Rule | Discarded Alternatives & Reasons | Observable Consequence`.
-   - Classify material items by review priority. Put items whose mistake could change authority, ownership, state meaning or transition, cross-boundary behavior, permission, an irreversible effect, or the protocol shape first and mark them with `❗️`. Put other material items next and mark them with `⚠️`. Keep remaining material items after them without a marker.
-   - For each item, state the concrete inference, the discarded alternatives with discard reasons, and the resulting observable consequence.
-   - Expose material limits, ordering, retries, fallbacks, concurrency, lifecycle, failure handling, and performance policies. Do not hide them inside the technical contract.
-   - These remain agent-inferred even when accepted with a recommended option; they are default implementation baselines, not user-originated decisions.
+   - Classify material items by review priority: Mark items whose mistake could change authority, ownership, safety, irreversible effects, or core protocol shape with `❗️`. Mark other material items with `⚠️`. Keep remaining baseline items without a marker.
+   - Expose concrete edge cases, limits, ordering, retries, fallbacks, concurrency, and default policies.
 
-3. **Technical Contracts (技术契约)**:
-   Project the first two sections into exact definitions matching the target repository stack, such as Protobuf messages and RPCs, HTTP method/path/request/response/errors, database schemas, domain types, or language-native state models. No abstract pseudocode.
-   - The contract must make the implementation model precise enough for the user to catch incorrect fields, states, ownership, write authority, protocol shape, and collaboration boundaries before implementation.
-   - Use repository-standard business comments to explain each definition's role, owner, lifecycle, field semantics, and non-obvious invariants. Comments serve alignment by making the agent's interpretation explicit; they are not a tutorial.
-   - Keep decision provenance out of code comments: do not add communication meta-tags such as `[Human Confirmed]` or `[Agent Inferred]`.
-   - Do not present inferred constants or policies as confirmed requirements. Keep their origin visible in Section 2 even when the technical contract includes them.
-   - Strictly NO unconfirmed or speculative fields, states, RPCs, routes, errors, or behaviors.
+3. **Execution Specification / Concrete Contract (落地执行规格 / 契约)**:
+   Project the first two sections into exact, domain-adaptive, actionable definitions matching the target problem space without speculative placeholders:
+   - **Software Engineering**: Exact repository-grounded definitions (Protobuf messages/RPCs, HTTP routes/schemas, database tables, domain types, or structs) with standard business comments.
+   - **Planning & Operations (e.g., Travel, Projects, Events)**: Exact execution tables (booking/itinerary matrices, daily timetables, budget allocation tables, checklist specifications, or deliverable standards).
+   - Strictly NO unconfirmed or speculative fields, states, routes, or behaviors.
 
-4. **Forbidden Paths (禁止事项 - Anti-Goals)**:
-   List only concrete implementation paths that could appear compatible with the positive contract but would violate the aligned intent, such as unauthorized state mutation, silent fallback, local recomputation of authoritative state, or a disallowed intermediary layer. Omit generic engineering platitudes.
+4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**:
+   List only concrete implementation or execution paths that could appear compatible with the positive contract but would violate the aligned intent (e.g., unauthorized state mutation, silent fallback, unvetted intermediate steps, disallowed shortcuts). Omit generic platitudes.
 
-## 6. Completion & Boundary
+## 7. Completion & Execution Boundary
 
-- **Stop Condition**: The active slice is complete only after the user explicitly confirms all four parts of the alignment artifact defined in Section 5. If multiple slices exist, confirm each slice before advancing and stop after the final confirmed slice.
-- **Execution Boundary**: Do NOT write application code or modify codebase source files within this skill. Stop immediately after delivering the confirmed artifact and wait for the user's next command.
+- **Stop Condition**: The active slice is complete only after the user explicitly confirms all four parts of the alignment artifact defined in Section 6. If multiple slices exist, confirm each slice before advancing and stop after the final confirmed slice.
+- **Execution Boundary**: Do NOT write application code, modify repository source files, or execute implementation actions within this skill. Stop immediately after delivering the confirmed artifact and wait for the user's next command.
