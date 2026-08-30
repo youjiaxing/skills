@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access, copyFile, lstat, mkdir, readFile, readdir, readlink, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -13,6 +13,7 @@ export const repoRoot = path.resolve(scriptDir, '..');
 export const skillsRoot = path.join(repoRoot, 'skills');
 export const localConfigPath = path.join(repoRoot, 'developer-targets.local.yaml');
 export const templateConfigPath = path.join(repoRoot, 'developer-targets.example.yaml');
+export const antigravityConfigPath = path.join(os.homedir(), '.gemini', 'config', 'skills.json');
 
 const COMMON_TARGETS = [
   { label: 'Claude Code', value: '~/.claude/skills' },
@@ -82,7 +83,7 @@ export async function scanSkills(root = skillsRoot) {
   return skills.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export async function readTargets(configPath = localConfigPath) {
+export async function readDeveloperConfig(configPath = localConfigPath) {
   const source = await readFile(configPath, 'utf8');
   const document = parseDocument(source);
   if (document.errors.length > 0) {
@@ -90,8 +91,72 @@ export async function readTargets(configPath = localConfigPath) {
   }
 
   const config = document.toJS() ?? {};
-  if (!Array.isArray(config.targets)) throw new Error('配置项 targets 必须是数组');
-  return config.targets.map((target) => expandTargetPath(target));
+  if (config.targets !== undefined && !Array.isArray(config.targets)) {
+    throw new Error('配置项 targets 必须是数组');
+  }
+  const targets = (config.targets ?? []).map((target) => expandTargetPath(target));
+  const antigravity = Boolean(config.antigravity);
+  return { targets, antigravity, document };
+}
+
+export async function readTargets(configPath = localConfigPath) {
+  const { targets } = await readDeveloperConfig(configPath);
+  return targets;
+}
+
+export async function readAntigravityConfig(filePath = antigravityConfigPath) {
+  try {
+    const source = await readFile(filePath, 'utf8');
+    const parsed = JSON.parse(source);
+    if (typeof parsed !== 'object' || parsed === null) return { entries: [] };
+    if (!Array.isArray(parsed.entries)) parsed.entries = [];
+    return parsed;
+  } catch (error) {
+    if (error.code === 'ENOENT') return { entries: [] };
+    throw error;
+  }
+}
+
+export function isSkillsRootInAntigravity(antigravityConfig, root = skillsRoot) {
+  const targetKey = pathKey(root);
+  return (antigravityConfig.entries ?? []).some((entry) => {
+    if (!entry || typeof entry.path !== 'string') return false;
+    try {
+      return samePath(expandTargetPath(entry.path), targetKey);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export async function checkAntigravityStatus({ enabled = false, root = skillsRoot, filePath = antigravityConfigPath } = {}) {
+  if (!enabled) return { status: 'disabled', path: filePath };
+  const config = await readAntigravityConfig(filePath);
+  const mounted = isSkillsRootInAntigravity(config, root);
+  return {
+    status: mounted ? 'configured' : 'missing',
+    path: filePath,
+    entryPath: path.resolve(root).replaceAll('\\', '/'),
+  };
+}
+
+export async function syncAntigravityConfig({ enabled = false, root = skillsRoot, filePath = antigravityConfigPath } = {}) {
+  if (!enabled) return { action: 'skipped' };
+  const config = await readAntigravityConfig(filePath);
+  if (isSkillsRootInAntigravity(config, root)) {
+    return { action: 'unchanged', path: filePath };
+  }
+  const normalizedEntryPath = path.resolve(root).replaceAll('\\', '/');
+  const updated = {
+    ...config,
+    entries: [
+      ...(config.entries ?? []),
+      { path: normalizedEntryPath },
+    ],
+  };
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(updated, null, 2)}\n`, 'utf8');
+  return { action: 'updated', path: filePath, entryPath: normalizedEntryPath };
 }
 
 export function mergeTargets(configTargets, cliTargets) {
@@ -141,11 +206,31 @@ async function collectPruneActions(targetRoot, currentSkills, root = skillsRoot)
   return actions;
 }
 
+export async function canonicalizeTargets(targets) {
+  const result = [];
+  const seen = new Set();
+  for (const target of targets) {
+    let resolved = target;
+    try {
+      resolved = await realpath(target);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const key = pathKey(resolved);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(target);
+    }
+  }
+  return result;
+}
+
 export async function buildPlan({ skills, targets, force = false, prune = false, root = skillsRoot }) {
   const plan = { mkdirs: [], links: [], replacements: [], prunes: [], unchanged: [], conflicts: [] };
+  const effectiveTargets = await canonicalizeTargets(targets);
 
   // 第一阶段只读取文件系统并构造完整计划，任何冲突都会阻止后续写入。
-  for (const targetRoot of targets) {
+  for (const targetRoot of effectiveTargets) {
     const rootError = await validateTargetRoot(targetRoot, root);
     if (rootError) {
       plan.conflicts.push(rootError);
@@ -256,9 +341,7 @@ function parseSelection(input, candidates, currentIndexes) {
 
 async function runInit() {
   await ensureLocalConfig({ stopAfterCreate: false });
-  const source = await readFile(localConfigPath, 'utf8');
-  const document = parseDocument(source);
-  if (document.errors.length > 0) throw new Error(`配置文件格式错误: ${document.errors[0].message}`);
+  const { document, antigravity: currentAntigravity } = await readDeveloperConfig(localConfigPath);
 
   const configured = document.get('targets', true)?.toJSON() ?? [];
   const configuredKeys = new Set(configured.map((target) => pathKey(expandTargetPath(target))));
@@ -291,9 +374,17 @@ async function runInit() {
     const selectedCustom = custom.trim() === '' ? customTargets : custom.split(',').map((item) => item.trim()).filter(Boolean);
     const targets = [...selectedIndexes.map((index) => COMMON_TARGETS[index].value), ...selectedCustom];
 
+    const defaultAgChoice = currentAntigravity ? 'Y/n' : 'y/N';
+    const antigravityAnswer = await ask(`启用 Antigravity 全局挂载 (~/.gemini/config/skills.json) [${defaultAgChoice}]：`);
+    let enableAntigravity = currentAntigravity;
+    const agTrimmed = antigravityAnswer.trim().toLowerCase();
+    if (agTrimmed === 'y' || agTrimmed === 'yes') enableAntigravity = true;
+    else if (agTrimmed === 'n' || agTrimmed === 'no') enableAntigravity = false;
+
     document.set('targets', targets);
+    document.set('antigravity', enableAntigravity);
     await writeFile(localConfigPath, document.toString(), 'utf8');
-    console.log(`\n已更新本机配置，共 ${targets.length} 个目标目录。`);
+    console.log(`\n已更新本机配置，共 ${targets.length} 个目标目录，Antigravity 原生支持: ${enableAntigravity ? '已启用' : '已禁用'}。`);
   } finally {
     readline?.close();
   }
@@ -313,19 +404,34 @@ async function main() {
   if (options.command === 'status' && (options.force || options.prune)) throw new Error('status 不接受 --force 或 --prune');
 
   let configTargets = [];
+  let antigravityEnabled = false;
   if (!options.noConfig) {
     const created = await ensureLocalConfig({ stopAfterCreate: true });
     if (created) return;
-    configTargets = await readTargets();
+    const devConfig = await readDeveloperConfig();
+    configTargets = devConfig.targets;
+    antigravityEnabled = devConfig.antigravity;
   }
 
   const targets = mergeTargets(configTargets, options.targets);
-  if (targets.length === 0) throw new Error('没有目标目录；请运行 npm run init、编辑本机配置，或传入 --target');
+  if (targets.length === 0 && !antigravityEnabled) {
+    throw new Error('没有目标目录且未启用 Antigravity；请运行 npm run init、编辑本机配置，或传入 --target');
+  }
   const skills = await scanSkills();
   if (skills.length === 0) throw new Error('skills/ 下没有包含 SKILL.md 的直接子目录');
 
   const plan = await buildPlan({ skills, targets, force: options.force, prune: options.prune });
   console.log(formatPlan(plan));
+
+  if (antigravityEnabled) {
+    const agStatus = await checkAntigravityStatus({ enabled: true });
+    if (agStatus.status === 'configured') {
+      console.log(`= 已原生挂载  Antigravity (${agStatus.path})`);
+    } else {
+      console.log(`+ 待写入配置  Antigravity (${agStatus.path} -> ${agStatus.entryPath})`);
+    }
+  }
+
   if (plan.conflicts.length > 0) {
     console.error('\n发现冲突，未执行任何修改：');
     plan.conflicts.forEach((conflict) => console.error(`- ${conflict}`));
@@ -335,6 +441,12 @@ async function main() {
   if (options.command === 'status') return;
 
   await executePlan(plan);
+  if (antigravityEnabled) {
+    const agResult = await syncAntigravityConfig({ enabled: true });
+    if (agResult.action === 'updated') {
+      console.log(`\n已更新 Antigravity 全局配置: ${agResult.path}`);
+    }
+  }
   console.log('\n处理完成。');
 }
 

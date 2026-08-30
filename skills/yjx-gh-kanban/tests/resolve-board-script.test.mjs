@@ -24,13 +24,14 @@ async function makeSkillsRoot(t, { withSkill = true } = {}) {
 }
 
 test('defaultSkillRoots covers common Agent skill install directories', () => {
-  const home = '/Users/example';
-  const roots = defaultSkillRoots({ home, env: {}, projectRoot: '/repo' });
+  const home = path.resolve('/Users/example');
+  const projectRoot = path.resolve('/repo');
+  const roots = defaultSkillRoots({ home, env: {}, projectRoot });
   assert.deepEqual(roots, [
     path.join(home, '.agents', 'skills'),
     path.join(home, '.claude', 'skills'),
     path.join(home, '.codex', 'skills'),
-    path.join('/repo', '.agents', 'skills'),
+    path.join(projectRoot, '.agents', 'skills'),
   ]);
 });
 

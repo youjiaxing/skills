@@ -13,3 +13,7 @@ targets: []
 
 # Agent Skills 通用目录
 # - ~/.agents/skills
+
+# Antigravity 原生支持（自动维护 ~/.gemini/config/skills.json 中的 entries）：
+antigravity: false
+

@@ -102,7 +102,7 @@ test('parseArgs covers human default, machine flags, parent filter, and limit', 
   assert.equal(parsed.limit, 50);
   assert.equal(parsed.readyLabel, 'afk-ready');
   assert.equal(parsed.parentFilter, 102);
-  assert.equal(parsed.projectRoot, '/repo');
+  assert.equal(parsed.projectRoot, path.resolve('/repo'));
 });
 
 test('parseParentFilter accepts number and #number forms', () => {

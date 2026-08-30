@@ -146,6 +146,7 @@ make test
 - `skills/` 的直接子目录只要包含 `SKILL.md`，就会被识别为可链接 skill。
 - 不可用或未准备发布的 skill 应删除或移出 `skills/`。
 - GitHub 仓库是唯一可编辑真源；Agent 全局目录中的开发链接指向该工作副本。
-- macOS 使用目录符号链接，Windows 使用目录联接（junction）。
+- Claude Code、Codex 等采用目录链接（macOS 使用符号链接，Windows 使用 junction）。
+- Antigravity 采用原生配置挂载（自动维护 `~/.gemini/config/skills.json` 中的 `entries`，由 `antigravity: true` 控制，避免 Windows 软链接穿透限制）。
 
 开发链接 CLI 的隔离验证步骤见 [`docs/development/verification.md`](docs/development/verification.md)。
