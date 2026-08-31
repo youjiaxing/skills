@@ -28,6 +28,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 | :--- | :--- | :--- |
 | `grilling` | **`yjx-grill`** | **解决问卷风暴与盲从陷阱**：动态决策树剪枝，显式呈现场景代价与关键假设；严格分离 P0 用户决策与 P1 伴随推断；输出 4 部分领域自适应对齐产物，杜绝长文叙事幻觉。 |
 | `to-spec` | **`yjx-to-spec`** | **解决 User Story 语义通胀与遗留系统破坏**：废除八股模板，以状态转移表与强类型接口为真源；引入 `Touched Areas`（物理修改白名单）与 `System Invariants`（系统不变量）；内建 ADR-Lite 记录被废弃方案以防反复回退。 |
+| `to-tickets` | **`yjx-to-tickets`** | **解决过度碎片化、魔数硬限与需求孤儿化**：以因果自洽、单会话无损收敛与审查自解释性为切分准则；内建覆盖率自检与不变量伴随注入；AFK 优先并显式分离 `ready-for-human` 门禁。 |
 | `wayfinder` | **`yjx-wayfinder`** | **解决跨 Session 上下文爆炸与虚假发票**：构建轻量决策地图（Map as Index），仅实例化当前无阻塞的 Frontier 票；支持决策划线作废；闭环时自动将碎片化决策合成最终交付物。 |
 | `setup-matt-pocock-skills` (Local) | **`yjx-local-tracker-setup`**<br>**`yjx-local-kanban`** | **规范完成语义与只读可视化**：将完成真源对齐为 `Status: resolved`（`+resolved-v1` 协议）；提供零依赖的人类看板、完整 JSON 依赖图与 Mermaid 拓扑。 |
 | *(GitHub 轨缺失)* | **`yjx-gh-kanban`**<br>**`yjx-gh-ralph`** | **原生扩展至 GitHub Issues 并杜绝失控 Auto-Run**：通过 `gh` CLI 统一管理 GitHub Issues 依赖树；单票手动确认 $\rightarrow$ 实施验证 $\rightarrow$ 提交收尾，**严禁无人看管的连续多票死循环**。 |
@@ -40,9 +41,10 @@ npx skills add youjiaxing/skills --skill yjx-grill
 本仓库 Skills 按 Agent 认知与执行的完整生命周期进行组织：
 
 ```
-[1. 认知与对齐]                 [2. 规划与规范]                [3. 跟踪与实施]
- ├─ yjx-discuss (快速收敛)       ├─ yjx-wayfinder (迷雾决策地图)  ├─ Local 轨 (setup + kanban)
- └─ yjx-grill (深度拷问对齐) ───►└─ yjx-to-spec (规范蓝图编译) ─►└─ GitHub 轨 (kanban + ralph)
+[1. 认知与对齐]                 [2. 规划与规范]                [3. 拆解与排程]              [4. 跟踪与实施]
+ ├─ yjx-discuss (快速收敛)       ├─ yjx-wayfinder (迷雾决策地图) 
+ └─ yjx-grill (深度拷问对齐) ───►└─ yjx-to-spec (规范蓝图编译) ──► yjx-to-tickets (原子切片) ─►├─ Local 轨 (setup + kanban)
+                                                                                            └─ GitHub 轨 (kanban + ralph)
 ```
 
 ### 1. 认知与对齐 (Thinking & Alignment)
@@ -55,7 +57,11 @@ npx skills add youjiaxing/skills --skill yjx-grill
 - **`yjx-wayfinder`**：跨 Session 大型模糊目标的探索式规划。在 Issue Tracker 上维护一张轻量决策地图，探索前沿决策票并逐层驱散认知迷雾，最终合成交付物。
 - **`yjx-to-spec`**：将讨论共识/对齐产物/规划图编译为高内聚、自包含的规范蓝图（Spec Blueprint）。明确声明系统不变量、修改物理白名单（Touched Areas）与准备度雷达。
 
-### 3. 任务跟踪与实施 (Trackers & Workflow)
+### 3. 任务拆解与排程 (Decomposition & Slicing)
+
+- **`yjx-to-tickets`**：将实现计划、规格说明书或会话共识拆解为单会话无损收敛、因果自洽、声明显式阻塞依赖且具备可证伪验收标准的示踪弹任务票据。
+
+### 4. 任务跟踪与实施 (Trackers & Workflow)
 
 #### Local Markdown 轨（本地文件式）
 - **`yjx-local-tracker-setup`**：为 Local Markdown tracker 写入 `+resolved-v1` 机器配置，并对齐约束文档为 `Status: resolved` 真源。
