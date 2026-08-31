@@ -47,15 +47,16 @@ Never present biased, one-sided sales pitches. Force critical evaluation by expo
 
 - **Option 1 (Recommended)**:
   - `Core decision`: The primary structural/behavioral path selected.
-  - `✅ Core gains`: The definitive benefits achieved.
-  - `⚠️ Inherent costs`: The unavoidable friction, complexity, risk, or trade-offs accepted by choosing this path.
+  - `Gains`: The decisive benefits achieved.
+  - `⚠️ Costs`: The unavoidable trade-offs, friction, or risks accepted by choosing this path.
   - `❗️ Key assumptions`: Critical falsifiable assumptions whose invalidity immediately breaks the recommendation (marked with `❗️` for critical risks or `⚠️` for notable assumptions).
-  - `Agent inferences`: Concrete companion rules adopted, formatted as: `[<Rule Name>]: <Adopted default> (Discarded: ❌ <Alternative A> [<reason>]; ❌ <Alternative B> [<reason>])`.
+  - `Companion inferences`: Concrete companion rules adopted, formatted as an indented sub-list:
+    - `<Rule Name>: <Adopted default rule> (Unadopted: <Alternative A> [<reason>]; <Alternative B> [<reason>])`
 - **Options 2+ (Alternative Paths)**:
   - `Core decision`: The alternative path.
-  - `💡 When to prefer`: Specific scenarios, priorities, or constraint shifts where this option becomes strictly superior to Option 1.
-  - `Discard reason`: Why it was deprioritized under current baseline assumptions.
-- **Localization**: Keep this skill file in English. At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Core gains` -> `核心收益`, `Inherent costs` -> `固有代价`, `Key assumptions` -> `关键假设`, `Agent inferences` -> `AI推断`, `When to prefer` -> `何时应选`).
+  - `Applicable scenarios`: Specific scenarios, priorities, or constraint shifts where this option becomes strictly superior to Option 1.
+  - `Unchosen reason`: Why it was deprioritized under current baseline assumptions.
+- **Localization**: Keep this skill file in English. At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Gains` -> `收益`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Unadopted` -> `未采纳`).
 
 Example format:
 
@@ -63,22 +64,22 @@ Example format:
 ### ❓ Q1: <Decision Title>
 <Brief context or situation description>
 
-1. **<Recommended Approach>** (Recommended)
+1. **<Recommended Approach>** [Recommended]
    * **Core decision**: <The primary behavior selected by this question>
-   * **✅ Core gains**: <The decisive benefits achieved>
-   * **⚠️ Inherent costs**: <The unavoidable trade-offs, friction, or risks accepted>
+   * **Gains**: <The decisive benefits achieved>
+   * **⚠️ Costs**: <The unavoidable trade-offs, friction, or risks accepted>
    * **❗️ Key assumptions**: <Material assumptions that must hold true for this option>
-   * **Agent inferences**:
-     - [<Rule Name>]: <Adopted default rule> (Discarded: ❌ <Alternative A> [<reason>]; ❌ <Alternative B> [<reason>])
+   * **Companion inferences**:
+     - <Rule Name>: <Adopted default rule> (Unadopted: <Alternative A> [<reason>]; <Alternative B> [<reason>])
 2. **<Alternative Approach A>**
    * **Core decision**: <Alternative path>
-   * **💡 When to prefer**: <Conditions or shifted priorities where this alternative is superior>
-   * **Discard reason**: <Why this alternative is deprioritized under current baseline>
+   * **Applicable scenarios**: <Conditions or shifted priorities where this alternative is superior>
+   * **Unchosen reason**: <Why this alternative is deprioritized under current baseline>
 ```
 
 ## 4. Special Interactions (Clarifications & Inquiries)
 
-If the user asks for more context, background explanation, or clarification before answering (e.g., "What does this term mean?" or "Why did you discard B?"):
+If the user asks for more context, background explanation, or clarification before answering (e.g., "What does this term mean?" or "Why did you not adopt B?"):
 - **Pause the round immediately.**
 - Provide the explanation in plain conversational text and wait.
 - Do NOT re-ask or re-dump the unanswered questions in the same turn.
@@ -92,7 +93,7 @@ Interpret replies by meaning rather than rigid format. **Only an unambiguous com
 When the user provides a custom answer, a modular override (e.g., "Option 1 core, but replace inference I-1 with Alternative B"), or rejects all options:
 1. **Semantic Disassembly**: Extract the user's P0 core commitment, explicit P1 companion overrides, and newly introduced hard constraints.
 2. **Coherence Check**: Check for internal contradictions. If conflicting, do not force-merge; explain the tension in one sentence and ask a pinpoint alignment question.
-3. **Companion Re-derivation**: Autonomously derive a matching set of Agent Inferences (with discarded alternatives and reasons) tailored to the custom decision.
+3. **Companion Re-derivation**: Autonomously derive a matching set of Agent Inferences (with unadopted alternatives and reasons) tailored to the custom decision.
 
 ### Forward Expansion & Backward Cascade Impact
 Every settled decision propagates both forward and backward across the dependency graph:
@@ -116,9 +117,9 @@ Translate all artifact headings, labels, and explanatory text into the user's co
    - For processes, workflows, or planning (e.g., travel, event, product rollout): A structured phase/timeline matrix with explicit ownership, stage gates, and key transition triggers.
    - Preserve every confirmed condition, scope, unchanged outcome, failure path, and forbidden transition. Place no agent-inferred parameters or implementation choices here.
 
-2. **Agent Inferences (AI推断 - Transparent & Individually Adjustable)**:
+2. **Agent Inferences (AI推断 / 配套推断 - Transparent & Individually Adjustable)**:
    Group the concrete inferred companion rules in the same domain order as the core model. Give each rule a stable local identifier (e.g., `I-1`, `I-2`) so the user can revise or override one item without reopening the entire slice.
-   - Present as a structured table with columns: `ID | Inferred Rule | Discarded Alternatives & Reasons | Observable Consequence`.
+   - Present as a structured table with columns: `ID | Inferred Rule | Unadopted Alternatives & Reasons | Observable Consequence`.
    - Classify material items by review priority: Mark items whose mistake could change authority, ownership, safety, irreversible effects, or core protocol shape with `❗️`. Mark other material items with `⚠️`. Keep remaining baseline items without a marker.
    - Expose concrete edge cases, limits, ordering, retries, fallbacks, concurrency, and default policies.
 

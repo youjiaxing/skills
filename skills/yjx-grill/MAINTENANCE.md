@@ -18,8 +18,8 @@ The skill was created to solve three complementary failure modes:
 
 ### Core Evolutionary Principles
 - **Unconstrained Depth via Frontier Traversal**: Settling a decision prunes unchosen alternatives, but unblocks downstream forks on the active path. As long as unresolved high-impact forks remain, grilling continues across rounds.
-- **Trade-off Symmetry & Inherent Costs**: Every recommended option must explicitly state its unavoidable friction, complexity, or risks (`⚠️ Inherent costs`) and its critical vulnerabilities (`❗️ Key assumptions`). Alternative options must define conditions where they become strictly superior (`💡 When to prefer`).
-- **Transparent Inferences with Causality**: Low-risk companion rules are bundled into Option 1 (and custom decisions) with explicitly discarded alternatives and reasons. They remain strictly causal to the current decision node.
+- **Trade-off Symmetry & Costs**: Every recommended option must explicitly state its unavoidable friction, complexity, or risks (`⚠️ Costs`) and its critical vulnerabilities (`❗️ Key assumptions`). Alternative options must define conditions where they become strictly superior (`Applicable scenarios`).
+- **Transparent Inferences with Causality**: Low-risk companion rules are bundled into Option 1 (and custom decisions) with explicitly unadopted alternatives and reasons. They remain strictly causal to the current decision node.
 - **Bidirectional Cascade Impact (DAG Traversal)**: A decision unblocks downstream frontier questions (forward) and may invalidate, prune, or re-open historical nodes (backward).
 
 ## Semantic Boundaries
@@ -33,7 +33,7 @@ Concision means removing repetition, filler, and non-value-adding prose. It does
 The four parts are distinct verification views, not interchangeable summaries:
 
 1. **User Commitments & Core Model (用户决策与核心模型)**: Verifies what the human explicitly committed to (P0 / highest weight). State transitions, lifecycle milestones, or phase matrices. No agent-inferred rules belong here.
-2. **Agent Inferences (AI推断 - Transparent & Individually Adjustable)**: Exposes the concrete companion rules the agent adopted along with explicitly discarded alternatives and reasons (P1 / default baseline).
+2. **Agent Inferences (AI推断 / 配套推断 - Transparent & Individually Adjustable)**: Exposes the concrete companion rules the agent adopted along with explicitly unadopted alternatives and reasons (P1 / default baseline).
 3. **Execution Specification / Concrete Contract (落地执行规格 / 契约)**: Shows how aligned behavior and inferences map to concrete, domain-adaptive boundaries (e.g., Protobuf/APIs/schemas for code; booking/timeline/budget matrices for operations/planning) without speculative placeholders.
 4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**: Identifies plausible paths or actions that would violate the aligned intent.
 
@@ -52,8 +52,8 @@ Before changing this skill, verify that the change:
 - preserves alignment-before-action as the primary outcome;
 - maintains domain neutrality (works for software, planning, strategy without hardcoding language-specific assumptions);
 - keeps decision depth unconstrained and driven by actual decision-tree frontier traversal;
-- requires symmetric exposure of inherent costs, trade-offs, and falsifiable assumptions;
-- enforces transparent agent inferences with discarded alternatives and discard reasons;
+- requires symmetric exposure of costs, trade-offs, and falsifiable assumptions;
+- enforces transparent companion inferences with unadopted alternatives and reasons;
 - strictly maintains the distinction and provenance between User Decisions (P0) and Agent Inferences (P1);
 - accounts for bidirectional cascade impact (pruning invalid historical branches upon premise changes);
 - preserves the distinct verification purpose of all four artifact parts;
