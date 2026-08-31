@@ -60,6 +60,7 @@ Before changing this skill, verify that the change:
 - treats concision as removal of non-value-adding expression, not loss of coverage or shallow questioning;
 - retains stable identifiers (`I-1`, `I-2`) for precise correction;
 - keeps the execution spec concrete, domain-grounded, and non-speculative;
+- keeps the skill file itself authored strictly in English, using explicit runtime localization mapping for user-facing multilingual interactions;
 - preserves the active-slice boundary and execution stop condition;
 - generalizes a problem instead of encoding a single example as a rule.
 
