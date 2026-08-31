@@ -26,8 +26,8 @@ When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MA
   Every major architectural or structural decision must record its **Rationale** and **Discarded Alternatives & Reasons** to prevent downstream implementers from re-proposing rejected approaches.
 - **Contract vs. Implementation Separation**:
   Mandate exact public data structures (Struct, Interface, Proto, SQL DDL diff, state transition tables, or BOMs). **Strictly forbid private helper logic, internal glue code, or hidden scripts** inside the Spec.
-- **High-Density Verifiable Assertions (Anti-BDD Inflation)**:
-  Avoid mechanical generation of dozens of trivial Given-When-Then scenarios. Focus strictly on 3–5 high-leverage causal scenarios, or compress multi-branch assertions into a compact **Scenario Outline Matrix**. For non-software domains, degrade naturally to inspection rubrics.
+- **Verifiable Acceptance (High-Signal Criteria)**:
+  Focus acceptance criteria on essential behaviors, high-impact failure modes, and system invariant verifications, rather than enumerating trivial or repetitive checks. Choose whichever presentation makes verification clearest: narrative scenarios for critical flows, or a compact table when handling multiple parameter combinations. For non-software domains, adapt naturally into concrete inspection rubrics.
 - **Domain-Adaptive Native Projection**:
   Reason internally using the universal 7-part meta-skeleton, but **render the final document 100% in the native terminology, schemas, and concrete artifacts of the target domain**. Never output abstract meta-jargon.
 - **Zero-Modal Friction**:
@@ -137,7 +137,7 @@ Render the Specification using the disambiguated standard template below:
 ---
 
 ## 7. Acceptance Criteria & Verifications (验收标准与验证断言)
-<!-- Max 3-5 high-leverage causal scenarios or compact scenario matrices. Strictly avoid BDD text inflation. -->
+<!-- Focus on essential behaviors and critical failure modes; use scenarios or a compact matrix based on clarity. -->
 
 ### 7.1 Core Scenarios
 - **[Scene-01] <Critical Path / High-Risk Failure>**:
@@ -145,8 +145,9 @@ Render the Specification using the disambiguated standard template below:
   - **When** <Triggering Action>
   - **Then** <Observable State Changes, Assertions & Persistence>
 
+<!-- Or use a compact matrix when multiple parameter combinations exist: -->
 ### 7.2 Scenario Assertion Matrix
-| Case ID | Given (Preconditions) | When (Trigger) | Then (Verifiable Invariant Assertions) |
+| Case ID | Given (Preconditions) | When (Trigger) | Then (Verifiable Assertions) |
 | :--- | :--- | :--- | :--- |
 | ... | ... | ... | ... |
 
@@ -181,7 +182,7 @@ Consult `docs/agents/issue-tracker.md` (or repo conventions) to determine the st
 - **NEVER** use Agile User Stories (`As a... I want...`) as the primary specification vehicle.
 - **NEVER** write private helper implementation logic or internal glue code inside the Spec (only public schemas/interfaces are allowed).
 - **NEVER** invent unconfirmed micro-values without safety range limits. Always wrap unconfirmed items as explicit `[Param-XX]` entries in Section 4.2.
-- **NEVER** mechanically generate dozens of trivial Given-When-Then scenarios (anti-BDD inflation). Focus strictly on 3–5 high-leverage scenarios or compact matrices.
+- **NEVER** mechanically generate dozens of trivial, repetitive scenario descriptions that pad document length without adding verifiable value.
 - **NEVER** omit Touched Areas and System Invariants when operating in an existing codebase.
 - **NEVER** prematurely slice the specification into vertical execution schedules or task tickets inside the document.
 - **NEVER** modify production application source code or execute implementation commands within this skill.

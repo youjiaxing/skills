@@ -11,7 +11,7 @@ This document captures the design intent, architectural rationale, and anti-drif
 2. **Brownfield Destabilization (Issue #843)**: LLMs operating in large legacy codebases tend to hallucinate wide refactors. Solved by mandating **Touched Areas** and **What MUST NOT Break (System Invariants)**.
 3. **Decision Amnesia & Regressions (Issue #689, #959)**: Without recording discarded alternatives, downstream agents frequently re-propose previously rejected flawed designs. Solved with **ADR-Lite Rationale & Discarded Alternatives**.
 4. **Epistemological Ambiguity**: Traditional tools silently hallucinate unvetted numbers. Solved by separating **P0 User Locked Choices** from **P1 Inferred Open Parameters with Range Limits**, crowned with a **Readiness Radar**.
-5. **BDD Text Inflation**: Replacing User Story inflation with 20 repetitive Given-When-Then paragraphs is equally toxic. Solved by strictly capping scenarios to 3–5 high-leverage causal cases or compressing into **Scenario Assertion Matrices**.
+5. **Anti-Padding Verification**: Avoid replacing User Story inflation with 20 repetitive Given-When-Then paragraphs. Solved by focusing on essential behaviors and high-impact failure modes, leveraging **Scenario Assertion Matrices** when multi-case combinations expand.
 6. **Decoupled Architecture**: Strictly independent of specific upstream interview tools or downstream execution commands, ensuring pure composability.
 
 ## Anti-Drift Validation Checklist
@@ -22,6 +22,6 @@ When modifying this skill, ensure none of the following regressions occur:
 - [ ] **No Premature Slicing**: Does the skill refrain from breaking the Spec into execution task slices, leaving vertical slicing to downstream planning?
 - [ ] **Brownfield Safety Intact**: Are `Touched Areas` and `What MUST NOT Break` strictly required?
 - [ ] **Epistemology Preserved**: Is there a clear distinction between human-confirmed choices (P0) and AI-inferred safety limits (P1)?
-- [ ] **Anti-BDD Inflation Active**: Is BDD generation strictly constrained to high-leverage scenarios and tables?
+- [ ] **High-Signal Verification**: Are acceptance criteria focused on essential behaviors without rigid formatting paranoia or repetitive padding?
 - [ ] **Tracker Compatibility**: Does the skill avoid polluting remote trackers with unregistered custom labels?
 - [ ] **Decoupling Maintained**: Are hardcoded slash command references excluded from the Spec output?
