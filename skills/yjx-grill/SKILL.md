@@ -47,7 +47,7 @@ Never present biased, one-sided sales pitches. Force critical evaluation by expo
 
 - **Option 1 (Recommended)**:
   - `Core decision`: The primary structural/behavioral path selected.
-  - `Gains`: The decisive benefits achieved.
+  - `Recommendation rationale`: The decisive reasons and benefits for prioritizing this path.
   - `⚠️ Costs`: The unavoidable trade-offs, friction, or risks accepted by choosing this path.
   - `❗️ Key assumptions`: Critical falsifiable assumptions whose invalidity immediately breaks the recommendation (marked with `❗️` for critical risks or `⚠️` for notable assumptions).
   - `Companion inferences`: Concrete companion rules adopted, formatted as an indented sub-list:
@@ -56,7 +56,7 @@ Never present biased, one-sided sales pitches. Force critical evaluation by expo
   - `Core decision`: The alternative path.
   - `Applicable scenarios`: Specific scenarios, priorities, or constraint shifts where this option becomes strictly superior to Option 1.
   - `Unchosen reason`: Why it was deprioritized under current baseline assumptions.
-- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Gains` -> `收益`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`).
+- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Recommendation rationale` -> `推荐理由`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`).
 
 Example format:
 
@@ -66,7 +66,7 @@ Example format:
 
 1. **<Recommended Approach>** [Recommended]
    * **Core decision**: <The primary behavior selected by this question>
-   * **Gains**: <The decisive benefits achieved>
+   * **Recommendation rationale**: <The decisive benefits and contextual fit achieved>
    * **⚠️ Costs**: <The unavoidable trade-offs, friction, or risks accepted>
    * **❗️ Key assumptions**: <Material assumptions that must hold true for this option>
    * **Companion inferences**:
