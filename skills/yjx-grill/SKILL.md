@@ -32,7 +32,7 @@ Classify every element in the design silently into one of two tiers:
 - **Agent Inferences (P1 / Default Companion Rules -> Agent-Inferred Defaults)**:
   - Scope: Concrete edge cases, fallback strategies, retry limits, backoff rules, timeouts, localized thresholds, validation rules, or default parameters.
   - Action: **Never asked as standalone questions.** Instead, bundle them visibly into Option 1 (or the matching companion package for a custom user decision) as adopted defaults accompanied by **explicitly discarded alternative approaches and their discard rationale**. Once accepted or inferred, they appear in Part 2 for fast, individual review and override.
-- **Implementation Details (Sub-P1)**: Localized helper functions, internal variable names, minor phrasing — decided autonomously per domain conventions and neither asked nor highlighted.
+- **Implementation Details (Sub-P1)**: Localized helper functions, routine defensive checks, nil validations, standard error logging, internal variable names — decided autonomously per domain conventions, strictly never asked and never highlighted in Part 2.
 
 ## 3. Dynamic Frontier Exploration & Balanced Question Cards
 
@@ -90,7 +90,7 @@ If the user asks for more context, background explanation, or clarification befo
 Interpret replies by meaning rather than rigid format. **Only an unambiguous commitment changes decision state; non-committal input informs analysis without settling a decision.**
 
 ### Modular Overrides & Custom Decisions
-When the user provides a custom answer, a modular override (e.g., "Option 1 core, but replace inference I-1 with Alternative B"), or rejects all options:
+When the user provides a custom answer, a modular override (e.g., "Option 1 core, but replace inference D1 with Alternative B"), or rejects all options:
 1. **Semantic Disassembly**: Extract the user's P0 core commitment, explicit P1 companion overrides, and newly introduced hard constraints.
 2. **Coherence Check**: Check for internal contradictions. If conflicting, do not force-merge; explain the tension in one sentence and ask a pinpoint alignment question.
 3. **Companion Re-derivation**: Autonomously derive a matching set of Agent Inferences (with explicitly evaluated alternatives and reasons) tailored to the custom decision.
@@ -111,18 +111,26 @@ Once the active frontier is empty (all User Decisions on the active path are set
 
 Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
 
-1. **User Commitments & Core Model (用户决策与核心模型 - 场景化行为流)**:
-   Present only explicit human commitments as a self-contained **Scenario-Driven Behavior Flow (场景化行为流)**. Avoid wide multi-column matrices or abstract state tables that force the reader to mentally piece together fragmented cells. Format as a numbered list of exhaustive, mutually exclusive business scenarios:
-   - **Scenario Formula**: `N. **[<Scenario Name>]** When <Trigger Event / Condition> ➔ <Core Action / State Transition>, ensuring <Observable Invariant / Result>`
-   - **Exhaustive Coverage**: Systematically cover normal execution (happy path), failure & degradation, timeouts, idempotency (late responses & anti-reversal), and defensive error handling.
-   - Preserve every confirmed condition, scope, unchanged outcome, failure path, and forbidden transition. Place no agent-inferred parameters or implementation choices here.
+1. **User Commitments & Core Model (用户决策与核心模型)**:
+   Present only explicit human commitments as a clean **Native Markdown Nested Tree** across all business scenarios. Never use ASCII/Unicode box-drawing characters (`├─`, `└─`, `┌`, `│`) that collapse into single-line garble in real renderers. Format using standard numbered items with indented bullet sub-lists:
+   ```markdown
+   1. **<Scenario Title>**
+      * **Trigger**: <Precondition / Trigger event>
+      * **Result**: <State transition / Core action> ➔ <Observable invariant / Guarantee>
+   ```
+   Systematically cover normal execution (happy path), failure & degradation, timeouts, idempotency (late responses & anti-reversal), and defensive boundaries. Place no agent-inferred parameters or implementation choices here.
 
-2. **Agent Inferences (AI推断 / 配套推断 - Transparent & Individually Adjustable)**:
-   Group the concrete inferred companion rules in the same domain order as the core model. Give each rule a stable local identifier (e.g., `I-1`, `I-2`) so the user can revise or override one item without reopening the entire slice.
-   - Present as a compact, structured list (or concise table without multiline wrapping clutter):
-     `* **<ID>** [❗️/⚠️] **<Rule Name>**: <Adopted default rule> (Rather than: <Alternative A> [<reason>]; <Alternative B> [<reason>]) ➔ <Observable Consequence>`
-   - Classify material items by review priority: Mark items whose mistake could change authority, ownership, safety, irreversible effects, or core protocol shape with `❗️`. Mark other material items with `⚠️`. Keep remaining baseline items without a marker.
-   - Expose concrete edge cases, limits, ordering, retries, fallbacks, concurrency, and default policies.
+2. **Key Inferences (关键设计推断 / 配套推断)**:
+   Group only genuine non-obvious engineering trade-offs (typically 1 to 3 items). Strictly filter out routine defensive coding (Sub-P1). Use unambiguous identifiers **`D1`, `D2`, `D3`...** (never use letter `I` to avoid font confusion).
+   Format each decision with symmetric, explicit rationale:
+   ```markdown
+   * **D1 [<Focus / Mechanism Name>]**
+     * **Adopted: <Adopted Choice Name>**
+       - Reason: <Why this approach is chosen under current context and constraints>
+     * **Alternative: <Alternative Choice Name>**
+       - When to prefer: <In what scenario or constraint shift this alternative becomes strictly superior>
+       - Currently unchosen: <Why it was not prioritized under the current baseline>
+   ```
 
 3. **Execution Specification / Concrete Contract (落地执行规格 / 契约)**:
    Project the first two sections into exact, domain-adaptive, actionable definitions matching the target problem space without speculative placeholders:
