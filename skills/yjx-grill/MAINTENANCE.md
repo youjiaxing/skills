@@ -32,7 +32,7 @@ Concision means removing repetition, filler, and non-value-adding prose. It does
 ### Universal Four-Part Artifact
 The four parts are distinct verification views, not interchangeable summaries:
 
-1. **User Commitments & Core Model (用户决策与核心模型)**: Verifies what the human explicitly committed to (P0 / highest weight). State transitions, lifecycle milestones, or phase matrices. No agent-inferred rules belong here.
+1. **User Commitments & Core Model (用户决策与核心模型)**: Verifies what the human explicitly committed to (P0 / highest weight). Expressed as self-contained **Scenario-Driven Behavior Flows** (`When X ➔ Action Y, Result Z`) to eliminate reader mental reconstruction. No agent-inferred rules belong here.
 2. **Agent Inferences (AI推断 / 配套推断 - Transparent & Individually Adjustable)**: Exposes the concrete companion rules the agent adopted along with explicitly unadopted alternatives and reasons (P1 / default baseline).
 3. **Execution Specification / Concrete Contract (落地执行规格 / 契约)**: Shows how aligned behavior and inferences map to concrete, domain-adaptive boundaries (e.g., Protobuf/APIs/schemas for code; booking/timeline/budget matrices for operations/planning) without speculative placeholders.
 4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**: Identifies plausible paths or actions that would violate the aligned intent.

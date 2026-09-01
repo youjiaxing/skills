@@ -111,15 +111,16 @@ Once the active frontier is empty (all User Decisions on the active path are set
 
 Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
 
-1. **User Commitments & Core Model (用户决策与核心模型)**:
-   Present only explicit user commitments. Model the core lifecycle, state machine, sequence flow, or chronological milestones in the form that makes verification easiest:
-   - For stateful systems: A state transition table (`Before State | Trigger / Condition | After State | Observable Result`) or sequence diagram.
-   - For processes, workflows, or planning (e.g., travel, event, product rollout): A structured phase/timeline matrix with explicit ownership, stage gates, and key transition triggers.
+1. **User Commitments & Core Model (用户决策与核心模型 - 场景化行为流)**:
+   Present only explicit human commitments as a self-contained **Scenario-Driven Behavior Flow (场景化行为流)**. Avoid wide multi-column matrices or abstract state tables that force the reader to mentally piece together fragmented cells. Format as a numbered list of exhaustive, mutually exclusive business scenarios:
+   - **Scenario Formula**: `N. **[<Scenario Name>]** When <Trigger Event / Condition> ➔ <Core Action / State Transition>, ensuring <Observable Invariant / Result>`
+   - **Exhaustive Coverage**: Systematically cover normal execution (happy path), failure & degradation, timeouts, idempotency (late responses & anti-reversal), and defensive error handling.
    - Preserve every confirmed condition, scope, unchanged outcome, failure path, and forbidden transition. Place no agent-inferred parameters or implementation choices here.
 
 2. **Agent Inferences (AI推断 / 配套推断 - Transparent & Individually Adjustable)**:
    Group the concrete inferred companion rules in the same domain order as the core model. Give each rule a stable local identifier (e.g., `I-1`, `I-2`) so the user can revise or override one item without reopening the entire slice.
-   - Present as a structured table with columns: `ID | Inferred Rule | Alternatives Considered & Reasons | Observable Consequence`.
+   - Present as a compact, structured list (or concise table without multiline wrapping clutter):
+     `* **<ID>** [❗️/⚠️] **<Rule Name>**: <Adopted default rule> (Rather than: <Alternative A> [<reason>]; <Alternative B> [<reason>]) ➔ <Observable Consequence>`
    - Classify material items by review priority: Mark items whose mistake could change authority, ownership, safety, irreversible effects, or core protocol shape with `❗️`. Mark other material items with `⚠️`. Keep remaining baseline items without a marker.
    - Expose concrete edge cases, limits, ordering, retries, fallbacks, concurrency, and default policies.
 
