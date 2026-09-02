@@ -10,7 +10,7 @@ export const DEFAULT_READY_LABEL = 'ready-for-agent';
 export const SPEC_HEADINGS = ['Problem Statement', 'Solution', 'User Stories'];
 /** Wayfinder child ticket kinds that can enter frontier (map is excluded). */
 export const WAYFINDER_CHILD_KINDS = new Set(['research', 'prototype', 'grilling', 'task']);
-export const WAYFINDER_REQUIRED_SKILL = '/wayfinder';
+export const WAYFINDER_REQUIRED_SKILL = '/yjx-wayfinder';
 export const IMPLEMENT_REQUIRED_SKILL = '/implement';
 
 const PRIORITY_CRITICAL = ['critical', 'crash', 'blocker', '严重', '崩溃', '阻塞'];
@@ -179,7 +179,21 @@ function escapeRegExp(value) {
 
 export function isSpecIssue(issueOrBody) {
   const body = typeof issueOrBody === 'string' ? issueOrBody : issueOrBody?.body ?? '';
-  return SPEC_HEADINGS.every((heading) => hasH2Heading(body, heading));
+
+  // 1. 原版 Matt Pocock 兼容通道 (Problem Statement + Solution + User Stories 全合取)
+  if (SPEC_HEADINGS.every((heading) => hasH2Heading(body, heading))) {
+    return true;
+  }
+
+  // 2. yjx-to-spec 蓝图识别通道 (Readiness Radar + 核心边界/不变量标头，多重合取零误报)
+  const hasRadar = body.includes('Readiness Radar') || body.includes('准备度雷达');
+  const hasSurgicalOrInvariants =
+    hasH2Heading(body, '1. Scope & Surgical Boundary') ||
+    hasH2Heading(body, '1. 目标、范围与手术边界') ||
+    hasH2Heading(body, '6. System Invariants & Forbidden Paths') ||
+    hasH2Heading(body, '6. 全局不变量与行为禁令');
+
+  return Boolean(hasRadar && hasSurgicalOrInvariants);
 }
 
 export function isWayfinderIssue(issueOrLabels) {

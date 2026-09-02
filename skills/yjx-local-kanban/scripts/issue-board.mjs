@@ -31,7 +31,7 @@ const SUPPORTED_PROTOCOLS = new Set([
 export const WORKFLOW_IMPLEMENTATION = 'implementation';
 export const WORKFLOW_WAYFINDER = 'wayfinder';
 export const WORKFLOW_MIXED = 'mixed';
-export const WAYFINDER_REQUIRED_SKILL = '/wayfinder';
+export const WAYFINDER_REQUIRED_SKILL = '/yjx-wayfinder';
 
 export const CONFIG_RELATIVE_PATH = path.join('docs', 'agents', 'local-tracker.json');
 export const CANONICAL_ROLES = [
@@ -91,7 +91,8 @@ function displayTitle(rawTitle, number) {
 }
 
 function parseField(line) {
-  const match = line.match(BOLD_FIELD_RE) ?? line.match(PLAIN_FIELD_RE);
+  const normalized = line.replace(/：/g, ':');
+  const match = normalized.match(BOLD_FIELD_RE) ?? normalized.match(PLAIN_FIELD_RE);
   if (!match) return null;
   return { name: normalizeKey(match.groups.name), value: match.groups.value.trim() };
 }

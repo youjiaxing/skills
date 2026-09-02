@@ -28,11 +28,12 @@ When an initiative spans multiple distinct subsystems, phases, or lifecycle boun
 Classify every element in the design silently into one of two tiers:
 - **User Decisions (P0 / Highest Weight -> User-Confirmed Commitments)**:
   - Scope: True source of truth / authority ownership, foundational architecture/strategy trade-offs, boundary contracts, irreversible state transitions, and hard constraints.
+  - **Redline Test (Strict Anti-Downgrade Rule)**: If reversing or altering this decision later would require fundamental structural redesign, core entity/data model migration, irreversible resource consumption, or breaking externally visible guarantees/contracts, it MUST be classified as P0 and explicitly asked across rounds. Never bundle it silently into P1 companion inferences.
   - Action: **The ONLY tier presented as direct questions to the user.** These form the active nodes of the decision tree. When an option is chosen, any downstream forks it unlocks must continue to be explored across rounds until all high-impact forks on the chosen path are resolved. Once agreed, these become high-weight commitments in Part 1 of the artifact.
 - **Agent Inferences (P1 / Default Companion Rules -> Agent-Inferred Defaults)**:
-  - Scope: Concrete edge cases, fallback strategies, retry limits, backoff rules, timeouts, localized thresholds, validation rules, or default parameters.
+  - Scope: Low-reversibility-cost technical/operational defaults, routine parameters, local interval configurations, standard fallback paths, or non-breaking local rules.
   - Action: **Never asked as standalone questions.** Instead, bundle them visibly into Option 1 (or the matching companion package for a custom user decision) as adopted defaults accompanied by **explicitly discarded alternative approaches and their discard rationale**. Once accepted or inferred, they appear in Part 2 for fast, individual review and override.
-- **Implementation Details (Sub-P1)**: Localized helper functions, routine defensive checks, nil validations, standard error logging, internal variable names — decided autonomously per domain conventions, strictly never asked and never highlighted in Part 2.
+- **Implementation Details (Sub-P1)**: Localized helper functions, routine defensive checks, standard logging/formatting, internal variable names — decided autonomously per domain conventions, strictly never asked and never highlighted in Part 2.
 
 ## 3. Dynamic Frontier Exploration & Balanced Question Cards
 
@@ -40,6 +41,8 @@ Classify every element in the design silently into one of two tiers:
 - **Dynamic Frontier Exploration**: The grilling session is a decision-tree traversal along the active path. Settling a decision unblocks downstream forks (the new frontier) on the chosen branch.
 - **Strict Orthogonality Gate**: In any round, batch ONLY questions (1 to 3 questions) that must still be answered regardless of how other open questions in that round resolve. If question B depends on an option in question A, defer B to a later round.
 - **Pivots First**: Prioritize questions that could fundamentally reshape the tree or architecture over detail questions.
+- **Frontier Visibility (Lookahead)**: At the end of each round's questions, compute and append a concise lookahead line indicating the downstream forks that will unlock next:
+  `🔮 Expected Downstream Forks: <Brief mention of 1-2 major architectural or boundary forks that will open depending on the user's choice>`. This maintains cognitive tree depth and prevents premature tree collapse.
 - **No Arbitrary Depth Limit**: Continue iterating across rounds until the active frontier contains no more unresolved forks and is reduced entirely to deterministic agent inferences.
 
 ### Balanced Question & Option Format
@@ -56,7 +59,7 @@ Never present biased, one-sided sales pitches. Force critical evaluation by expo
   - `Core decision`: The alternative path.
   - `Applicable scenarios`: Specific scenarios, priorities, or constraint shifts where this option becomes strictly superior to Option 1.
   - `Unchosen reason`: Why it was deprioritized under current baseline assumptions.
-- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Recommendation rationale` -> `推荐理由`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`).
+- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Recommendation rationale` -> `推荐理由`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`, `Expected Downstream Forks` -> `🔮 预期后续分叉`).
 
 Example format:
 
@@ -75,6 +78,8 @@ Example format:
    * **Core decision**: <Alternative path>
    * **Applicable scenarios**: <Conditions or shifted priorities where this alternative is superior>
    * **Unchosen reason**: <Why this alternative is deprioritized under current baseline>
+
+🔮 **Expected Downstream Forks**: <Brief mention of 1-2 dependent architectural forks that will open in the next round>
 ```
 
 ## 4. Special Interactions (Clarifications & Inquiries)
@@ -107,18 +112,31 @@ Every settled decision propagates both forward and backward across the dependenc
 
 ## 6. Domain-Adaptive 4-Part Alignment Artifact
 
-Once the active frontier is empty (all User Decisions on the active path are settled and only Agent Inferences remain), output ONLY a compact 4-part alignment artifact in the order below. Do NOT write a narrative prose summary. The artifact exists to expose any mismatch between human intent and the agent's execution model before work begins.
+### Convergence Pre-Flight Gate (Anti-Premature-Convergence)
+Before outputting the 4-part alignment artifact, perform a mandatory frontier audit:
+1. **Downstream Fork Audit**: Did the latest confirmed decision unlock any downstream forks meeting the P0 Redline (e.g., state consistency levels, exception/conflict resolution paths, irreversible commitments, or boundary contract guarantees)?
+2. **Completeness Audit**: Are all material state transitions, trigger conditions, and domain guarantees introduced or altered by this decision grounded without speculative placeholders or unverified agent assumptions?
+- If any P0 fork or critical boundary ambiguity remains unresolved: **DO NOT output the final artifact.** Formulate the next round of questions to explore the active frontier.
+- Only when the active frontier is genuinely empty (all User Decisions on the active path are settled and only deterministic Agent Inferences remain), output ONLY a compact 4-part alignment artifact in the order below. Do NOT write a narrative prose summary. The artifact exists to expose any mismatch between human intent and the agent's execution model before work begins.
 
 Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
 
 1. **User Commitments & Core Model (用户决策与核心模型)**:
-   Present only explicit human commitments as a clean **Native Markdown Nested Tree** across all business scenarios. Never use ASCII/Unicode box-drawing characters (`├─`, `└─`, `┌`, `│`) that collapse into single-line garble in real renderers. Format using standard numbered items with indented bullet sub-lists:
-   ```markdown
-   1. **<Scenario Title>**
-      * **Trigger**: <Precondition / Trigger event>
-      * **Result**: <State transition / Core action> ➔ <Observable invariant / Guarantee>
-   ```
-   Systematically cover normal execution (happy path), failure & degradation, timeouts, idempotency (late responses & anti-reversal), and defensive boundaries. Place no agent-inferred parameters or implementation choices here.
+   Present only explicit human commitments as a clean **Native Markdown Nested Tree**. Never use ASCII/Unicode box-drawing characters (`├─`, `└─`, `┌`, `│`) that collapse into single-line garble in real renderers.
+
+   - **Delta-Relevance & Anti-Boilerplate Rule (增量聚焦与反注水守则)**:
+     - Cover ONLY the state transitions, trigger conditions, and business invariants directly established, altered, or constrained by the current decision.
+     - Strictly FORBID listing unaffected host platform, environment, or framework mechanisms (e.g., standard RPC error plumbing, existing database/cache topologies, general multi-instance mechanics, or pre-existing platform routines) that are not being modified or uniquely governed by this decision.
+     - Include exception, conflict, or fallback branches ONLY if the decision directly introduces or alters them.
+
+   - **Structure**: Format using standard numbered items with indented bullet sub-lists:
+     ```markdown
+     1. **<Scenario Title>**
+        * **Trigger**: <Precondition / Guard condition / Trigger event>
+        * **Result**: <State transition / Core action> ➔ <Observable invariant / Guarantee>
+        * **Fallback / Exception** (Only when this decision explicitly introduces/alters exception or conflict handling): <Mitigation / Boundary behavior>
+     ```
+   Place no agent-inferred parameters or implementation choices here.
 
 2. **Key Inferences (关键设计推断 / 配套推断)**:
    Group only genuine non-obvious engineering trade-offs (typically 1 to 3 items). Strictly filter out routine defensive coding (Sub-P1). Use unambiguous identifiers **`D1`, `D2`, `D3`...** (never use letter `I` to avoid font confusion).

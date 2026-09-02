@@ -16,12 +16,6 @@ import { fileURLToPath } from 'node:url';
 export const SKILL_NAME = 'yjx-gh-kanban';
 export const BOARD_SCRIPT_RELATIVE = path.join('scripts', 'issue-board.mjs');
 
-const COMMON_ROOT_SEGMENTS = [
-  ['.agents', 'skills'],
-  ['.claude', 'skills'],
-  ['.codex', 'skills'],
-];
-
 function pathKey(value) {
   let normalized = path.normalize(path.resolve(value));
   if (process.platform === 'win32') {
@@ -42,24 +36,34 @@ export function expandHome(value, home = os.homedir()) {
   return path.resolve(trimmed);
 }
 
-/**
- * Ordered skill roots to search. Env override first, then common Agent installs,
- * then optional project-local `.agents/skills`.
- *
- * Never falls back to deleted app-local `kanban` paths or hard-coded monorepo paths.
- */
+function siblingRoot() {
+  try {
+    const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+    const skillDir = path.dirname(scriptDir);
+    const rootDir = path.dirname(skillDir);
+    if (path.basename(skillDir) === SKILL_NAME) {
+      return rootDir;
+    }
+  } catch {}
+  return null;
+}
+
 export function defaultSkillRoots({
   home = os.homedir(),
   env = process.env,
   projectRoot = null,
 } = {}) {
   const roots = [];
-  const envRoot = env.YJX_SKILLS_ROOT || env.AGENT_SKILLS_ROOT;
+  const envRoot = env.YJX_SKILLS_ROOT || env.SKILLS_PATH || env.AGENT_SKILLS_ROOT;
   if (envRoot) {
     roots.push(expandHome(envRoot, home));
   }
-  for (const segments of COMMON_ROOT_SEGMENTS) {
-    roots.push(path.join(home, ...segments));
+  const selfRoot = siblingRoot();
+  if (selfRoot) {
+    roots.push(selfRoot);
+  }
+  if (home) {
+    roots.push(path.join(home, '.agents', 'skills'));
   }
   if (projectRoot) {
     roots.push(path.join(path.resolve(projectRoot), '.agents', 'skills'));

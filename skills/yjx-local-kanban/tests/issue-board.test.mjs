@@ -388,7 +388,7 @@ test('research Status:ready-for-agent is frontier-ready in mixed graphs', async 
   assert.equal(graph.groupOf(issue(graph, '28-blocked.md')), 'BLOCKED');
   const ready = renderReadyOnly(work.feature, graph, work.root);
   assert.match(ready, /26 \[research\] Realenv blockers research/);
-  assert.match(ready, /\/wayfinder /);
+  assert.match(ready, /\/yjx-wayfinder /);
   assert.match(ready, /27 \[impl\] MySQL reader/);
   assert.match(ready, /\/implement /);
   const text = renderText(work.feature, graph, work.root);
@@ -526,7 +526,7 @@ test('auto-detects Wayfinder graph and exposes its frontier with the required sk
 
   const graph = await loadGraph(work.feature, work.config);
   assert.equal(graph.workflow, 'wayfinder');
-  assert.equal(graph.requiredSkill, '/wayfinder');
+  assert.equal(graph.requiredSkill, '/yjx-wayfinder');
   assert.equal(graph.groupOf(issue(graph, '01-resolved.md')), 'RESOLVED');
   assert.equal(graph.groupOf(issue(graph, '02-claimed.md')), 'CLAIMED');
   assert.equal(graph.groupOf(issue(graph, '03-blocked.md')), 'BLOCKED');
@@ -534,22 +534,40 @@ test('auto-detects Wayfinder graph and exposes its frontier with the required sk
 
   const payload = graphPayload(work.feature, graph, work.root);
   assert.equal(payload.workflow, 'wayfinder');
-  assert.equal(payload.requiredSkill, '/wayfinder');
-  assert.equal(payload.issues[3].requiredSkill, '/wayfinder');
+  assert.equal(payload.requiredSkill, '/yjx-wayfinder');
+  assert.equal(payload.issues[3].requiredSkill, '/yjx-wayfinder');
   assert.deepEqual(payload.issues[3].blockedByOpen, []);
 
   const text = renderText(work.feature, graph, work.root);
-  assert.match(text, /required_skill=\/wayfinder/);
+  assert.match(text, /required_skill=\/yjx-wayfinder/);
   assert.match(text, /^LEGEND/);
   assert.match(text, /LEGEND.*✓ 已完成.*> 已领取\/进行中.*× 被阻塞.*○ 可实施/s);
   assert.match(text, /DEPENDENCY TREE/);
   assert.match(text, /NOW  可新增并行实施：1 \| 进行中：1/);
-  assert.match(text, /- ○ 04 \[task\] Frontier task\n  \/rename feature\/04-Frontier task\n  \/wayfinder \.scratch\/feature\/issues\/04-frontier\.md/);
+  assert.match(text, /- ○ 04 \[task\] Frontier task\n  \/rename feature\/04-Frontier task\n  \/yjx-wayfinder \.scratch\/feature\/issues\/04-frontier\.md/);
   assert.ok(text.lastIndexOf('\nNOW  ') > text.indexOf('DEPENDENCY TREE'));
   const readyOnly = renderReadyOnly(work.feature, graph, work.root);
   assert.match(readyOnly, /Wayfinder frontier/);
-  assert.match(readyOnly, /- ○ 04 \[task\] Frontier task\n  \/rename feature\/04-Frontier task\n  \/wayfinder \.scratch\/feature\/issues\/04-frontier\.md/);
+  assert.match(readyOnly, /- ○ 04 \[task\] Frontier task\n  \/rename feature\/04-Frontier task\n  \/yjx-wayfinder \.scratch\/feature\/issues\/04-frontier\.md/);
   assert.doesNotMatch(readyOnly, /03-blocked\.md/);
+});
+
+test('parses full-width Chinese colons in header metadata', async (t) => {
+  const work = await fixture(t);
+  const content = [
+    '# 01 — Full Width Colon',
+    'Status： ready-for-agent',
+    'Type： task',
+    '',
+    '## What to build',
+    'Testing full width colon parsing',
+  ].join('\n');
+  await writeFile(path.join(work.feature, 'issues', '01-fullwidth.md'), content);
+  const graph = await loadGraph(work.feature, work.config);
+  const issueObj = issue(graph, '01-fullwidth.md');
+  assert.equal(issueObj.status, 'ready-for-agent');
+  assert.equal(issueObj.type, 'task');
+  assert.equal(graph.groupOf(issueObj), 'FRONTIER');
 });
 
 test('tree projection renders each issue once and preserves multiple blockers', async (t) => {

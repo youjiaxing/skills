@@ -76,6 +76,35 @@ test('SPEC requires exact H2 headings; lookalikes are not specs', () => {
   );
   assert.equal(isSpecIssue({ body: SPEC_BODY.replace('## Solution', '## solution') }), false);
   assert.equal(isSpecIssue({ body: SPEC_BODY.replace('## Solution', '##\nSolution') }), false);
+
+  // yjx-to-spec blueprint detection test
+  const yjxSpecBody = [
+    '# Feature Specification',
+    '> - **Readiness Radar**: 100%',
+    '## 1. Scope & Surgical Boundary',
+    'Touched Areas: foo/bar',
+    '## 6. System Invariants & Forbidden Paths',
+    'INV-01: Idempotency',
+  ].join('\n');
+  assert.equal(isSpecIssue({ body: yjxSpecBody }), true);
+
+  const yjxChineseSpecBody = [
+    '# 系统规范',
+    '> - **准备度雷达**: 100%',
+    '## 1. 目标、范围与手术边界',
+    '修改范围: foo/bar',
+    '## 6. 全局不变量与行为禁令',
+    '不变量: 幂等性',
+  ].join('\n');
+  assert.equal(isSpecIssue({ body: yjxChineseSpecBody }), true);
+
+  // Missing surgical or invariants section -> not a spec
+  const incompleteBody = [
+    '# Simple Feature',
+    '> - **Readiness Radar**: 100%',
+    '## 2. Core Entities',
+  ].join('\n');
+  assert.equal(isSpecIssue({ body: incompleteBody }), false);
 });
 
 test('wayfinder labels are detected', () => {
@@ -292,7 +321,7 @@ test('startCommandForEntry is implement vs wayfinder by type', () => {
   assert.equal(startCommandForEntry({ number: 8, isWayfinder: false }), '/implement #8');
   assert.equal(
     startCommandForEntry({ number: 55, isWayfinder: true, labels: ['wayfinder:grilling'] }),
-    '/wayfinder #55',
+    '/yjx-wayfinder #55',
   );
   assert.equal(isWayfinderChildTicket({ labels: ['wayfinder:grilling'] }), true);
   assert.equal(isWayfinderChildTicket({ labels: ['wayfinder:map'] }), false);
@@ -333,17 +362,17 @@ test('NOW lists wayfinder frontier grouped by map with /wayfinder commands', () 
   assert.match(text, /\/implement #8/);
   assert.match(text, /## #40 上线探索 map/);
   assert.match(text, /55 \[grilling\] 定价决策/);
-  assert.match(text, /\/wayfinder #55/);
+  assert.match(text, /\/yjx-wayfinder #55/);
   assert.match(text, /## （无 map 归属）/);
   assert.match(text, /58 \[task\] 无父 frontier/);
-  assert.match(text, /\/wayfinder #58/);
+  assert.match(text, /\/yjx-wayfinder #58/);
   // Closed map with no frontier children must not appear as a frontier group.
   assert.doesNotMatch(text, /## #41 /);
   // Blocked research may appear in the dependency tree, but not as a startable frontier row.
   const frontierSection = text.split('Wayfinder frontier\n')[1].split('\n\n进行中')[0];
   assert.doesNotMatch(frontierSection, /56 \[research\]/);
-  assert.doesNotMatch(frontierSection, /\/wayfinder #56/);
-  assert.match(text, /57 \[prototype\] 已领取原型 \| assignees=bob \| skill=\/wayfinder/);
+  assert.doesNotMatch(frontierSection, /\/yjx-wayfinder #56/);
+  assert.match(text, /57 \[prototype\] 已领取原型 \| assignees=bob \| skill=\/yjx-wayfinder/);
   assert.match(text, /wayfinder-missing-parent|code=wayfinder-missing-parent/);
 });
 
@@ -392,11 +421,11 @@ test('parent filter scopes human NOW READY and wayfinder frontier', () => {
   assert.match(text, /parent=#10/);
   assert.match(text, /\/implement #11/);
   assert.doesNotMatch(text, /\/implement #99/);
-  assert.doesNotMatch(text, /\/wayfinder #55/);
+  assert.doesNotMatch(text, /\/yjx-wayfinder #55/);
   assert.match(text, /Wayfinder frontier：0/);
 
   const mapText = renderHuman(issues, relations, { parentFilter: 40 });
-  assert.match(mapText, /\/wayfinder #55/);
+  assert.match(mapText, /\/yjx-wayfinder #55/);
   assert.doesNotMatch(mapText, /\/implement #11/);
   assert.doesNotMatch(mapText, /\/implement #99/);
 });

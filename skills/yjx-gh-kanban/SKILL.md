@@ -36,7 +36,7 @@ scripts/resolve-board-script.mjs # 在已安装 skills 根下解析 board CLI �
 
 根据当前 Agent 提供的 skill 加载信息定位本 `SKILL.md`，再解析相邻 `scripts/`；不要假设固定全局目录。下文用 `<kanban-skill-dir>` 表示本 `SKILL.md` 所在目录。
 
-应用仓库的 Makefile / Ralph 等消费者应通过路径发现定位脚本，**禁止**写死开发机 monorepo 绝对路径，也**禁止**静默回退到已删除的应用仓本地 `kanban` 路径。
+应用仓库的 Makefile 等消费者应通过路径发现定位脚本，**禁止**写死开发机 monorepo 绝对路径，也**禁止**静默回退到已删除的应用仓本地 `kanban` 路径。
 
 ### 路径发现
 
@@ -47,11 +47,10 @@ node <kanban-skill-dir>/scripts/resolve-board-script.mjs
 
 搜索顺序：
 
-1. 环境变量 `YJX_SKILLS_ROOT` 或 `AGENT_SKILLS_ROOT`
-2. `~/.agents/skills`
-3. `~/.claude/skills`
-4. `~/.codex/skills`
-5. （可选）`<project-root>/.agents/skills`
+1. 环境变量 `YJX_SKILLS_ROOT` 或 `SKILLS_PATH` 或 `AGENT_SKILLS_ROOT`
+2. 同级已安装目录（Sibling Co-location）
+3. 标准 `~/.agents/skills`
+4. （可选）`<project-root>/.agents/skills`
 
 找不到时错误信息会给出 `npx skills add` / `npm run link` 提示。
 
@@ -129,11 +128,11 @@ node <kanban-skill-dir>/scripts/issue-board.mjs --ready-only
 
 - 关系真源：GitHub native parent / native `blockedBy`；**不**解析正文 `## Parent` / `## Blocked by`
 - READY：open + ready 映射标签 + 无 open blocker + 非 SPEC + 非 wayfinder
-- SPEC：正文同时具备 `## Problem Statement` / `## Solution` / `## User Stories`
+- SPEC：具备原版 `## Problem Statement` / `## Solution` / `## User Stories` 或 `yjx-to-spec` 蓝图特征标头（含 `Readiness Radar` + `Scope & Surgical Boundary` / `System Invariants`）
 - 无 parent 的 ready 实施票合法；parent 不是 blocker
 - 候选关系缺失或不可靠 → **fail-closed**，不输出可用 `next`
 - 依赖树：视觉主挂载优先 native parent；行尾 ` <- #a, #b` 列出完整 blockedBy；每票至多一次
-- NOW：READY（`/implement`）+ Wayfinder frontier（`/wayfinder`，按 map 分组）+ 进行中（assignee 近似，**不**改 READY 契约）
+- NOW：READY（`/implement`）+ Wayfinder frontier（`/yjx-wayfinder`，按 map 分组）+ 进行中（assignee 近似，**不**改 READY 契约）
 - Wayfinder frontier：open + `wayfinder:{research,prototype,grilling,task}` + 无 open blocker + 无 assignee；关系缺失则排除并 WARNING（不整板失败）
 - `--parent`：只裁人类树与 NOW；机器 `ready`/`next` 不变
 
@@ -151,6 +150,6 @@ npm test
 ## 边界
 
 - 不修改 GitHub issue、label、assignee 或关系
-- 不选择或确认下一张实施票（见 `yjx-gh-ralph`）
+- 不选择或确认下一张实施票（实施由用户或原生 Agent 命令接管）
 - 不替代项目 `docs/agents/issue-tracker.md` 中的生命周期约定
 - 不提供 Mermaid 输出（Local 轨专属能力，非本 skill 必达）
