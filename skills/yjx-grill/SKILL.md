@@ -122,19 +122,32 @@ Before outputting the 4-part alignment artifact, perform a mandatory frontier au
 Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
 
 1. **User Commitments & Core Model (用户决策与核心模型)**:
-   Present only explicit human commitments as a clean **Native Markdown Nested Tree**. Never use ASCII/Unicode box-drawing characters (`├─`, `└─`, `┌`, `│`) that collapse into single-line garble in real renderers.
+   Present only explicit human commitments as a glanceable, progressive-disclosure list using unambiguous identifiers **`C1`, `C2`, `C3`...** (Commitments). Never use ASCII/Unicode box-drawing characters (`├─`, `└─`, `┌`, `│`) or loose Unicode bullets (`•`) that collapse into single-line garble in real renderers.
+
+   - **Headline Rule (Verdict & Causality First)**:
+     Format each item header as `- **C<N> [<Human Action / Trigger> ➔ <Observable Consequence / Guarantee>]**`.
+     - FORBID passive, neutral scenario topics (e.g., `1. Clearing team during preparation`).
+     - FORBID cryptic internal field assignments (e.g., `C1 [Clear team to None]`).
+     - The bracketed text MUST form a complete, human-readable takeaway stating both the trigger action and its primary observable business guarantee, allowing the human to scan and verify the headline in seconds without forced parsing of sub-bullets.
+
+   - **Two-Line Clean Decomposition (Anti-Robotic-Labels)**:
+     - Strictly FORBID rigid form labels like `Trigger:`, `Result:`, `Invariant:`, `Guarantee:`, or `触发/变更/保证`.
+     - Under each headline, provide exactly two concise indented lines (using standard Markdown `- `) without connective filler words:
+       - Line 1: State / data mutation executed.
+       - Line 2: Observable downstream consequence or guarantee.
+       - Line 3 (Optional): Explicit boundary exception if applicable.
 
    - **Delta-Relevance & Anti-Boilerplate Rule (增量聚焦与反注水守则)**:
      - Cover ONLY the state transitions, trigger conditions, and business invariants directly established, altered, or constrained by the current decision.
      - Strictly FORBID listing unaffected host platform, environment, or framework mechanisms (e.g., standard RPC error plumbing, existing database/cache topologies, general multi-instance mechanics, or pre-existing platform routines) that are not being modified or uniquely governed by this decision.
      - Include exception, conflict, or fallback branches ONLY if the decision directly introduces or alters them.
 
-   - **Structure**: Format using standard numbered items with indented bullet sub-lists:
+   - **Structure**:
      ```markdown
-     1. **<Scenario Title>**
-        * **Trigger**: <Precondition / Guard condition / Trigger event>
-        * **Result**: <State transition / Core action> ➔ <Observable invariant / Guarantee>
-        * **Fallback / Exception** (Only when this decision explicitly introduces/alters exception or conflict handling): <Mitigation / Boundary behavior>
+     - **C1 [<Trigger Action> ➔ <Business Consequence>]**
+       - <State/data mutation executed>
+       - <Observable downstream consequence or invariant>
+       - *(Optional boundary exception if directly altered)*
      ```
    Place no agent-inferred parameters or implementation choices here.
 

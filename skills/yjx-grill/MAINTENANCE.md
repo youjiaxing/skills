@@ -33,7 +33,7 @@ Concision means removing repetition, filler, and non-value-adding prose. It does
 ### Universal Four-Part Artifact
 The four parts are distinct verification views, not interchangeable summaries:
 
-1. **User Commitments & Core Model (用户决策与核心模型)**: Verifies what the human explicitly committed to (P0 / highest weight) for the active decision delta. Expressed as a clean **Native Markdown Nested Tree** across the affected scenario branches (Trigger / Result / optional Fallback) without ASCII/Unicode box-drawing artifacts. Strictly excludes unchanged platform/host infrastructure boilerplate and agent-inferred rules.
+1. **User Commitments & Core Model (用户决策与核心模型)**: Verifies what the human explicitly committed to (P0 / highest weight) for the active decision delta. Expressed as a glanceable, progressive-disclosure list with stable identifiers (`C1`, `C2`...) and verdict-first headlines (`[Action ➔ Consequence]`) followed by clean two-line state/consequence decompositions. Strictly forbids rigid form labels (`Trigger:`, `Result:`, `Invariant:`, `Guarantee:`) and ASCII/Unicode box-drawing artifacts. Strictly excludes unchanged platform/host infrastructure boilerplate and agent-inferred rules.
 2. **Key Inferences (关键设计推断 / 配套推断)**: Exposes the concrete companion rules the agent adopted along with explicitly unadopted alternatives, their "when to prefer" applicability, and unchosen reasons (P1 / default baseline). Filter out routine Sub-P1 defensive coding.
 3. **Execution Specification / Concrete Contract (落地执行规格 / 契约)**: Shows how aligned behavior and inferences map to concrete, domain-adaptive boundaries (e.g., Protobuf/APIs/schemas for code; booking/timeline/budget matrices for operations/planning) without speculative placeholders.
 4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**: Identifies plausible paths or actions that would violate the aligned intent.
@@ -45,7 +45,7 @@ The four parts are distinct verification views, not interchangeable summaries:
 - **Implementation Details (Sub-P1)**: Routine defensive coding (nil checks, standard error logging) belongs to Sub-P1 and must not bloat Part 2.
 
 ### Stable Identifiers
-Identifiers such as `D1`, `D2` are deliberate handles for precise human corrections without letter `I` font ambiguities. Keep them stable within the active alignment artifact and assign them at the smallest useful rule unit. Do not remove them merely for stylistic brevity.
+Identifiers such as `C1`, `C2` (User Commitments) and `D1`, `D2` (Design Inferences) are deliberate handles for precise human corrections without letter `I` font ambiguities. Keep them stable within the active alignment artifact and assign them at the smallest useful rule unit. Do not remove them merely for stylistic brevity.
 
 ## Anti-Drift Checks
 
@@ -53,7 +53,7 @@ Before changing this skill, verify that the change:
 
 - preserves alignment-before-action as the primary outcome;
 - maintains domain neutrality (works for software, planning, strategy without hardcoding language-specific assumptions);
-- anchors core models to structural abstractions (`Trigger`, `Action`, `Invariant`, `Fallback`) rather than software-specific jargon;
+- anchors core models to progressive structural causality (Action ➔ Consequence) and clean state/consequence decompositions rather than bureaucratic form labels (`Trigger`, `Invariant`);
 - enforces **Delta-Relevance** in Part 1 to prevent boilerplate dumping of unaffected host platform or infrastructure mechanisms;
 - keeps decision depth unconstrained and driven by actual decision-tree frontier traversal;
 - requires symmetric exposure of costs, trade-offs, and falsifiable assumptions;
@@ -65,7 +65,8 @@ Before changing this skill, verify that the change:
 - accounts for bidirectional cascade impact (pruning invalid historical branches upon premise changes);
 - preserves the distinct verification purpose of all four artifact parts;
 - treats concision as removal of non-value-adding expression, not loss of coverage or shallow questioning;
-- retains stable identifiers (`D1`, `D2`) for precise correction;
+- retains stable identifiers (`C1`, `C2` for commitments, `D1`, `D2` for inferences) for precise correction;
+- preserves progressive-disclosure glanceability in Part 1 (verdict-first headlines and clean two-line decomposition) to eliminate human cognitive fatigue;
 - keeps the execution spec concrete, domain-grounded, and non-speculative;
 - keeps the skill file itself authored strictly in English, using explicit runtime localization mapping for user-facing multilingual interactions;
 - preserves the active-slice boundary and execution stop condition;
