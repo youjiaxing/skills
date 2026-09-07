@@ -1,7 +1,6 @@
 ---
 name: yjx-grill
 description: Stress-test a plan, architecture, or complex decision with dynamic decision-tree exploration, autonomous fact-finding, balanced trade-off cards, and clear separation of human commitments from agent inferences. Use when the user runs /yjx-grill to align deeply and efficiently across any domain without questionnaire fatigue.
-disable-model-invocation: true
 ---
 
 Stress-test requirements, system architectures, and plans thoroughly by exploring and pruning a decision tree. Maximize alignment depth and clarity while minimizing human cognitive fatigue: inquire only about high-impact architectural and business forks, present balanced options with explicit inherent costs, bundle transparent agent inferences with discarded alternatives, and deliver a compact 4-part alignment artifact that exposes confirmed behavior, inferred companion rules, and a domain-adaptive execution contract rather than a narrative prose summary.
@@ -10,11 +9,13 @@ Stress-test requirements, system architectures, and plans thoroughly by explorin
 
 When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MAINTENANCE.md) first. It contains the skill's design metadata and anti-drift rules; it is not needed for ordinary `/yjx-grill` execution.
 
-## 1. Fact Autonomy (Never Ask Knowable Facts)
+## 1. Fact Autonomy (Investigate Facts, Inquire Intent)
 
-Before formulating questions, independently investigate the environment (codebase, schemas, configuration files, existing protocols, research notes, or domain materials) using available search/read tools and subagents.
-- Never ask the user about discoverable facts, existing models, or verifiable context.
-- Use discovered facts to prune impossible or irrelevant branches before presenting questions.
+Fact autonomy is hypothesis-driven across all rounds, not a one-off prelude or routine chore before every question:
+- **Zero Tools for Intent & Trade-offs**: High-level trade-offs (e.g., consistency vs. availability, sync vs. async, retention policies) and business goals depend on human judgment, not code. Do NOT invoke tools for pure intent decisions—ask them directly.
+- **Probe Only on Concrete Asset Dependencies**: Invoke search/read tools only when an option or prerequisite depends on an unverified existing asset (e.g., confirming whether a specific queue, client, schema field, or interface already exists to avoid proposing imaginary solutions).
+- **Clarify Real Ambiguities**: If investigation reveals missing context or conflicting implementations (e.g., legacy v1 vs. v2), ask the user a targeted clarification referencing the findings rather than guessing.
+- **Prune Before Asking**: Use verified facts to eliminate impossible or already-implemented options before presenting questions.
 
 ## 2. Scope Slicing & Decision Taxonomy
 
@@ -102,7 +103,7 @@ When the user provides a custom answer, a modular override (e.g., "Option 1 core
 
 ### Forward Expansion & Backward Cascade Impact
 Every settled decision propagates both forward and backward across the dependency graph:
-- **Forward Expansion**: Expand the active frontier along the selected path. If downstream trade-offs open, formulate the next round.
+- **Forward Expansion**: Expand the active frontier along the selected path. If the chosen path depends on concrete existing interfaces or schema capabilities, verify them before formulating downstream options; otherwise, proceed directly with trade-off analysis. If downstream trade-offs open, formulate the next round.
 - **Backward Impact (Premise Change & Invalidation)**: If a new decision contradicts or invalidates previously settled nodes:
   - **Prune Dead Branches**: Immediately prune and invalidate all orphaned historical branches, old P1 inferences, and outdated contract drafts. Never allow dead assumptions to leak into the final artifact.
   - **Targeted Re-opening**: If a previously settled P0 node is in direct conflict, pause and re-open only that specific conflicting node for clarification.

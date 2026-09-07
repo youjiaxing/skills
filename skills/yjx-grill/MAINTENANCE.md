@@ -53,6 +53,7 @@ Before changing this skill, verify that the change:
 
 - preserves alignment-before-action as the primary outcome;
 - maintains domain neutrality (works for software, planning, strategy without hardcoding language-specific assumptions);
+- keeps fact autonomy hypothesis-driven and continuous across rounds without ritualistic tool grinding;
 - anchors core models to progressive structural causality (Action ➔ Consequence) and clean state/consequence decompositions rather than bureaucratic form labels (`Trigger`, `Invariant`);
 - enforces **Delta-Relevance** in Part 1 to prevent boilerplate dumping of unaffected host platform or infrastructure mechanisms;
 - keeps decision depth unconstrained and driven by actual decision-tree frontier traversal;
