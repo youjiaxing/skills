@@ -15,6 +15,7 @@ The skill was created to solve three complementary failure modes:
 1. **Monolithic summaries**: Lengthy requirement summaries encourage passive skimming, creating the illusion of agreement without a shared, verifiable execution model.
 2. **Questionnaire storms & Trivial inquiries**: Broad, flat questioning overloads the human and buries critical trade-offs under dozens of trivial parameter questions.
 3. **Sycophantic compliance (The "Yes-Man" Trap)**: Asymmetric question presentation (over-decorating the recommended option while presenting alternatives as weak strawmen) suppresses critical thinking and tempts the human into passive approval without acknowledging inherent costs.
+4. **Format mimicry & Premature artifact dumping**: In troubleshooting, bug diagnosis, or reality-gap contexts, agents bypass interactive alignment and cram raw investigation findings, stack traces, and routine defensive coding into the 4-part artifact, distorting objective facts into fake "commitments" and "inferences".
 
 ### Core Evolutionary Principles
 - **Unconstrained Depth via Frontier Traversal**: Settling a decision prunes unchosen alternatives, but unblocks downstream forks on the active path. As long as unresolved high-impact forks remain, grilling continues across rounds.
@@ -61,7 +62,10 @@ Before changing this skill, verify that the change:
 - enforces transparent companion inferences with unadopted alternatives, "when to prefer" conditions, and unchosen reasons;
 - strictly maintains the distinction and provenance between User Decisions (P0) and Agent Inferences (P1);
 - enforces the P0 Redline to prevent LLM laziness from silently downgrading high-cost architectural forks into P1 companion inferences;
-- prevents premature convergence via the Convergence Pre-Flight Gate before emitting the 4-part alignment artifact;
+- enforces remediation and resolution strategy as P0 User Decisions, preventing agents from unilaterally deciding tactical vs. structural fixes;
+- enforces the Fact Primer in problem/incident contexts to ground human cognition without narrative dumping;
+- prevents single-turn premature convergence via the Convergence Pre-Flight Gate when viable alternative solution forks exist;
+- prevents semantics distortion in the 4-part artifact (never converting diagnostic facts into D1 trade-offs, nor baseline requirements into C1 commitments);
 - maintains Frontier Visibility across questioning rounds without creating artificial questionnaire storms;
 - accounts for bidirectional cascade impact (pruning invalid historical branches upon premise changes);
 - preserves the distinct verification purpose of all four artifact parts;
@@ -71,5 +75,9 @@ Before changing this skill, verify that the change:
 - keeps the execution spec concrete, domain-grounded, and non-speculative;
 - keeps the skill file itself authored strictly in English, using explicit runtime localization mapping for user-facing multilingual interactions;
 - preserves the active-slice boundary and execution stop condition;
+- maintains zero file-system side-effects (forbidding standalone HTML generation or external openers during grilling);
+- respects the Structural Divergence Gate and vertical height budgets for visual viewports (≤8 lines in cards, ≤12 lines in artifacts);
+- preserves the glanceability and stable identifier (`C1`, `C2`) assertiveness of Part 1, keeping macro viewports non-intrusive and strictly free of execution fields;
+- applies visual viewports domain-neutrally, forbidding language-specific or framework-specific locks;
 - generalizes a problem instead of encoding a single example as a rule.
 If a proposed optimization conflicts with one of these checks, resolve that conflict before editing the skill.

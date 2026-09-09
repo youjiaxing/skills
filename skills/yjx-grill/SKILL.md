@@ -14,6 +14,7 @@ When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MA
 Fact autonomy is hypothesis-driven across all rounds, not a one-off prelude or routine chore before every question:
 - **Zero Tools for Intent & Trade-offs**: High-level trade-offs (e.g., consistency vs. availability, sync vs. async, retention policies) and business goals depend on human judgment, not code. Do NOT invoke tools for pure intent decisions—ask them directly.
 - **Probe Only on Concrete Asset Dependencies**: Invoke search/read tools only when an option or prerequisite depends on an unverified existing asset (e.g., confirming whether a specific queue, client, schema field, or interface already exists to avoid proposing imaginary solutions).
+- **Problem & Reality Gap Investigation**: When the prompt involves a defect, unexpected behavior, or discrepancy, use tools to investigate the objective causal chain (logs, state mutations, code paths) as a fact baseline. Do NOT jump directly to autonomous code fixing or unilateral artifact convergence; feed the discovered facts into a concise Fact Primer and use open remediation choices as grilling forks.
 - **Clarify Real Ambiguities**: If investigation reveals missing context or conflicting implementations (e.g., legacy v1 vs. v2), ask the user a targeted clarification referencing the findings rather than guessing.
 - **Prune Before Asking**: Use verified facts to eliminate impossible or already-implemented options before presenting questions.
 
@@ -28,7 +29,7 @@ When an initiative spans multiple distinct subsystems, phases, or lifecycle boun
 ### Two-Tier Decision Taxonomy (Strict Weight Separation)
 Classify every element in the design silently into one of two tiers:
 - **User Decisions (P0 / Highest Weight -> User-Confirmed Commitments)**:
-  - Scope: True source of truth / authority ownership, foundational architecture/strategy trade-offs, boundary contracts, irreversible state transitions, and hard constraints.
+  - Scope: True source of truth / authority ownership, foundational architecture/strategy trade-offs, boundary contracts, irreversible state transitions, hard constraints, and **remediation/resolution strategy (e.g., tactical quick-fix vs. structural/architectural overhaul; fail-safe degradation vs. strict rejection)**.
   - **Redline Test (Strict Anti-Downgrade Rule)**: If reversing or altering this decision later would require fundamental structural redesign, core entity/data model migration, irreversible resource consumption, or breaking externally visible guarantees/contracts, it MUST be classified as P0 and explicitly asked across rounds. Never bundle it silently into P1 companion inferences.
   - Action: **The ONLY tier presented as direct questions to the user.** These form the active nodes of the decision tree. When an option is chosen, any downstream forks it unlocks must continue to be explored across rounds until all high-impact forks on the chosen path are resolved. Once agreed, these become high-weight commitments in Part 1 of the artifact.
 - **Agent Inferences (P1 / Default Companion Rules -> Agent-Inferred Defaults)**:
@@ -46,6 +47,24 @@ Classify every element in the design silently into one of two tiers:
   `🔮 Expected Downstream Forks: <Brief mention of 1-2 major architectural or boundary forks that will open depending on the user's choice>`. This maintains cognitive tree depth and prevents premature tree collapse.
 - **No Arbitrary Depth Limit**: Continue iterating across rounds until the active frontier contains no more unresolved forks and is reduced entirely to deterministic agent inferences.
 
+### Fact Primer for Problem & Reality-Gap Contexts
+When the prompt involves diagnosing a bug, an operational incident, or an unexpected discrepancy:
+- Before presenting question cards, output a concise **Fact Primer** (≤4 sentences) following the causal pattern: `[Observed Symptom / Action] ➔ [Underlying Conflict / Root Cause] ➔ [Net Result]`.
+- Keep it factual, objective, and immediately glanceable so the human establishes a clear mental model without wading through raw logs, stack traces, or narrative prose dumps.
+- Never propose unilateral code fixes or skip straight to the final artifact in this primer; use it strictly as the shared factual foundation for the subsequent question cards.
+
+### Visual Viewports & Structural Contrast (Inspired by /show-me)
+To minimize cognitive translation fatigue, embed concise visual viewports using standard Markdown code blocks. Never generate or open external files (e.g., `.html`).
+
+- **Structural Divergence Gate**: Default to compact prose cards. Activate a visual viewport ONLY when options exhibit:
+  1. **Control Flow Divergence**: Call-tree, concurrency, or async ordering differences (use micro `diff` or `call-tree`, ≤8 lines).
+  2. **State Transitions**: Complex state flow involving ≥3 lifecycle states or recovery loops (use micro `mermaid stateDiagram` or state `diff`, ≤10 lines).
+  3. **Boundary / Ownership Shifts**: Module responsibility, file layout, or authority boundary shifts (use micro `shallow-tree`, ≤8 lines).
+- **Frugality & Anti-Inflation Rules**:
+  - Strictly FORBID diagrams for linear, trivial paths (`A -> B -> C`).
+  - Maximum 1 viewport per question card or option.
+  - Domain Neutral: Use `diff` for both code modifications and non-code workflow additions (`+`) or removals (`-`).
+
 ### Balanced Question & Option Format
 Never present biased, one-sided sales pitches. Force critical evaluation by exposing trade-offs, inherent costs, and falsifiable assumptions symmetrically across all choices:
 
@@ -60,7 +79,7 @@ Never present biased, one-sided sales pitches. Force critical evaluation by expo
   - `Core decision`: The alternative path.
   - `Applicable scenarios`: Specific scenarios, priorities, or constraint shifts where this option becomes strictly superior to Option 1.
   - `Unchosen reason`: Why it was deprioritized under current baseline assumptions.
-- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Core decision` -> `核心决策`, `Recommendation rationale` -> `推荐理由`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`, `Expected Downstream Forks` -> `🔮 预期后续分叉`).
+- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Fact Primer` -> `💡 事实速览`, `Core decision` -> `核心决策`, `Recommendation rationale` -> `推荐理由`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`, `Expected Downstream Forks` -> `🔮 预期后续分叉`).
 
 Example format:
 
@@ -117,12 +136,20 @@ Every settled decision propagates both forward and backward across the dependenc
 Before outputting the 4-part alignment artifact, perform a mandatory frontier audit:
 1. **Downstream Fork Audit**: Did the latest confirmed decision unlock any downstream forks meeting the P0 Redline (e.g., state consistency levels, exception/conflict resolution paths, irreversible commitments, or boundary contract guarantees)?
 2. **Completeness Audit**: Are all material state transitions, trigger conditions, and domain guarantees introduced or altered by this decision grounded without speculative placeholders or unverified agent assumptions?
+3. **Single-Turn Convergence Prohibition**: When an initiative, troubleshooting prompt, or reality gap contains viable alternative architectural or remediation paths, FORBID outputting the final 4-part artifact on round 1 without at least one round of balanced interactive questioning, unless the human explicitly requested immediate zero-interaction delivery.
+4. **Anti-Semantics-Distortion Rules**:
+   - **Part 1 (C1..Cn)**: Must record only genuine human P0 commitments made during alignment. FORBID framing pre-existing baseline behaviors, bug-fix goals, or standard domain common sense (e.g., "deduct coins upon purchase") as human commitments.
+   - **Part 2 (D1..Dn)**: Must record only intentional engineering trade-offs between valid design approaches. FORBID framing objective diagnostic facts or eliminated bug hypotheses (e.g., "Adopted: state was overwritten; Alternative: wrong config") as design inferences.
+   - **Part 3**: Must be an actionable execution contract. FORBID dumping diagnostic logs, execution traces, or full triage reports into the contract.
+   - **Part 4**: Must record strategic anti-goals and boundary traps. FORBID lecturing routine defensive coding rules or syntax-level platitudes.
+
 - If any P0 fork or critical boundary ambiguity remains unresolved: **DO NOT output the final artifact.** Formulate the next round of questions to explore the active frontier.
 - Only when the active frontier is genuinely empty (all User Decisions on the active path are settled and only deterministic Agent Inferences remain), output ONLY a compact 4-part alignment artifact in the order below. Do NOT write a narrative prose summary. The artifact exists to expose any mismatch between human intent and the agent's execution model before work begins.
 
 Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
 
 1. **User Commitments & Core Model (用户决策与核心模型)**:
+   - **Optional Macro Viewport**: If the slice involves a non-trivial lifecycle or interaction flow, place a single compact macro diagram (Mermaid state/sequence, ≤12 lines) immediately above `C1`. Strictly forbid implementation fields/types in this viewport.
    Present only explicit human commitments as a glanceable, progressive-disclosure list using unambiguous identifiers **`C1`, `C2`, `C3`...** (Commitments). Never use ASCII/Unicode box-drawing characters (`├─`, `└─`, `┌`, `│`) or loose Unicode bullets (`•`) that collapse into single-line garble in real renderers.
 
    - **Headline Rule (Verdict & Causality First)**:
@@ -168,6 +195,7 @@ Translate all artifact headings, labels, and explanatory text into the user's co
    Project the first two sections into exact, domain-adaptive, actionable definitions matching the target problem space without speculative placeholders:
    - **Software Engineering**: Exact repository-grounded definitions (Protobuf messages/RPCs, HTTP routes/schemas, database tables, domain types, or structs) with standard business comments.
    - **Planning & Operations (e.g., Travel, Projects, Events)**: Exact execution tables (booking/itinerary matrices, daily timetables, budget allocation tables, checklist specifications, or deliverable standards).
+   - **Incremental Contrast**: Strongly encourage using `diff` code blocks to highlight modified routes, fields, or configurations against existing baselines.
    - Strictly NO unconfirmed or speculative fields, states, routes, or behaviors.
 
 4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**:
