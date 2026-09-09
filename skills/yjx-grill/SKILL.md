@@ -148,9 +148,15 @@ Before outputting the 4-part alignment artifact, perform a mandatory frontier au
 
 Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
 
+### Universal Markdown Integrity & Anti-Garble Rules
+Across ALL 4 parts of the alignment artifact, maintain clean, robust formatting:
+- **No Pseudo-ASCII Tables**: Strictly FORBID drawing tabular borders using box-drawing characters (`┌ ─ ┬ ┐ │ ├ ┼ ┤ └ ┴ ┘`). All data matrices, comparisons, and verification tables MUST use standard GitHub-Flavored Markdown (GFM) tables (`|---|---|`).
+- **No Unfenced Tree Characters or Bullets in Prose**: Outside fenced code blocks, strictly forbid loose Unicode bullets (`•`, `◆`) or tree branch characters (`├─`, `└─`). Use standard Markdown lists (`- `) for clean rendering and reliable indentation.
+- **Fenced Micro-Trees Permitted**: Tree-drawing characters (`├──`, `└──`, `│`) are strictly confined to fenced `text` or `diff` code blocks for concise shallow file trees, call trees, or mapping DAGs (strictly ≤8 lines).
+
 1. **User Commitments & Core Model (用户决策与核心模型)**:
    - **Optional Macro Viewport**: If the slice involves a non-trivial lifecycle or interaction flow, place a single compact macro diagram (Mermaid state/sequence, ≤12 lines) immediately above `C1`. Strictly forbid implementation fields/types in this viewport.
-   Present only explicit human commitments as a glanceable, progressive-disclosure list using unambiguous identifiers **`C1`, `C2`, `C3`...** (Commitments). Never use ASCII/Unicode box-drawing characters (`├─`, `└─`, `┌`, `│`) or loose Unicode bullets (`•`) that collapse into single-line garble in real renderers.
+   Present only explicit human commitments as a glanceable, progressive-disclosure list using unambiguous identifiers **`C1`, `C2`, `C3`...** (Commitments).
 
    - **Headline Rule (Verdict & Causality First)**:
      Format each item header as `- **C<N> [<Human Action / Trigger> ➔ <Observable Consequence / Guarantee>]**`.
@@ -195,7 +201,11 @@ Translate all artifact headings, labels, and explanatory text into the user's co
    Project the first two sections into exact, domain-adaptive, actionable definitions matching the target problem space without speculative placeholders:
    - **Software Engineering**: Exact repository-grounded definitions (Protobuf messages/RPCs, HTTP routes/schemas, database tables, domain types, or structs) with standard business comments.
    - **Planning & Operations (e.g., Travel, Projects, Events)**: Exact execution tables (booking/itinerary matrices, daily timetables, budget allocation tables, checklist specifications, or deliverable standards).
-   - **Incremental Contrast**: Strongly encourage using `diff` code blocks to highlight modified routes, fields, or configurations against existing baselines.
+   - **Visual Execution Viewports (Domain-Adaptive, ≤10 lines)**:
+     - **State / Record Evolution Diff**: Strongly prefer `diff` blocks to illustrate concrete data mutations, record transformations, or configuration changes (`- old baseline` vs `+ new target`) instead of natural language prose.
+     - **Mapping / Fan-Out Tree (≤8 lines)**: If the contract establishes 1:N splits, entity split/merge rules, or routing dispatch, present a micro text mapping tree (fenced `text` block using `├──`, `└──`) rather than textual mapping descriptions.
+     - **Multi-System Execution Pipeline (≤10 lines)**: When execution involves sequential operations across boundaries (e.g., pre-check guard ➔ DB write ➔ cache purge ➔ post-readback verification), render a compact `mermaid sequenceDiagram` or step call-tree exposing guards and side-effects.
+   - **Unified Conservation & Verification Matrix**: If tabulating data states or test samples, unify inputs, mapping transformations, and expected outputs into a single cohesive GFM table showing conservation/balance, rather than dumping multiple fragmented tables.
    - Strictly NO unconfirmed or speculative fields, states, routes, or behaviors.
 
 4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**:
