@@ -31,6 +31,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 | `to-tickets` | **`yjx-to-tickets`** | **解决过度碎片化、魔数硬限与需求孤儿化**：以因果自洽、单会话无损收敛与审查自解释性为切分准则；内建覆盖率自检与不变量伴随注入；AFK 优先并显式分离 `ready-for-human` 门禁。 |
 | `wayfinder` | **`yjx-wayfinder`** | **解决跨 Session 上下文爆炸与虚假发票**：构建轻量决策地图（Map as Index），仅实例化当前无阻塞的 Frontier 票；支持决策划线作废；闭环时自动将碎片化决策合成最终交付物。 |
 | `setup-matt-pocock-skills` (Local) | **`yjx-local-tracker-setup`**<br>**`yjx-local-kanban`** | **规范完成语义与只读可视化**：将完成真源对齐为 `Status: resolved`（`+resolved-v1` 协议）；提供零依赖的人类看板、完整 JSON 依赖图与 Mermaid 拓扑。 |
+| `implement` | **`yjx-implement`** | **解决五行裸指令、资产绕行、绿灯造假与过度测试**：遵循资产复用阶梯优先复用既有统一封装（如 `pkg/time`）；严禁私自删改断言伪造绿灯；可读性高于可测试性，禁止为 Mock 滥造伪接口；Pre-flight 基线勘测防历史旧账背锅；梯度验证梯杜绝全量测试卡死；严格服从项目治理，兼容多工单追溯。 |
 | *(GitHub 轨缺失)* | **`yjx-gh-kanban`** | **原生扩展至 GitHub Issues 只读看板**：通过 `gh` CLI 统一解析 GitHub Issues 原生 `parent` 与 `blockedBy` 依赖树，提供终端依赖树与机器 JSON 契约。 |
 
 ---
@@ -41,12 +42,12 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ```
 主线 1（单会话确定性工程交付）：
-/yjx-grill ──────────► /yjx-to-spec ──────────► /yjx-to-tickets
-(深度决策对齐)          (高内聚规范蓝图)         (原子因果切片)
+/yjx-grill ──────────► /yjx-to-spec ──────────► /yjx-to-tickets ──────────► /yjx-implement
+(深度决策对齐)          (高内聚规范蓝图)         (原子因果切片)             (手术级精准实施)
 
 主线 2（跨会话大迷雾探索交付）：
-/yjx-wayfinder ──────► /yjx-to-spec ──────────► /yjx-to-tickets
-(迷雾探索与收官合成)     (高内聚规范蓝图)         (原子因果切片)
+/yjx-wayfinder ──────► /yjx-to-spec ──────────► /yjx-to-tickets ──────────► /yjx-implement
+(迷雾探索与收官合成)     (高内聚规范蓝图)         (原子因果切片)             (手术级精准实施)
 
 ══════════════════════════════════════════════════════════════════
 独立支撑层（只读可视化依赖看板）：
@@ -64,7 +65,11 @@ npx skills add youjiaxing/skills --skill yjx-grill
 - **`yjx-to-spec`**：将讨论共识/对齐产物/规划图编译为高内聚、自包含的规范蓝图（Spec Blueprint）。明确声明系统不变量、修改物理白名单（Touched Areas）与准备度雷达。
 - **`yjx-to-tickets`**：将实现计划、规格说明书或会话共识拆解为单会话无损收敛、因果自洽、声明显式阻塞依赖且具备可证伪验收标准的示踪弹任务票据。
 
-### 3. 独立可视化看板支撑 (Independent Read-Only Trackers)
+### 3. 手术级精准实施 (Surgical Implementation)
+
+- **`yjx-implement`**：将对齐方案、架构设计、评审共识或任务工单落地为高可用生产级代码。按资产复用阶梯优先调用项目既有统一基础库，核心逻辑直击因果，杜绝为测而测的伪接口包装，内置 Pre-flight 基线勘测、梯度验证、零绿灯造假门禁与跨工单原子提交。
+
+### 4. 独立可视化看板支撑 (Independent Read-Only Trackers)
 
 - **Local Markdown 轨**：
   - **`yjx-local-tracker-setup`**：为 Local Markdown tracker 写入 `+resolved-v1` 机器配置。
