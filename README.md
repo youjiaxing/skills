@@ -86,6 +86,10 @@ npx skills add youjiaxing/skills --skill yjx-grill
 | **人类视图** | LEGEND / 依赖树 / NOW 聚焦区 | 同构版式（符号与排版语义严格对齐） |
 | **机器契约** | 完整 JSON 依赖图 / Mermaid 拓扑 | `--json`（含 `next`/`ready`）/ `--agent` |
 
+### 5. 跨 Agent GUI 验证
+
+- **`yjx-codex-cu`**：在用户手动授权的任务中，允许当前 Agent 按需通过 Codex CLI 的 Computer Use 完成真实 GUI 测试；实现和缺陷修复仍由当前 Agent 负责。
+
 ---
 
 ## 开发者指南
