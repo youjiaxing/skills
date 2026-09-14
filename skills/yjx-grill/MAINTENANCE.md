@@ -63,7 +63,7 @@ Before changing this skill, verify that the change:
 - strictly maintains the distinction and provenance between User Decisions (P0) and Agent Inferences (P1);
 - enforces the P0 Redline to prevent LLM laziness from silently downgrading high-cost architectural forks into P1 companion inferences;
 - enforces remediation and resolution strategy as P0 User Decisions, preventing agents from unilaterally deciding tactical vs. structural fixes;
-- enforces the Fact Primer in problem/incident contexts to ground human cognition without narrative dumping;
+- enforces the structured, adaptive Fact Primer in problem/incident contexts to ground human cognition without narrative dumping or overfitted visual viewports;
 - prevents single-turn premature convergence via the Convergence Pre-Flight Gate when viable alternative solution forks exist;
 - prevents semantics distortion in the 4-part artifact (never converting diagnostic facts into D1 trade-offs, nor baseline requirements into C1 commitments);
 - maintains Frontier Visibility across questioning rounds without creating artificial questionnaire storms;

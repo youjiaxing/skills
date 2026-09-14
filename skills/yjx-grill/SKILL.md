@@ -49,9 +49,18 @@ Classify every element in the design silently into one of two tiers:
 
 ### Fact Primer for Problem & Reality-Gap Contexts
 When the prompt involves diagnosing a bug, an operational incident, or an unexpected discrepancy:
-- Before presenting question cards, output a concise **Fact Primer** (≤4 sentences) following the causal pattern: `[Observed Symptom / Action] ➔ [Underlying Conflict / Root Cause] ➔ [Net Result]`.
-- Keep it factual, objective, and immediately glanceable so the human establishes a clear mental model without wading through raw logs, stack traces, or narrative prose dumps.
-- Never propose unilateral code fixes or skip straight to the final artifact in this primer; use it strictly as the shared factual foundation for the subsequent question cards.
+- Before presenting question cards, output a glanceable **Fact Primer** (`💡 事实速览`).
+- **Anti-Prose Wall Rule**: Strictly FORBID dense, unbroken narrative prose blocks. Structure the facts into a clean 3-part skeleton:
+  1. **Symptom (`异常现象`)**: Actor, action, and external failure manifestation.
+  2. **Conflict / Causal Mechanism (`链路与断点` / `核心原因`)**: Present the core breaking mechanism using the smallest, most direct visual form (strictly ≤6 lines; do NOT overfit to any single format):
+     - *Multi-hop calls / exception swallowing*: Micro call tree (`text`, using indentation).
+     - *Expected vs. actual / config or state drift*: Micro `diff` block (`- expected` vs `+ actual`).
+     - *Data conflict / cache-DB inconsistency*: Compact key-value list or state comparison.
+     - *Linear flow*: Single-line arrow chain (`Step ➔ Step ➔ Breakpoint`).
+     - *Isolated single-point defect*: 1-2 concise bullet lines (strictly FORBID unnecessary diagrams or trees).
+  3. **Assessment & Exclusions (`定性与排除`)**: Technical nature of the defect and explicitly eliminated pseudo-causes (e.g., excluding network jitters, generic protocol faults, or unrelated systems).
+- **Noise Reduction**: Omit or bracket non-semantic transient hash IDs (e.g., random UUIDs/hashes); highlight critical error codes, symbols, and values with backticks.
+- **Fact Foundation Only**: Never propose unilateral code fixes or skip straight to the final artifact in this primer; use it strictly as the shared factual foundation for subsequent question cards.
 
 ### Visual Viewports & Structural Contrast (Inspired by /show-me)
 To minimize cognitive translation fatigue, embed concise visual viewports using standard Markdown code blocks. Never generate or open external files (e.g., `.html`).
