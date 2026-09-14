@@ -3,7 +3,7 @@ name: yjx-grill
 description: Stress-test a plan, architecture, or complex decision with dynamic decision-tree exploration, autonomous fact-finding, balanced trade-off cards, and clear separation of human commitments from agent inferences. Use when the user runs /yjx-grill to align deeply and efficiently across any domain without questionnaire fatigue.
 ---
 
-Stress-test requirements, system architectures, and plans thoroughly by exploring and pruning a decision tree. Maximize alignment depth and clarity while minimizing human cognitive fatigue: inquire only about high-impact architectural and business forks, present balanced options with explicit inherent costs, bundle transparent agent inferences with discarded alternatives, and deliver a compact 4-part alignment artifact that exposes confirmed behavior, inferred companion rules, and a domain-adaptive execution contract rather than a narrative prose summary.
+Stress-test requirements, system architectures, and plans thoroughly by exploring and pruning a decision tree. Maximize alignment depth and clarity while minimizing human cognitive fatigue: inquire only about high-impact architectural and business forks, present balanced options with explicit inherent costs, bundle transparent agent inferences with discarded alternatives, and deliver a scenario-driven, visually grounded alignment specification that pairs human guarantees with inlined companion mechanisms and show-me micro-viewports rather than a disjointed bookkeeping ledger.
 
 ## Maintenance
 
@@ -31,11 +31,11 @@ Classify every element in the design silently into one of two tiers:
 - **User Decisions (P0 / Highest Weight -> User-Confirmed Commitments)**:
   - Scope: True source of truth / authority ownership, foundational architecture/strategy trade-offs, boundary contracts, irreversible state transitions, hard constraints, and **remediation/resolution strategy (e.g., tactical quick-fix vs. structural/architectural overhaul; fail-safe degradation vs. strict rejection)**.
   - **Redline Test (Strict Anti-Downgrade Rule)**: If reversing or altering this decision later would require fundamental structural redesign, core entity/data model migration, irreversible resource consumption, or breaking externally visible guarantees/contracts, it MUST be classified as P0 and explicitly asked across rounds. Never bundle it silently into P1 companion inferences.
-  - Action: **The ONLY tier presented as direct questions to the user.** These form the active nodes of the decision tree. When an option is chosen, any downstream forks it unlocks must continue to be explored across rounds until all high-impact forks on the chosen path are resolved. Once agreed, these become high-weight commitments in Part 1 of the artifact.
+  - Action: **The ONLY tier presented as direct questions to the user.** These form the active nodes of the decision tree. When an option is chosen, any downstream forks it unlocks must continue to be explored across rounds until all high-impact forks on the chosen path are resolved. Once agreed, these form the core scenario guarantees in the alignment specification.
 - **Agent Inferences (P1 / Default Companion Rules -> Agent-Inferred Defaults)**:
   - Scope: Low-reversibility-cost technical/operational defaults, routine parameters, local interval configurations, standard fallback paths, or non-breaking local rules.
-  - Action: **Never asked as standalone questions.** Instead, bundle them visibly into Option 1 (or the matching companion package for a custom user decision) as adopted defaults accompanied by **explicitly discarded alternative approaches and their discard rationale**. Once accepted or inferred, they appear in Part 2 for fast, individual review and override.
-- **Implementation Details (Sub-P1)**: Localized helper functions, routine defensive checks, standard logging/formatting, internal variable names — decided autonomously per domain conventions, strictly never asked and never highlighted in Part 2.
+  - Action: **Never asked as standalone questions.** Instead, bundle them visibly into Option 1 (or the matching companion package for a custom user decision) as adopted defaults accompanied by **explicitly discarded alternative approaches and their discard rationale**. Once accepted or inferred, they attach directly to their corresponding scenario as inlined companion mechanisms (or into the cross-cutting section if system-wide) for immediate causal review and override.
+- **Implementation Details (Sub-P1)**: Localized helper functions, routine defensive checks, standard logging/formatting, internal variable names — decided autonomously per domain conventions, strictly never asked and never highlighted in the artifact.
 
 ## 3. Dynamic Frontier Exploration & Balanced Question Cards
 
@@ -88,7 +88,7 @@ Never present biased, one-sided sales pitches. Force critical evaluation by expo
   - `Core decision`: The alternative path.
   - `Applicable scenarios`: Specific scenarios, priorities, or constraint shifts where this option becomes strictly superior to Option 1.
   - `Unchosen reason`: Why it was deprioritized under current baseline assumptions.
-- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Fact Primer` -> `💡 事实速览`, `Core decision` -> `核心决策`, `Recommendation rationale` -> `推荐理由`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`, `Expected Downstream Forks` -> `🔮 预期后续分叉`).
+- **Localization**: At runtime, render all user-facing questions, artifact headings, labels, column names, and explanatory text into the user's conversational language. Translate option labels (`Fact Primer` -> `💡 事实速览`, `Core decision` -> `核心决策`, `Recommendation rationale` -> `推荐理由`, `Costs` -> `⚠️ 代价`, `Key assumptions` -> `❗️ 关键假设`, `Companion inferences` -> `配套推断`, `Applicable scenarios` -> `适用场景`, `Unchosen reason` -> `未选原因`, `Rather than` -> `而非`, `Expected Downstream Forks` -> `🔮 预期后续分叉`). Translate specification labels (`Scenario Feature Contracts` -> `场景功能契约`, `Business Guarantees & Invariants` -> `业务规则与保证`, `Mechanism & Adopted Trade-off` -> `技术机制与取舍`, `Cross-Cutting Technical Inferences` -> `全局跨切面技术规则`, `Execution Specification / Concrete Contract` -> `落地执行规格 / 契约`, `Forbidden Paths` -> `禁止事项`).
 
 Example format:
 
@@ -124,7 +124,7 @@ If the user asks for more context, background explanation, or clarification befo
 Interpret replies by meaning rather than rigid format. **Only an unambiguous commitment changes decision state; non-committal input informs analysis without settling a decision.**
 
 ### Modular Overrides & Custom Decisions
-When the user provides a custom answer, a modular override (e.g., "Option 1 core, but replace inference D1 with Alternative B"), or rejects all options:
+When the user provides a custom answer, a modular override (e.g., "Option 1 core, but replace the companion rule with Alternative B"), or rejects all options:
 1. **Semantic Disassembly**: Extract the user's P0 core commitment, explicit P1 companion overrides, and newly introduced hard constraints.
 2. **Coherence Check**: Check for internal contradictions. If conflicting, do not force-merge; explain the tension in one sentence and ask a pinpoint alignment question.
 3. **Companion Re-derivation**: Autonomously derive a matching set of Agent Inferences (with explicitly evaluated alternatives and reasons) tailored to the custom decision.
@@ -139,86 +139,81 @@ Every settled decision propagates both forward and backward across the dependenc
 - **Cascade Echo**: Before presenting the next round or the final artifact, echo the interpreted commitment and any backward adjustments in a single clear line:
   `🎯 Confirmed Decision [Q<N>]: <interpretation>; (Cascade note: <pruned/updated historical assumptions>)`.
 
-## 6. Domain-Adaptive 4-Part Alignment Artifact
+## 6. Scenario-Driven Alignment Specification (With show-me Micro-Viewports)
 
 ### Convergence Pre-Flight Gate (Anti-Premature-Convergence)
-Before outputting the 4-part alignment artifact, perform a mandatory frontier audit:
+Before outputting the alignment specification, perform a mandatory frontier audit:
 1. **Downstream Fork Audit**: Did the latest confirmed decision unlock any downstream forks meeting the P0 Redline (e.g., state consistency levels, exception/conflict resolution paths, irreversible commitments, or boundary contract guarantees)?
 2. **Completeness Audit**: Are all material state transitions, trigger conditions, and domain guarantees introduced or altered by this decision grounded without speculative placeholders or unverified agent assumptions?
-3. **Single-Turn Convergence Prohibition**: When an initiative, troubleshooting prompt, or reality gap contains viable alternative architectural or remediation paths, FORBID outputting the final 4-part artifact on round 1 without at least one round of balanced interactive questioning, unless the human explicitly requested immediate zero-interaction delivery.
+3. **Single-Turn Convergence Prohibition**: When an initiative, troubleshooting prompt, or reality gap contains viable alternative architectural or remediation paths, FORBID outputting the final specification on round 1 without at least one round of balanced interactive questioning, unless the human explicitly requested immediate zero-interaction delivery.
 4. **Anti-Semantics-Distortion Rules**:
-   - **Part 1 (C1..Cn)**: Must record only genuine human P0 commitments made during alignment. FORBID framing pre-existing baseline behaviors, bug-fix goals, or standard domain common sense (e.g., "deduct coins upon purchase") as human commitments.
-   - **Part 2 (D1..Dn)**: Must record only intentional engineering trade-offs between valid design approaches. FORBID framing objective diagnostic facts or eliminated bug hypotheses (e.g., "Adopted: state was overwritten; Alternative: wrong config") as design inferences.
-   - **Part 3**: Must be an actionable execution contract. FORBID dumping diagnostic logs, execution traces, or full triage reports into the contract.
-   - **Part 4**: Must record strategic anti-goals and boundary traps. FORBID lecturing routine defensive coding rules or syntax-level platitudes.
+   - **Scenario Feature Contracts**: Must record only genuine human guarantees and intentional engineering trade-offs made during alignment. FORBID framing pre-existing baseline behaviors, bug-fix goals, or standard domain common sense as newly established guarantees.
+   - **Cross-Cutting Rules**: Must record only genuine system-wide trade-offs. FORBID converting diagnostic facts or eliminated bug hypotheses into design inferences.
+   - **Execution Contract**: Must be an actionable execution contract. FORBID dumping diagnostic logs, execution traces, or full triage reports into the contract.
+   - **Forbidden Paths**: Must record strategic anti-goals and boundary traps. FORBID lecturing routine defensive coding rules or syntax-level platitudes.
 
-- If any P0 fork or critical boundary ambiguity remains unresolved: **DO NOT output the final artifact.** Formulate the next round of questions to explore the active frontier.
-- Only when the active frontier is genuinely empty (all User Decisions on the active path are settled and only deterministic Agent Inferences remain), output ONLY a compact 4-part alignment artifact in the order below. Do NOT write a narrative prose summary. The artifact exists to expose any mismatch between human intent and the agent's execution model before work begins.
+- If any P0 fork or critical boundary ambiguity remains unresolved: **DO NOT output the final specification.** Formulate the next round of questions to explore the active frontier.
+- Only when the active frontier is genuinely empty (all User Decisions on the active path are settled and only deterministic Agent Inferences remain), output ONLY a compact alignment specification in the structure below. Do NOT write a narrative prose summary. The specification exists to expose any mismatch between human intent and the agent's execution model before work begins.
 
-Translate all artifact headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the artifact.
+Translate all specification headings, labels, and explanatory text into the user's conversational language. Keep internal tier labels (P0/P1) out of the specification.
 
 ### Universal Markdown Integrity & Anti-Garble Rules
-Across ALL 4 parts of the alignment artifact, maintain clean, robust formatting:
+Across ALL sections of the alignment specification, maintain clean, robust formatting:
 - **No Pseudo-ASCII Tables**: Strictly FORBID drawing tabular borders using box-drawing characters (`┌ ─ ┬ ┐ │ ├ ┼ ┤ └ ┴ ┘`). All data matrices, comparisons, and verification tables MUST use standard GitHub-Flavored Markdown (GFM) tables (`|---|---|`).
 - **No Unfenced Tree Characters or Bullets in Prose**: Outside fenced code blocks, strictly forbid loose Unicode bullets (`•`, `◆`) or tree branch characters (`├─`, `└─`). Use standard Markdown lists (`- `) for clean rendering and reliable indentation.
 - **Fenced Micro-Trees Permitted**: Tree-drawing characters (`├──`, `└──`, `│`) are strictly confined to fenced `text` or `diff` code blocks for concise shallow file trees, call trees, or mapping DAGs (strictly ≤8 lines).
 
-1. **User Commitments & Core Model (用户决策与核心模型)**:
-   - **Optional Macro Viewport**: If the slice involves a non-trivial lifecycle or interaction flow, place a single compact macro diagram (Mermaid state/sequence, ≤12 lines) immediately above `C1`. Strictly forbid implementation fields/types in this viewport.
-   Present only explicit human commitments as a glanceable, progressive-disclosure list using unambiguous identifiers **`C1`, `C2`, `C3`...** (Commitments).
+### Specification Structure
 
-   - **Headline Rule (Verdict & Causality First)**:
-     Format each item header as `- **C<N> [<Human Action / Trigger> ➔ <Observable Consequence / Guarantee>]**`.
-     - FORBID passive, neutral scenario topics (e.g., `1. Clearing team during preparation`).
-     - FORBID cryptic internal field assignments (e.g., `C1 [Clear team to None]`).
-     - The bracketed text MUST form a complete, human-readable takeaway stating both the trigger action and its primary observable business guarantee, allowing the human to scan and verify the headline in seconds without forced parsing of sub-bullets.
+1. **Scenario Feature Contracts (场景功能契约 - 图文一体与因果闭环)**:
+   Organize by distinct business scenarios or feature capabilities (`### 1. <Scenario Title>`). Eliminate disjointed `C<N>` / `D<N>` ledgers. Each scenario unit is a self-contained, glanceable triplet:
 
-   - **Two-Line Clean Decomposition (Anti-Robotic-Labels)**:
-     - Strictly FORBID rigid form labels like `Trigger:`, `Result:`, `Invariant:`, `Guarantee:`, or `触发/变更/保证`.
-     - Under each headline, provide exactly two concise indented lines (using standard Markdown `- `) without connective filler words:
-       - Line 1: State / data mutation executed.
-       - Line 2: Observable downstream consequence or guarantee.
-       - Line 3 (Optional): Explicit boundary exception if applicable.
+   - **🖼️ Inline Morph Viewport (show-me 极简视口, strictly ≤5 lines)**:
+     - **Activation Gate**: Activated ONLY when the scenario involves:
+       1. *State/Data Shape Evolution*: Before/after state mutations or record schema transitions (use micro `diff`).
+       2. *Call Sequence & Guards*: Execution flow with guards, short-circuit breaks, or interception (use micro `text` call-chain).
+       3. *Fan-Out & Dispatch*: 1:N routing, role mapping, or dispatching (use micro `text` tree with `├──`, `└──`).
+     - **Strict Non-Linearity Ban**: For single variable assignments, linear trivial sequences (`A ➔ B ➔ C`), or plain parameter tweaks, **strictly FORBID code blocks**—keep them as plain concise prose.
+     - **Context De-noising**: Never paste unchanged ambient code; show only the differential contrast.
+   - **📌 Business Guarantees & Invariants (业务规则与保证)**:
+     - 1~2 concise bullet lines stating the hard business invariants, state mutations, and observable guarantees governing this scenario.
+     - Strictly FORBID bureaucratic form labels (`Trigger:`, `Result:`, `Invariant:`, `Guarantee:`) or cold bureaucratic codes (`C1`). Speak directly about business behavior.
+   - **⚙️ Mechanism & Adopted Trade-off (技术机制与取舍)**:
+     - State the companion implementation choice adopted to deliver this guarantee, alongside evaluated and discarded alternatives:
+       `- *实现机制*: 采纳 <Adopted Choice> (而非: <Alternative A> [<reason>]; <Alternative B> [<reason>])`
 
-   - **Delta-Relevance & Anti-Boilerplate Rule (增量聚焦与反注水守则)**:
-     - Cover ONLY the state transitions, trigger conditions, and business invariants directly established, altered, or constrained by the current decision.
-     - Strictly FORBID listing unaffected host platform, environment, or framework mechanisms (e.g., standard RPC error plumbing, existing database/cache topologies, general multi-instance mechanics, or pre-existing platform routines) that are not being modified or uniquely governed by this decision.
-     - Include exception, conflict, or fallback branches ONLY if the decision directly introduces or alters them.
-
-   - **Structure**:
-     ```markdown
-     - **C1 [<Trigger Action> ➔ <Business Consequence>]**
-       - <State/data mutation executed>
-       - <Observable downstream consequence or invariant>
-       - *(Optional boundary exception if directly altered)*
-     ```
-   Place no agent-inferred parameters or implementation choices here.
-
-2. **Key Inferences (关键设计推断 / 配套推断)**:
-   Group only genuine non-obvious engineering trade-offs (typically 1 to 3 items). Strictly filter out routine defensive coding (Sub-P1). Use unambiguous identifiers **`D1`, `D2`, `D3`...** (never use letter `I` to avoid font confusion).
-   Format each decision with symmetric, explicit rationale:
+   Example Unit:
    ```markdown
-   * **D1 [<Focus / Mechanism Name>]**
-     * **Adopted: <Adopted Choice Name>**
-       - Reason: <Why this approach is chosen under current context and constraints>
-     * **Alternative: <Alternative Choice Name>**
-       - When to prefer: <In what scenario or constraint shift this alternative becomes strictly superior>
-       - Currently unchosen: <Why it was not prioritized under the current baseline>
+   ### 1. 报名默认分配职位与最低空位
+   ```diff
+    WarUnion.Members 变化:
+   + { role_id: 1001, profession: Counsellor, position: 1 }
+   + { role_id: 1002, profession: Counsellor, position: 2 }
+   ```
+   - **业务规则**: 报名即分配为 Counsellor（鹰眼神谋者），领取当前最低可用正整数坑位（1, 2, 3...），不受名额上限限制。
+   - **实现机制**: 采纳 动态分配当前最低正整数空号（而非: 全局自增序列 [产生空洞且与客户端槽位不符]; 随机槽位 [不确定性高]）。
+   ```
+
+2. **Cross-Cutting Technical Inferences (全局跨切面技术规则 - 系统级推断)**:
+   If there are architectural decisions spanning across all scenarios (e.g., distributed transaction retry policies, centralized cache penetration guards, RPC timeout/fallback standards), group them compactly here. Omit this section if all mechanisms are scenario-local.
+   Format:
+   ```markdown
+   - **<Focus / Mechanism Name>**: 采纳 <Adopted Choice> (而非: <Alternative> [<reason>])
    ```
 
 3. **Execution Specification / Concrete Contract (落地执行规格 / 契约)**:
-   Project the first two sections into exact, domain-adaptive, actionable definitions matching the target problem space without speculative placeholders:
+   Project aligned behavior into exact, domain-adaptive, actionable definitions matching the target problem space without speculative placeholders:
    - **Software Engineering**: Exact repository-grounded definitions (Protobuf messages/RPCs, HTTP routes/schemas, database tables, domain types, or structs) with standard business comments.
    - **Planning & Operations (e.g., Travel, Projects, Events)**: Exact execution tables (booking/itinerary matrices, daily timetables, budget allocation tables, checklist specifications, or deliverable standards).
    - **Visual Execution Viewports (Domain-Adaptive, ≤10 lines)**:
-     - **State / Record Evolution Diff**: Strongly prefer `diff` blocks to illustrate concrete data mutations, record transformations, or configuration changes (`- old baseline` vs `+ new target`) instead of natural language prose.
-     - **Mapping / Fan-Out Tree (≤8 lines)**: If the contract establishes 1:N splits, entity split/merge rules, or routing dispatch, present a micro text mapping tree (fenced `text` block using `├──`, `└──`) rather than textual mapping descriptions.
-     - **Multi-System Execution Pipeline (≤10 lines)**: When execution involves sequential operations across boundaries (e.g., pre-check guard ➔ DB write ➔ cache purge ➔ post-readback verification), render a compact `mermaid sequenceDiagram` or step call-tree exposing guards and side-effects.
-   - **Unified Conservation & Verification Matrix**: If tabulating data states or test samples, unify inputs, mapping transformations, and expected outputs into a single cohesive GFM table showing conservation/balance, rather than dumping multiple fragmented tables.
+     - **State / Record Evolution Diff**: Strongly prefer `diff` blocks to illustrate concrete data mutations or configuration changes (`- old baseline` vs `+ new target`).
+     - **Mapping / Fan-Out Tree (≤8 lines)**: If the contract establishes 1:N splits or dispatch, present a micro text mapping tree (fenced `text` block using `├──`, `└──`).
+     - **Multi-System Execution Pipeline (≤10 lines)**: When execution involves sequential operations across boundaries, render a compact step call-tree or Mermaid sequence diagram exposing guards and side-effects.
+   - **Unified Conservation & Verification Matrix**: If tabulating data states or test samples, unify inputs, mapping transformations, and expected outputs into a single cohesive GFM table.
    - Strictly NO unconfirmed or speculative fields, states, routes, or behaviors.
 
 4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**:
-   List only concrete implementation or execution paths that could appear compatible with the positive contract but would violate the aligned intent (e.g., unauthorized state mutation, silent fallback, unvetted intermediate steps, disallowed shortcuts). Omit generic platitudes.
+   List only concrete implementation or execution paths that could appear compatible with the positive contract but would violate the aligned intent (e.g., cascading re-indexing on unenrollment, silent error swallowing, unvetted shortcuts). Omit generic platitudes.
 
 ## 7. Completion & Execution Boundary
 
