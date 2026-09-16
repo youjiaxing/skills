@@ -1,12 +1,12 @@
 ---
 name: yjx-implement
-description: Implement production-grade code with surgical precision based on aligned designs or specs. Respect existing conventions, reject invented abstractions, minimize data closures, enforce allocation-aware complexity, and uphold scale-adaptive verification with zero laundering.
+description: Implement production-grade code with surgical precision based on aligned designs or specs. Enforce layer-aware deep modules, legitimate architectural seams, direct-consumer closures, allocation-aware complexity, sociable verification, and zero laundering across any language or architecture.
 disable-model-invocation: true
 ---
 
 # yjx-implement
 
-Transform aligned designs, specification blueprints, or review consensus into production-grade code with surgical precision. Maximize reuse of existing project assets, enforce minimal data closures and direct-consumer reads, push algorithmic complexity to practical limits, and uphold strict project governance without vanity ceremony.
+Transform aligned designs, specification blueprints, or review consensus into production-grade code with surgical precision. Maximize reuse of existing project assets, enforce layer-aware module depth and minimal data closures, distinguish architectural ports from forbidden synthetic test mocks, push algorithmic complexity to practical resource limits, and uphold strict project governance without vanity ceremony.
 
 ## Maintenance
 
@@ -15,58 +15,74 @@ When reviewing, evolving, or modifying this skill, read [`MAINTENANCE.md`](MAINT
 ## 1. Core Creed
 
 - **Asset Reuse Ladder**:  
-  Priority order: `Project Unified Libraries/Wrappers (Highest)` > `Language Standard Library/Idiomatic Native` > `New External Dependencies (Strictly Forbidden without Approval)`. Search and reuse established internal utilities (time, logging, errors, context) before writing code.
-- **Zero Invented Abstractions**:  
-  Entities must not be multiplied beyond necessity. Forbid spurious factories, adapters, intermediate wrappers, or synthetic layers; implement core logic with the shortest causal path.
+  Priority order: `Project Unified Libraries/Wrappers (Highest)` > `Language Standard Library/Idiomatic Native` > `New External Dependencies (Strictly Forbidden without Approval)`. Search and reuse established internal utilities (time, logging, errors, context, serialization) before writing code.
+- **Layer-Aware Depth (Small Surface, Deep Implementation)**:  
+  Module depth depends strictly on architectural responsibility:
+  - *Orchestration Layers* (Controllers, Application/Workflow services, Event dispatchers) are coordinators: keep them clean and thin (load data ➔ invoke core ➔ persist/dispatch). Never hoard domain business logic or bypass core encapsulation.
+  - *Core Logic Layers* (Domain entities, calculation engines, state machines, pure pipelines) are the true **Deep Modules**: hide complexity behind minimal, intention-revealing APIs.
+  - *Mechanism Downward, Policy Upward*: Subsume invariant validation, state machine transitions, concurrency control, and transient retries inside the core unit; keep cross-domain routing and orchestration policies at the boundary.
+  - *The Deletion Test*: If deleting an intermediate layer or helper causes complexity to vanish, it was a useless pass-through—inline or remove it. If complexity reappears across $N$ callers, it earns its keep.
+- **Seam Hierarchy (Architectural Ports vs. In-Layer Seams)**:  
+  - *Architectural Decoupling Ports (Legitimate)*: Seams isolating cross-layer boundaries, persistent storage, external networks, hardware, or third-party APIs are legitimate dependency inversion ports, even if only a single production implementation currently exists.
+  - *In-Layer Seams (The Two-Adapter Rule)*: Within the same architectural tier or domain boundary, creating interfaces, abstract classes, factories, or indirection is strictly forbidden unless at least two distinct implementations exist in **production business requirements**. A test mock or fake DOES NOT count as a second adapter.
 - **Direct-Consumer Closure & Single-Hop Read**:  
-  Shared types, schemas, and queries must contain only fields directly consumed within the touched scope. Keep data in its domain owner; never hoist downstream-specific data to shared models or cross-boundary protocols for assembly convenience. Forbid same-tier wide queries that immediately trim results downstream—fetch final shapes directly from the authoritative owner in a single hop.
+  Shared types, DTOs, schemas, and queries must contain only fields directly consumed within the touched scope. Never hoist downstream-specific data to shared models or cross-boundary protocols for local convenience. Forbid same-tier wide queries that hydrate full entities only to trim them downstream—fetch final projections directly from the authoritative owner in a single hop.
 - **Allocation-Aware Complexity**:  
-  Enforce asymptotic limits (Big-O) while eliminating hidden allocation waste: count round-trips, full-object hydrations, and redundant intermediate collections alongside loop iterations. Reject clever micro-optimizations that destroy readability.
+  Enforce asymptotic limits (Big-O) while eliminating hidden allocation waste: count network round-trips, database full-object hydrations, serialization cycles, and redundant intermediate collections alongside loop iterations. Reject clever micro-optimizations that destroy readability.
 - **Minimal Surgical Diff**:  
   Every line and file modified must have direct causal necessity to the aligned spec or task. Forbid opportunistic refactoring, unsolicited formatting of untouched code, and speculative changes beyond the task boundary.
 - **Readability Over Mockability**:  
-  Forbid synthetic interfaces, leaky abstractions, or gratuitous dependency injection invented solely to facilitate unit tests or mocking. Native readability and operational maintainability take precedence.
+  Never compromise production clarity, introduce artificial indirection, or multiply constructor parameters solely to facilitate unit test mocking. Production code serves production reliability and human readability; tests must adapt to the natural shape of production code.
 - **Why-Anchored Comments**:  
-  Naming and structure self-explain WHAT and HOW. Comments strictly record WHY: non-obvious business invariants, critical tripwires, and discarded architectural trade-offs. Forbid parrot comments that merely rephrase syntax.
+  Naming and structure self-explain WHAT and HOW. Comments strictly record WHY: non-obvious business invariants, critical tripwires, performance trade-offs, and discarded alternatives. Forbid parrot comments that merely rephrase syntax.
 
-## 2. Execution Pipeline
+## 2. Universal Execution Pipeline
 
-### Phase 1: Context & Boundary Lock
-1. **Submodule Anchoring**: In multi-repo or container workspaces, anchor execution strictly to the immediate sub-package/repository of the target change, ignoring outer wrapper containers.
-2. **Contract & Consumer Verification**: For any touched shared schema, DTO, or cross-module boundary, confirm explicit active consumers in the target scope. Reject speculative or convenience-driven field additions.
-3. **Lightweight Probing (Optional & Non-Blocking)**: Inspect local build/syntax check commands with non-interactive flags (`--watch=false`, `CI=true`). Never run blocking tests in this phase.
-*Completion Criterion*: Target module boundaries identified; zero unneeded fields introduced to shared contracts.
+### Phase 1: Scope, Boundary & Seam Lock
+1. **Submodule/Workspace Anchoring**: In monorepos, multi-repo setups, or container workspaces, anchor execution strictly to the immediate leaf submodule or package context (respecting workspace boundary configs, e.g. `go.work`, `pnpm-workspace.yaml`, Cargo workspaces).
+2. **Contract & Consumer Verification**: For any touched shared schema, DTO, or cross-boundary contract, verify explicit active consumers in the target scope. Reject speculative or convenience-driven field additions.
+3. **Seam Classification**: Validate every introduced or modified interface: verify that it either represents an architectural I/O boundary port or satisfies the production-only Two-Adapter Rule. Reject in-layer synthetic test interfaces.
+4. **Lightweight Probing (Non-Blocking)**: Inspect local build/syntax check commands with non-interactive flags (`--watch=false`, `CI=true`). Never run long-running test suites during pre-flight.
+*Completion Criterion*: Target boundaries locked; zero unneeded fields introduced; all seams justified.
 
 ### Phase 2: Surgical Implementation
-1. Unroll core logic along direct causal paths, eliminating intermediate glue layers and same-tier query re-trimming.
-2. Limit all edits strictly to causal necessities; accompany core logic with direct unit tests and local registrations as needed.
-3. Adhere to Why-Anchored Comments.
+1. Unroll core logic along direct causal paths: orchestrators coordinate flow, core entities/engines encapsulate invariants and state mutations.
+2. Forbid direct inspection of entity internal state for external decision-making; expose semantic intention-revealing methods on the domain owner.
+3. Apply the Deletion Test to eliminate intermediate glue layers, pass-through wrappers, and redundant same-tier re-trimming.
+4. Adhere strictly to Why-Anchored Comments.
 *Completion Criterion*: Changes causally bounded; zero invented abstractions; zero speculative fields; single-hop data access.
 
-### Phase 3: Gradient Verification & Anti-Laundering Gate
+### Phase 3: Sociable Verification & Anti-Laundering Gate
 1. **Scale-Adaptive Verification**:
-   - *Local Compile/Syntax First*: Verify touched packages rapidly (e.g. `go build <pkg>`, `tsc --noEmit`).
-   - *Size-Tiered Testing*: Run fast suites in micro projects (≤ seconds); in large/multi-repo projects, strictly forbid unconstrained recursive suite runs (e.g. bare `go test ./...`), constraining test runs to touched files or target functions.
-2. **Structural & Allocation Audit**:
-   - Confirm all added fields in shared boundaries are actively read by target consumers.
-   - Confirm no same-tier methods consume wide intermediate objects merely to narrow them.
-   - Confirm allocations and intermediate collections are strictly necessary.
-3. **Zero Laundering**: Strictly forbid weakening, deleting, or commenting out existing assertions due to test failures. Assertions may be updated only when the aligned spec explicitly mandates a contract change.
-*Completion Criterion*: Local compilation clean; executed tests pass green; structural diff clean; zero unauthorized assertion laundering.
+   - *Local Compile/Syntax First*: Rapidly verify touched packages (e.g. `go build <pkg>`, `tsc --noEmit`, `cargo check`).
+   - *Targeted Leaf Testing*: In medium/large projects or monorepos, strictly forbid unconstrained recursive suite execution (e.g. bare `go test ./...`, full workspace `npm test`), constraining test runs to touched files or target packages.
+2. **Sociable Verification Over Brittle Mocking**:
+   - Verify business logic through public facades using real domain/value collaborators.
+   - Restrict mocking/stubbing strictly to true architectural I/O boundaries. Prefer wire/transport-level interception (e.g. `httptest.Server`, `http.RoundTripper`, in-memory databases/caches, wiremock) over synthetic interface mocks.
+3. **Anti-Laundering & Scenario Parity Gate**:
+   - *Zero Assertion Tampering*: Strictly forbid weakening, deleting, or commenting out existing assertions due to test failures.
+   - *Scenario Parity Ledger*: If refactoring genuinely deprecates an obsolete fine-grained test, silent deletion is forbidden. The change must provide a 1:1 Scenario Parity Ledger proving that every edge case, overflow guard, and error path from the old tests is explicitly verified in the new interface-level test suite.
+4. **Structural & Allocation Audit**:
+   - Confirm all added fields in shared boundaries are actively consumed.
+   - Confirm no methods consume wide intermediate objects merely to narrow them.
+   - Confirm allocations, hydrations, and collections are strictly necessary.
+*Completion Criterion*: Local compilation clean; targeted tests pass green; structural diff clean; zero test laundering; 1:1 scenario parity audit passed if tests were superseded.
 
-### Phase 4: Governance & Clean Wrap-up
-1. **Governance Gate**: Check branch and project rules. On protected branches (`main`, `master`) or when Code Review is required, strictly forbid automatic commits; stage clean diffs and output a delivery report with suggested message and ticket IDs.
+### Phase 4: Governance & Delivery
+1. **Governance Gate**: Check branch and project rules. On protected branches (`main`, `master`, release branches) or when Code Review is required, strictly forbid automatic commits; stage clean diffs and output a delivery report with suggested message and ticket IDs.
 2. **Atomic Commits & Universal Ticket Tracking**: When auto-commits are explicitly permitted, make Conventional Commits (`feat(scope): <summary>`), staging only causally touched files (split per sub-repo if applicable). Append detected issue/ticket IDs of any format (e.g. `#123`, `PROJ-456`, `TASK-88`).
 *Completion Criterion*: Zero temporary dirty files; compliant commit or comprehensive review delivery report produced.
 
 ## 3. Forbidden Paths
 
 1. Bypassing existing project utility libraries in favor of raw standard libraries or ad-hoc implementations.
-2. Adding speculative, unconsumed fields to shared models or cross-boundary protocols for assembly convenience.
-3. Introducing same-tier wide queries that map intermediate full objects only to trim them down downstream.
-4. Opportunistically refactoring or formatting untouched code outside the task's causal necessity.
-5. Inventing dummy interfaces or wrapper layers solely to satisfy unit test mocking at the expense of readability.
-6. Laundering broken tests by weakening, commenting out, or deleting existing assertions.
-7. Running unconstrained recursive test suites in medium/large repos without assessing execution duration.
-8. Writing syntax-repeating parrot comments.
-9. Executing unauthorized `git commit` on protected branches or environments requiring Code Review.
+2. Inventing in-layer dummy interfaces, wrapper classes, or dependency injection boilerplate solely to satisfy unit test mocking at the expense of readability.
+3. Dismantling or bypassing legitimate architectural decoupling ports (e.g. database repositories, remote client boundaries) under the pretext of avoiding abstraction.
+4. Orchestration layers bypassing domain encapsulation to read raw entity attributes and implement external business branching.
+5. Adding speculative, unconsumed fields to shared models, DTOs, or cross-boundary protocols for assembly convenience.
+6. Introducing wide queries that hydrate full objects only to trim them down downstream.
+7. Opportunistically refactoring or formatting untouched code outside the task's causal necessity.
+8. Laundering broken tests by weakening, commenting out, or silently deleting existing assertions without a 1:1 Scenario Parity Ledger.
+9. Running unconstrained recursive test suites in medium/large repos or monorepos without assessing execution duration.
+10. Writing syntax-repeating parrot comments.
+11. Executing unauthorized `git commit` on protected branches or environments requiring Code Review.

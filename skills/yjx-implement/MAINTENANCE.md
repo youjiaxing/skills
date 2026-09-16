@@ -1,65 +1,88 @@
 # Maintenance: yjx-implement
 
-This document records the architectural rationale, lineage against the original `mattpocock/skills` `/implement` command, real-world failure analyses, and anti-drift rules for `yjx-implement`. Consult this file when reviewing, modifying, or refactoring this skill; it is not loaded during runtime execution.
+This document records the architectural rationale, lineage, real-world failure analyses, and anti-drift rules for `yjx-implement`. Consult this file when reviewing, modifying, or refactoring this skill; it is not loaded during runtime execution.
 
 ---
 
 ## 1. Design Rationale & Lineage
 
-`yjx-implement` completely replaces Matt Pocock's thin 5-line `/implement` command ("implement per spec", "use /tdd", "run full test suite at the end", "use /code-review", "commit if permitted"), transforming it into a surgical code execution engine balancing master-level software design aesthetics with strict industrial delivery discipline.
+`yjx-implement` completely replaces Matt Pocock's thin 5-line `/implement` command ("implement per spec", "use /tdd", "run full test suite at the end", "use /code-review", "commit if permitted"), transforming it into an industrial-grade surgical code execution engine balancing master-level software design aesthetics with strict delivery discipline.
 
-In real-world enterprise engineering, the original naive instructions trigger catastrophic failure modes: out-of-control scope wandering, green-laundering (tampering with assertions to pass tests), full-suite test timeouts hanging for tens of minutes, gratuitous mocking destroying domain readability, and unauthorized dirty commits on protected branches.
+The skill integrates John Ousterhout's *A Philosophy of Software Design* (Deep Modules, Information Hiding, Leverage) and Michael Feathers' seam discipline, deeply calibrated through empirical stress-testing against complex commercial codebases (e.g. distributed game servers, DDD bounded contexts, high-throughput microservices, and large monorepos). It is authored strictly in English and maintains universal applicability across Go, TypeScript, Rust, Java, Python, and other modern software stacks.
 
 ---
 
 ## 2. Core Engineering Pain Points & Mitigations
 
 ### 1. The Asset Bypass & NIH Trap
-* **Pain Point**: When models pursue "first-principles implementation", they frequently bypass battle-tested internal utility libraries (e.g. Go projects with unified `pkg/time` handling timezones and mockable test clocks, `pkg/errors`, or centralized context logging), reinventing raw standard library or third-party wheels.
+* **Pain Point**: When models pursue "first-principles implementation", they frequently bypass battle-tested internal utility libraries (e.g., project-unified time packages with mockable clocks, centralized logging, structured errors, or serialization helpers), reinventing raw standard library or third-party wheels.
 * **Mitigation**: The **Asset Reuse Ladder**: `Project Unified Libraries (Highest)` > `Language Standard Library` > `External Dependencies (Strictly Forbidden without Approval)`. Search and reuse established internal utilities before coding.
 
 ### 2. Green Laundering & Assertion Tampering
 * **Pain Point**: When faced with failing tests during complex implementation, LLMs suffer moral hazards—relaxing thresholds, commenting out assertions, or deleting test cases to fake a green bar.
 * **Mitigation**: The **Zero Assertion Tampering Redline**: Modifying existing assertions is strictly forbidden unless the upstream specification explicitly mandates a contract change.
 
-### 3. Over-Testing & Readability Destruction
-* **Pain Point**: Models frequently equate "testability" with extracting premature interfaces for every struct, forcing dependency injection everywhere, and mocking every collaborator. Simple domain code gets bloated into impenetrable lasagna architecture.
-* **Mitigation**: **Readability Over Mockability**: Synthetic interfaces and polymorphic indirection created solely for mocks are explicitly forbidden. Production code must take the shortest, clearest causal path.
+### 3. Laundering via Deletion & Scenario Parity Ledger
+* **Pain Point**: When instructed to "replace, don't layer" or refactor into deep modules, models frequently exploit test deletion as an escape hatch: deleting complex failing edge-case unit tests under the guise of "cleaning up obsolete shallow tests" and replacing them with a superficial happy-path test.
+* **Mitigation**: **Scenario Parity Ledger**: Silent deletion of existing tests is strictly forbidden. If refactoring legitimately supersedes fine-grained tests, the author must submit a 1:1 Scenario Parity Ledger proving that every edge case, overflow check, or error path guarded by the old tests is explicitly carried forward and verified in the new interface-level suite.
 
-### 4. Full Suite Timeout & Scale-Adaptive Testing
-* **Pain Point**: Matt Pocock's directive to "run full test suite at the end" hangs indefinitely or times out in medium-to-large mono-repos; conversely, locking out all tests prevents small scripts or micro-projects from leveraging fast automated verification.
-* **Mitigation**: **Scale-Adaptive Verification**: Allow micro-projects (run time ≤ seconds) to run full suites; strictly prohibit unconstrained recursive suite execution (e.g. bare `go test ./...`) in large/multi-repo projects, confining verification to leaf files or specific test functions.
+### 4. Over-Testing, Readability Destruction & Seam Hierarchy
+* **Pain Point**: Models frequently equate "testability" with extracting premature interfaces for every struct, forcing dependency injection everywhere, and mocking every collaborator. Simple domain code gets bloated into impenetrable lasagna architecture (`Controller -> Facade -> Service -> Manager -> Repo`). Conversely, an uncalibrated anti-interface rule risks destroying legitimate dependency inversion ports (like database repositories or RPC clients).
+* **Mitigation**: **Seam Hierarchy**:
+  - *Architectural Decoupling Ports*: Cross-boundary/layer interfaces (DB repositories, external RPCs, hardware adapters) are legitimate and mandatory to protect domain purity from storage/network drivers, even with a single production implementation.
+  - *In-Layer Seams (The Two-Adapter Rule)*: Within the same architectural layer, creating interfaces or abstract classes is strictly forbidden unless at least two distinct production implementations exist. Tests alone DO NOT justify creating an interface.
+  - *Readability Over Mockability*: Production code serves production readability; tests must adapt to the natural shape of production code, not the reverse.
 
-### 5. Workspace Container Trap & Lightweight Pre-flight
-* **Pain Point**: The root directory is often just an empty container repo or workspace wrapper. Running tests or git commands from the root causes misdirected execution. Furthermore, forcing baseline tests during pre-flight derails implementation momentum.
-* **Mitigation**: Anchor sub-packages and Git boundaries to the touched file's immediate leaf submodule. Phase 1 remains a lightweight, non-blocking lock.
+### 5. Layer-Aware Depth & The Anti-God-Object Guardrail
+* **Pain Point**: Misinterpreting Ousterhout's "Deep Module" doctrine can tempt models into writing 1000-line procedural spaghetti functions or bloating the application/controller layer with state mutations, claiming to "pull complexity downward".
+* **Mitigation**: **Layer-Aware Depth**:
+  - *Orchestration Layers* (Controllers, Application/Workflow services) are coordinators: keep them thin, explicit, and causal (load ➔ invoke core ➔ persist).
+  - *Core Logic Layers* (Domain entities, calculation engines, state machines) are the true Deep Modules: hide state invariants, sequencing, and mechanics behind clean, intention-revealing APIs.
+  - *Mechanism Downward, Policy Upward*: Subsume lock contention, invariant checks, and transient retries inside the core unit; keep cross-domain routing and orchestration policies at the boundary.
+  - *No Direct State Inspection*: Forbid orchestration layers from inspecting internal entity values to make business decisions; push decisions into semantic methods on the domain owner.
 
-### 6. Hanging Interactive Watchers
+### 6. Wire-Level Interception & Sociable Verification
+* **Pain Point**: Forbidding synthetic interfaces could trap models into believing external network APIs (e.g. payment gateways, remote microservices) cannot be automated in unit tests without hitting real networks.
+* **Mitigation**: **Sociable Testing with Wire-Level Interception**:
+  - Verify core business logic through sociable black-box execution with real domain/value objects.
+  - Intercept network/transport I/O at the wire level (e.g. `httptest.Server`, `http.RoundTripper`, in-memory caches, WireMock) rather than mocking fine-grained client interfaces. Production clients remain concrete types with zero interface pollution.
+
+### 7. Full Suite Timeout & Scale-Adaptive Testing
+* **Pain Point**: Directives to "run full test suite at the end" hang indefinitely or time out in medium-to-large monorepos or multi-repo workspaces; conversely, locking out all tests prevents small scripts or micro-projects from leveraging fast automated verification.
+* **Mitigation**: **Scale-Adaptive Verification**: Allow micro-projects (run time ≤ seconds) to run full suites; strictly prohibit unconstrained recursive suite execution (e.g. bare `go test ./...`, full workspace `npm test`, recursive `cargo test`) in large workspaces, confining verification to leaf files or target packages.
+
+### 8. Workspace Container Trap & Lightweight Pre-flight
+* **Pain Point**: The root directory is often just an empty container repo or workspace wrapper. Running tests or build commands from the root causes misdirected execution or dependency version conflicts (e.g. `go.work` multi-repo conflicts, mismatched `tsconfig.json`). Furthermore, forcing baseline tests during pre-flight derails implementation momentum.
+* **Mitigation**: Anchor execution strictly to the leaf submodule or package context. Phase 1 remains a lightweight, non-blocking lock.
+
+### 9. Hanging Interactive Watchers
 * **Pain Point**: Commands like `npm test` or `pytest` default to interactive watch modes, causing background agent execution to hang indefinitely waiting for stdin.
 * **Mitigation**: Force non-interactive CI flags (`--watch=false`, `CI=true`) during command probing.
 
-### 7. Why-Anchored Positive Prompting
+### 10. Why-Anchored Positive Prompting
 * **Pain Point**: Telling an LLM "don't write useless comments" triggers negative framing (either writing zero comments or writing more meta-comments).
 * **Mitigation**: **Why-Anchored Comments**: Code structure and naming explain WHAT and HOW; comments strictly explain WHY (subtle invariants, tripwires, discarded architectural alternatives).
 
-### 8. Governance First & Universal Tracker
-* **Pain Point**: Assuming direct commits on any branch and hardcoding GitHub `#123` assumptions breaks enterprise workflows (protected branches, mandatory CR, Jira/Teambition IDs).
+### 11. Governance First & Universal Tracker
+* **Pain Point**: Assuming direct commits on any branch and hardcoding GitHub `#123` assumptions breaks enterprise workflows (protected branches, mandatory CR, Jira/Teambition/GitLab IDs).
 * **Mitigation**: Forbid auto-commits on protected branches or CR-mandated repositories. When committing is allowed, enforce Conventional Commits and universally extract issue IDs in any format (`#123`, `PROJ-456`, `TASK-88`).
 
-### 9. Data Boundary Hoisting & Pseudo-Reuse via Same-Tier Trimming
+### 12. Data Boundary Hoisting & Pseudo-Reuse via Same-Tier Trimming
 * **Pain Point**: Two frequent architectural regressions occur during feature assembly:
-  1. *Unjustified Boundary Hoisting*: To make local assembly convenient, fields not required by direct consumers are hoisted into shared value objects, DTOs, or cross-boundary protocols (e.g., adding an unneeded `EnterTime` field into a cross-server member value object and proto, which pollutes the cross-server boundary when downstream real-time services could provide it locally).
-  2. *Same-Tier Pseudo-Reuse*: Reusing wide query methods from the same layer and immediately discarding/trimming the wide projection into a narrower shape (e.g. calling `GetWarRoleValues` to hydrate full entities and maps, only to extract `UnionId`, instead of querying the repository/owner directly for `UnionId` in a single hop).
-* **Mitigation**: **Direct-Consumer Closure & Single-Hop Read**: Require every added field in shared boundaries to have an explicit active consumer in the touched scope. Forbid same-tier wide query reuse when direct, single-hop queries to the domain owner are possible. Upgrade complexity analysis to **Allocation-Aware Complexity** (counting full-object hydrations and intermediate collections alongside Big-O).
+  1. *Unjustified Boundary Hoisting*: To make local assembly convenient, fields not required by direct consumers are hoisted into shared value objects, DTOs, or cross-boundary protocols (e.g., adding an unneeded field into a cross-server protobuf message, polluting boundaries).
+  2. *Same-Tier Pseudo-Reuse*: Reusing wide query methods from the same layer and immediately discarding/trimming the wide projection into a narrower shape (e.g. hydrating full entities and maps only to extract a single ID, instead of querying the repository/owner directly in a single hop).
+* **Mitigation**: **Direct-Consumer Closure & Single-Hop Read**: Require every added field in shared boundaries to have an explicit active consumer in the touched scope. Forbid same-tier wide query reuse when direct, single-hop queries to the domain owner are possible. Upgrade complexity analysis to **Allocation-Aware Complexity** (counting full-object hydrations, serialization cycles, and intermediate collections alongside Big-O).
 
-### 10. The Whitelist Fallacy vs. Causal Scope
-* **Pain Point**: Static "file whitelists" produce a false sense of security while creating bureaucratic friction:
-  - Fatal bugs (like unneeded fields or bad queries) occur *inside* legitimate whitelisted files.
-  - Pre-declaring a rigid whitelist before coding triggers cognitive failure modes: either the agent invents ugly architectural workarounds to avoid touching an unlisted companion file (like a caller signature update or unit test), or it pre-declares an overly broad whitelist that renders the guardrail meaningless.
+### 13. The Whitelist Fallacy vs. Causal Scope
+* **Pain Point**: Static "file whitelists" produce a false sense of security while creating bureaucratic friction: fatal bugs occur *inside* legitimate whitelisted files, and agents either invent ugly architectural workarounds or pre-declare overly broad whitelists.
 * **Mitigation**: **Minimal Surgical Diff**: Eliminate the artificial bookkeeping ceremony of static whitelists. Anchor strictly to **causal necessity** (every line changed must be directly justified by the task/spec; zero opportunistic refactoring or formatting of untouched code) and use the environment's true source of truth (`git status` and `git diff`) for verification. Companion tests and local registrations are recognized as natural companion changes.
 
-### 11. Architectural Decoupling: Sub-Agent Governance
-* **Design Decision**: Multi-agent dispatch and parallel sub-agent launch gates (e.g., preventing overlapping planner sub-agents on the same codebase) belong exclusively to top-level orchestrators or user rules. Because `yjx-implement` is a leaf implementation execution engine (`disable-model-invocation: true`), it must never be contaminated with multi-agent orchestration policies, preserving its high cohesion and strict line budget.
+### 14. Architectural Decoupling: Sub-Agent Governance
+* **Design Decision**: Multi-agent dispatch and parallel sub-agent launch gates belong exclusively to top-level orchestrators or user rules. Because `yjx-implement` is a leaf implementation execution engine (`disable-model-invocation: true`), it must never be contaminated with multi-agent orchestration policies, preserving its high cohesion and direct execution focus.
+
+### 15. Evolution of the Line Budget
+* **Design Decision**: The original arbitrary ~70–80 physical line budget was established to prevent prompt sprawl. However, compressing complex architectural principles into terse slogans triggered semantic ambiguity (e.g. models confusing Ousterhout depth with procedural god-objects, or conflating test mocks with architectural ports).
+* **Mitigation**: The physical line budget is replaced with **Conceptual Density & Decidable Exit Gates**. Rules must be strictly formulated as binary-decidable (Yes/No) execution criteria without philosophical fluff or essayistic prose, while giving sufficient precision to eliminate interpretation loopholes.
 
 ---
 
@@ -68,11 +91,14 @@ In real-world enterprise engineering, the original naive instructions trigger ca
 When modifying or maintaining this skill, verify that none of the following regressions occur:
 
 - [ ] **Asset Reuse Ladder Preserved**: Does the skill still mandate prioritizing internal project libraries over raw standard libraries or new external dependencies?
-- [ ] **Anti-Sprawl Line Budget Intact**: Is `SKILL.md` strictly constrained to under 100 lines (target ~70–80 lines) of high-density execution rules?
+- [ ] **High-Density Decidability Intact**: Are rules formulated as binary-decidable execution criteria without philosophical fluff or essayistic padding?
+- [ ] **Layer-Aware Depth Enforced**: Does the skill enforce orchestrators as thin coordinators while anchoring true depth (invariants, state transitions, concurrency) inside domain/core logic entities?
+- [ ] **Seam Hierarchy Resilient**: Does it clearly differentiate architectural decoupling ports (permitted) from in-layer synthetic test mocks (strictly forbidden via the production-only Two-Adapter Rule)?
+- [ ] **Sociable Verification & Wire Seams**: Does it mandate black-box sociable testing with real collaborators and wire/transport-level interception, rather than fine-grained mock injection?
 - [ ] **Direct-Consumer Closure Enforced**: Does the skill block adding speculative or convenience fields to shared schemas without explicit active consumers?
-- [ ] **Single-Hop & Allocation-Aware Intact**: Are same-tier wide-then-narrow queries prohibited, and are memory allocations/object instantiations evaluated alongside Big-O?
+- [ ] **Single-Hop & Allocation-Aware Intact**: Are same-tier wide-then-narrow queries prohibited, and are memory allocations, serialization, and network round-trips evaluated alongside Big-O?
 - [ ] **Minimal Surgical Diff over Whitelist**: Does the skill enforce causal necessity via `git diff` without relapsing into bureaucratic static file whitelists?
-- [ ] **Scale-Adaptive Testing Maintained**: Does it permit micro-project full suites while strictly forbidding unconstrained recursive suite execution in large repos?
-- [ ] **Anti-Laundering Gate Intact**: Is unauthorized tampering or deletion of failing test assertions strictly forbidden?
-- [ ] **Readability Redline Resilient**: Is the creation of synthetic interfaces solely for test mocking prohibited?
+- [ ] **Scale-Adaptive Testing Maintained**: Does it permit micro-project full suites while strictly forbidding unconstrained recursive suite execution in large repos/monorepos?
+- [ ] **Anti-Laundering & Scenario Parity Gate Intact**: Is unauthorized tampering of failing test assertions strictly forbidden, and does deleting any test require a verified 1:1 Scenario Parity Ledger?
+- [ ] **Universal Language & Architecture Neutrality**: Is the skill authored strictly in English, using domain-neutral engineering terms applicable across Go, TypeScript, Rust, Java, Python, and different architectural paradigms?
 - [ ] **Governance & Ticket Tracker Intact**: Are protected branch commit restrictions and universal ticket ID attachments enforced?
