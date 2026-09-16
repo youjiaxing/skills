@@ -16,6 +16,7 @@ The skill was created to solve three complementary failure modes:
 2. **Questionnaire storms & Trivial inquiries**: Broad, flat questioning overloads the human and buries critical trade-offs under dozens of trivial parameter questions.
 3. **Sycophantic compliance (The "Yes-Man" Trap)**: Asymmetric question presentation (over-decorating the recommended option while presenting alternatives as weak strawmen) suppresses critical thinking and tempts the human into passive approval without acknowledging inherent costs.
 4. **Format mimicry & Premature artifact dumping**: In troubleshooting, bug diagnosis, or reality-gap contexts, agents bypass interactive alignment and cram raw investigation findings, stack traces, and routine defensive coding into the 4-part artifact, distorting objective facts into fake "commitments" and "inferences".
+5. **Synthetic fork hallucination**: In troubleshooting or diagnostic contexts, agents manufacture fake P0 question cards out of diagnostic roadblocks, missing permissions, or symptom guessing when no genuine architectural trade-offs exist.
 
 ### Core Evolutionary Principles
 - **Unconstrained Depth via Frontier Traversal**: Settling a decision prunes unchosen alternatives, but unblocks downstream forks on the active path. As long as unresolved high-impact forks remain, grilling continues across rounds.
@@ -78,5 +79,6 @@ Before changing this skill, verify that the change:
 - maintains zero file-system side-effects (forbidding standalone HTML generation or external openers during grilling);
 - respects vertical height budgets for visual viewports (≤8 lines in cards, ≤8 lines in alignment units);
 - applies visual viewports domain-neutrally, forbidding language-specific or framework-specific locks;
+- strictly forbids manufacturing synthetic question cards out of diagnostic obstacles or symptom guessing when no genuine architectural trade-offs exist;
 - generalizes a problem instead of encoding a single example as a rule.
 If a proposed optimization conflicts with one of these checks, resolve that conflict before editing the skill.

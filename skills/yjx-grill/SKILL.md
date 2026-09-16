@@ -14,7 +14,10 @@ When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MA
 Fact autonomy is hypothesis-driven across all rounds, not a one-off prelude or routine chore before every question:
 - **Zero Tools for Intent & Trade-offs**: High-level trade-offs (e.g., consistency vs. availability, sync vs. async, retention policies) and business goals depend on human judgment, not code. Do NOT invoke tools for pure intent decisions—ask them directly.
 - **Probe Only on Concrete Asset Dependencies**: Invoke search/read tools only when an option or prerequisite depends on an unverified existing asset (e.g., confirming whether a specific queue, client, schema field, or interface already exists to avoid proposing imaginary solutions).
-- **Problem & Reality Gap Investigation**: When the prompt involves a defect, unexpected behavior, or discrepancy, use tools to investigate the objective causal chain (logs, state mutations, code paths) as a fact baseline. Do NOT jump directly to autonomous code fixing or unilateral artifact convergence; feed the discovered facts into a concise Fact Primer and use open remediation choices as grilling forks.
+- **Problem & Reality Gap Investigation (Adaptive Fact Closure)**: When the prompt involves a defect, unexpected behavior, or discrepancy, use tools to investigate the objective causal chain (logs, state mutations, code paths) as a fact baseline. Feed the discovered facts into a concise Fact Primer.
+  - **Facts Are Non-Negotiable**: Root causes, causal attribution, and verification blockers are objective facts. Strictly FORBID turning investigation uncertainties or diagnostic steps into synthetic multiple-choice voting cards. If verification is physically blocked (e.g., unreachable DB), state confidence and provide an executable check command directly.
+  - **Zero-Fork Direct Closure**: If facts are established and no genuine, high-reversal-cost architectural remediation trade-offs exist, deliver the definitive diagnostic conclusion and evidence chain, then STOP immediately. Do NOT manufacture artificial questions or force specification templates.
+  - **Escalate to Grilling Only on Real Forks**: Formulate question cards ONLY if the verified root cause opens genuine strategic engineering forks (e.g., tactical bypass vs. breaking schema refactoring).
 - **Clarify Real Ambiguities**: If investigation reveals missing context or conflicting implementations (e.g., legacy v1 vs. v2), ask the user a targeted clarification referencing the findings rather than guessing.
 - **Prune Before Asking**: Use verified facts to eliminate impossible or already-implemented options before presenting questions.
 
@@ -59,8 +62,7 @@ When the prompt involves diagnosing a bug, an operational incident, or an unexpe
      - *Linear flow*: Single-line arrow chain (`Step ➔ Step ➔ Breakpoint`).
      - *Isolated single-point defect*: 1-2 concise bullet lines (strictly FORBID unnecessary diagrams or trees).
   3. **Assessment & Exclusions (`定性与排除`)**: Technical nature of the defect and explicitly eliminated pseudo-causes (e.g., excluding network jitters, generic protocol faults, or unrelated systems).
-- **Noise Reduction**: Omit or bracket non-semantic transient hash IDs (e.g., random UUIDs/hashes); highlight critical error codes, symbols, and values with backticks.
-- **Fact Foundation Only**: Never propose unilateral code fixes or skip straight to the final artifact in this primer; use it strictly as the shared factual foundation for subsequent question cards.
+- **Fact Foundation & Exit Gate**: Ground findings in this primer. If genuine strategic remediation trade-offs exist, use it to anchor subsequent question cards; if the issue is a resolved fact/attribution with zero architectural forks, stop here cleanly with definitive conclusions and verification steps.
 
 ### Visual Viewports & Structural Contrast
 To minimize cognitive translation fatigue, embed concise visual viewports using standard Markdown code blocks. Never generate or open external files (e.g., `.html`).
@@ -145,7 +147,7 @@ Every settled decision propagates both forward and backward across the dependenc
 Before outputting the alignment specification, perform a mandatory frontier audit:
 1. **Downstream Fork Audit**: Did the latest confirmed decision unlock any downstream forks meeting the P0 Redline (e.g., state consistency levels, exception/conflict resolution paths, irreversible commitments, or boundary contract guarantees)?
 2. **Completeness Audit**: Are all material state transitions, trigger conditions, and domain guarantees introduced or altered by this decision grounded without speculative placeholders or unverified agent assumptions?
-3. **Single-Turn Convergence Prohibition**: When an initiative, troubleshooting prompt, or reality gap contains viable alternative architectural or remediation paths, FORBID outputting the final specification on round 1 without at least one round of balanced interactive questioning, unless the human explicitly requested immediate zero-interaction delivery.
+3. **Single-Turn Convergence Prohibition & Diagnostic Exception**: When an initiative or architecture prompt contains viable alternative engineering paths, FORBID outputting the final specification on round 1 without at least one round of balanced interactive questioning, unless the human explicitly requested immediate zero-interaction delivery. (Exception: pure troubleshooting/diagnostic prompts where facts are resolved with zero architectural forks may terminate immediately with fact conclusions).
 4. **Anti-Semantics-Distortion Rules**:
    - **Guarantees & Mechanics**: Must record only genuine human guarantees and intentional engineering trade-offs made during alignment. FORBID framing pre-existing baseline behaviors, bug-fix goals, or standard domain common sense as newly established guarantees.
    - **Cross-Cutting Rules**: Must record only genuine system-wide trade-offs. FORBID converting diagnostic facts or eliminated bug hypotheses into design inferences.
