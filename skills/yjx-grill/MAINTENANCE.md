@@ -22,7 +22,7 @@ The skill was created to solve three complementary failure modes:
 - **Anti-Premature Convergence & P0 Redline**: High-reversal-cost decisions (structural refactoring, data migration, broken client contracts) must never be downgraded to P1 companion inferences. Grilling must actively traverse deep frontier boundaries (failure modes, race conditions, compensation) and pass a convergence pre-flight gate before generating the final artifact.
 - **Trade-off Symmetry & Costs**: Every recommended option must explicitly state its unavoidable friction, complexity, or risks (`⚠️ Costs`) and its critical vulnerabilities (`❗️ Key assumptions`). Alternative options must define conditions where they become strictly superior (`Applicable scenarios`).
 - **Transparent Inferences with Causality**: Low-risk companion rules are bundled into Option 1 (and custom decisions) with explicitly unadopted alternatives and reasons. They remain strictly causal to the current decision node.
-- **Scenario-Driven Cohesiveness & show-me Inlined Viewports**: Eliminates the cognitive chasm of disjointed C-series (commitments) and D-series (inferences) bookkeeping ledgers. Ties business guarantees directly to their inlined companion mechanisms and ≤5-line micro-viewports (diff, call-chain, mapping tree) so handoff successors grasp state evolutions in seconds without context hopping.
+- **Scenario-Driven Cohesiveness & Minimal Expressive Viewports**: Eliminates the cognitive chasm of disjointed C-series (commitments) and D-series (inferences) bookkeeping ledgers. Ties business guarantees directly to their inlined companion mechanisms and ≤8-line micro-viewports (diff, call-chain, mapping tree) so handoff successors grasp state evolutions in seconds without context hopping.
 - **Bidirectional Cascade Impact (DAG Traversal)**: A decision unblocks downstream frontier questions (forward) and may invalidate, prune, or re-open historical nodes (backward).
 
 ## Semantic Boundaries
@@ -32,13 +32,14 @@ A complete alignment artifact accounts for every material behavior, rule, condit
 
 Concision means removing repetition, filler, and non-value-adding prose. It does NOT mean flattening the decision tree, omitting a section, merging distinct decision sources, or hiding a material inference.
 
-### Universal Four-Part Artifact
-The four parts are distinct verification views, not interchangeable summaries:
+### Universal Verification Views & Integrated Alignment Units
+The specification unifies the four distinct verification dimensions—observable guarantees, companion mechanisms, concrete visual anchors, and prohibited anti-patterns—into self-contained, integrated alignment units (`Integrated Alignment Units`) rather than splitting them into disjointed, redundant chapters.
 
-1. **Scenario Feature Contracts (场景功能契约)**: Verifies aligned behavior organized by cohesive capability or scenario slices. Pairs observable business guarantees directly with inlined companion mechanisms and concise show-me micro-viewports (≤5 lines). Strictly forbids rigid form labels (`Trigger:`, `Result:`, `Invariant:`, `Guarantee:`) and disjointed `C<N>` / `D<N>` alphanumeric ledgers.
-2. **Cross-Cutting Technical Inferences (全局跨切面技术规则)**: Exposes system-wide companion rules and architectural trade-offs that span across multiple scenarios (e.g., global transaction retries, centralized cache guards) with explicitly unadopted alternatives and unchosen reasons.
-3. **Execution Specification / Concrete Contract (落地执行规格 / 契约)**: Shows how aligned behavior and inferences map to concrete, domain-adaptive boundaries (e.g., Protobuf/APIs/schemas for code; booking/timeline/budget matrices for operations/planning) using unified conservation matrices and focused micro-viewports (state diff, mapping tree, pipeline sequence ≤10 lines) without speculative placeholders.
-4. **Forbidden Paths (禁止事项 - Anti-Goals & Exclusions)**: Identifies plausible paths or actions that would violate the aligned intent.
+1. **Integrated Alignment Units (图文一体决策对齐单元)**: Each unit pairs a minimal expressive viewport (code/model shape sketch, evolution diff, or call-tree ≤8 lines) directly with its locked business invariants, adopted mechanisms (with discarded alternatives), and strategic anti-patterns. This prevents four-fold redundancy (the "four-times rewritten" syndrome) where the same decision is echoed across disparate sections.
+2. **Preservation of Essential Model Assets**: Domain neutrality does NOT mean code-aversion or abstract hand-waving. In software engineering (including DDD, microservices, protocols, and APIs), structural definitions—such as Aggregate Roots, Entities, Value Objects, state machine enums, schema fields, or core method contracts—ARE essential design decisions. They must be visibly grounded as focused code/schema shape sketches or diffs without stripping their core structural essence.
+3. **Cross-Cutting Technical Inferences (全局跨切面技术规则, Optional)**: Confined to system-wide companion rules and architectural trade-offs that span across all scenarios (e.g., global transaction retries, centralized cache consistency). Omitted if all rules are scenario-local.
+4. **Core Verification Matrix (核心验证预期矩阵, Optional)**: Compact GFM table (≤4 rows) mapping multi-scenario conditions to observable guarantees.
+5. **Anti-Implementation-Leak Guard**: Strictly separates design-level alignment from PR implementation tasks. Alignment specifications must never dump unaffected calling-point whitelists, local automated test script filenames (`.yaml`, `.py`), or routine language-level parameter hygiene (e.g., nil checks, slice length guards).
 
 ### Decision Provenance & Weight Separation
 - **User Decisions (P0)** cannot be modified without explicit human instruction.
@@ -54,9 +55,11 @@ The specification replaces rigid, bureaucratic alphanumeric handles (`C1`, `D1`)
 Before changing this skill, verify that the change:
 
 - preserves alignment-before-action as the primary outcome;
-- maintains domain neutrality (works for software, planning, strategy without hardcoding language-specific assumptions);
+- maintains domain neutrality (works for software, planning, strategy without hardcoding framework-specific assumptions);
+- incorporates the minimal expressive viewport philosophy (pick the smallest view, skip preambles, place text next to visual);
+- eliminates four-fold template redundancy by consolidating guarantees, mechanisms, viewports, and boundaries into integrated alignment units;
+- enforces the **Anti-Implementation-Leak Guard**: strictly forbids PR task bloat (unaffected call lists, test script filenames, routine parameter hygiene) while preserving essential model assets (structs, state enums, schemas, method contracts);
 - keeps fact autonomy hypothesis-driven and continuous across rounds without ritualistic tool grinding;
-- anchors core models to cohesive scenario feature contracts rather than bureaucratic form labels (`Trigger`, `Invariant`) or disjointed C/D ledgers;
 - enforces **Delta-Relevance** in scenario contracts to prevent boilerplate dumping of unaffected host platform or infrastructure mechanisms;
 - keeps decision depth unconstrained and driven by actual decision-tree frontier traversal;
 - requires symmetric exposure of costs, trade-offs, and falsifiable assumptions;
@@ -69,15 +72,11 @@ Before changing this skill, verify that the change:
 - prevents semantics distortion in the alignment specification (never converting diagnostic facts into trade-offs, nor baseline requirements into newly aligned guarantees);
 - maintains Frontier Visibility across questioning rounds without creating artificial questionnaire storms;
 - accounts for bidirectional cascade impact (pruning invalid historical branches upon premise changes);
-- preserves the distinct verification purpose of all four artifact parts;
 - treats concision as removal of non-value-adding expression, not loss of coverage or shallow questioning;
-- replaces disjointed C1/D1 ledgers with scenario-driven, self-contained feature contracts pairing business guarantees with inlined companion mechanisms;
-- enforces the show-me micro-viewport activation gate (≤5 lines; diff, call-chain, mapping) and strictly forbids code blocks for linear/trivial parameter changes;
-- keeps the execution spec concrete, domain-grounded, and non-speculative;
 - keeps the skill file itself authored strictly in English, using explicit runtime localization mapping for user-facing multilingual interactions;
 - preserves the active-slice boundary and execution stop condition;
 - maintains zero file-system side-effects (forbidding standalone HTML generation or external openers during grilling);
-- respects the Structural Divergence Gate and vertical height budgets for visual viewports (≤8 lines in cards, ≤5 lines in scenario units, ≤10 lines in execution spec);
+- respects vertical height budgets for visual viewports (≤8 lines in cards, ≤8 lines in alignment units);
 - applies visual viewports domain-neutrally, forbidding language-specific or framework-specific locks;
 - generalizes a problem instead of encoding a single example as a rule.
 If a proposed optimization conflicts with one of these checks, resolve that conflict before editing the skill.
