@@ -110,3 +110,5 @@ When modifying or maintaining this skill, verify that none of the following regr
 - [ ] **Anti-Laundering & Scenario Parity Gate Intact**: Is unauthorized tampering of failing test assertions strictly forbidden, and does deleting any test require a verified 1:1 Scenario Parity Ledger?
 - [ ] **Universal Language & Architecture Neutrality**: Is the skill authored strictly in English, using domain-neutral engineering terms applicable across Go, TypeScript, Rust, Java, Python, and different architectural paradigms?
 - [ ] **Governance & Ticket Tracker Intact**: Are protected branch commit restrictions and universal ticket ID attachments enforced?
+- [ ] **Review Gate Intact**: Does Phase 4 cover the final task changes, including uncommitted/new files, require independent review and closure of blocking findings, and keep blocked reviews incomplete?
+- [ ] **Verification over Default TDD**: Do Phases 2–3 require behavior/regression evidence without mandating test-first order unless the user or project explicitly requires TDD?
