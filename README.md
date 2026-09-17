@@ -26,7 +26,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 | 原版 (mattpocock/skills) | 本仓库强化版 (yjx-skills) | 解决的核心痛点与关键演进 |
 | :--- | :--- | :--- |
-| `grilling` | **`yjx-grill`** | **解决问卷风暴与盲从陷阱**：动态决策树剪枝，显式呈现场景代价与关键假设；严格分离 P0 用户决策与 P1 伴随推断；输出 4 部分领域自适应对齐产物，杜绝长文叙事幻觉。 |
+| `grilling` | **`yjx-grill`** | **解决问卷风暴与盲从陷阱**：动态决策树剪枝，显式呈现场景代价与关键假设；严格分离用户决策与伴随推断；输出单一语义归宿的实现契约，消除模板重复并保留实施关键约束。 |
 | `to-spec` | **`yjx-to-spec`** | **解决 User Story 语义通胀与遗留系统破坏**：废除八股模板，以状态转移表与强类型接口为真源；引入 `Touched Areas`（物理修改白名单）与 `System Invariants`（系统不变量）；内建 ADR-Lite 记录被废弃方案以防反复回退。 |
 | `to-tickets` | **`yjx-to-tickets`** | **解决过度碎片化、魔数硬限与需求孤儿化**：以因果自洽、单会话无损收敛与审查自解释性为切分准则；内建覆盖率自检与不变量伴随注入；AFK 优先并显式分离 `ready-for-human` 门禁。 |
 | `wayfinder` | **`yjx-wayfinder`** | **解决跨 Session 上下文爆炸与虚假发票**：构建轻量决策地图（Map as Index），仅实例化当前无阻塞的 Frontier 票；支持决策划线作废；闭环时自动将碎片化决策合成最终交付物。 |
@@ -57,7 +57,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ### 1. 深度对齐与迷雾规划 (Alignment & Cartography)
 
-- **`yjx-grill`**：深度拷问与压力测试。通过决策树剪枝、显式区分用户决策（P0）与 Agent 推断（P1），输出包含核心模型、推断规则、执行规格与禁止事项的 4 部分对齐产物。
+- **`yjx-grill`**：深度拷问与压力测试。通过决策树剪枝、显式区分用户决策与 Agent 推断，输出以单一语义归宿组织的实现契约（预期表现、实现契约与验收标准），杜绝模板冗余与实施断层。
 - **`yjx-wayfinder`**：跨 Session 大型模糊目标的探索式规划。在 Issue Tracker 上维护一张轻量决策地图，探索前沿决策票并逐层驱散认知迷雾，最终合成交付物。
 
 ### 2. 规范编译与原子切片 (Specification & Decomposition)

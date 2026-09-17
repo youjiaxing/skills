@@ -1,84 +1,102 @@
 # yjx-grill Maintenance Metadata
 
-Read this file before reviewing, modifying, or redesigning `yjx-grill`. It records the skill's design intent, systemic trade-offs, and semantic boundaries. It is maintenance reference, not ordinary execution guidance.
+Read this file before reviewing, modifying, or redesigning `yjx-grill`. It records design intent and anti-drift rules; ordinary execution does not require it.
 
 ## Identity
 
-`yjx-grill` is a user-invoked tool for aligning a human and an agent on a complex design, architecture, or plan before execution. It uses targeted questions, autonomous fact-finding, dynamic decision-tree exploration, and an explicit projection of the agent's execution model.
+`yjx-grill` is a user-invoked alignment tool for complex requirements, architectures, remediation strategies, and plans. It combines autonomous fact-finding with decision-tree exploration and ends in a human-confirmed, implementation-ready contract.
 
-Its primary outcome is verified, shared intent before action is taken. It applies across all complex decision domains (software engineering, system architecture, operational planning, travel/event coordination, organizational strategy). It is not primarily a summary generator, a questionnaire minimizer, a speed optimizer, or an execution-plan generator.
+Its primary outcome is verified shared intent before execution. It is not a summary generator, a generic questionnaire, an execution-plan generator, or a substitute for implementation.
 
-## Origin & Evolution
+## Problems It Must Prevent
 
-The skill was created to solve three complementary failure modes:
+1. **Monolithic summaries** that encourage passive approval without exposing decisions.
+2. **Questionnaire storms** that ask low-value implementation details.
+3. **Asymmetric options** that hide the recommended choice's real costs.
+4. **Premature convergence** that skips downstream ownership, state, compatibility, or failure forks.
+5. **Fact/intent confusion** that asks humans for discoverable facts or converts diagnostic facts into fake commitments.
+6. **Synthetic forks** created from missing permissions, tooling obstacles, or speculative causes.
+7. **Semantic repetition** where one decision is restated as a viewport, guarantee, mechanism, boundary, and verification row.
+8. **Thin summaries** that remove repetition by also removing implementation-critical contracts.
 
-1. **Monolithic summaries**: Lengthy requirement summaries encourage passive skimming, creating the illusion of agreement without a shared, verifiable execution model.
-2. **Questionnaire storms & Trivial inquiries**: Broad, flat questioning overloads the human and buries critical trade-offs under dozens of trivial parameter questions.
-3. **Sycophantic compliance (The "Yes-Man" Trap)**: Asymmetric question presentation (over-decorating the recommended option while presenting alternatives as weak strawmen) suppresses critical thinking and tempts the human into passive approval without acknowledging inherent costs.
-4. **Format mimicry & Premature artifact dumping**: In troubleshooting, bug diagnosis, or reality-gap contexts, agents bypass interactive alignment and cram raw investigation findings, stack traces, and routine defensive coding into the 4-part artifact, distorting objective facts into fake "commitments" and "inferences".
-5. **Synthetic fork hallucination**: In troubleshooting or diagnostic contexts, agents manufacture fake P0 question cards out of diagnostic roadblocks, missing permissions, or symptom guessing when no genuine architectural trade-offs exist.
+## Core Design Principles
 
-### Core Evolutionary Principles
-- **Unconstrained Depth via Frontier Traversal**: Settling a decision prunes unchosen alternatives, but unblocks downstream forks on the active path. As long as unresolved high-impact forks remain, grilling continues across rounds.
-- **Anti-Premature Convergence & P0 Redline**: High-reversal-cost decisions (structural refactoring, data migration, broken client contracts) must never be downgraded to P1 companion inferences. Grilling must actively traverse deep frontier boundaries (failure modes, race conditions, compensation) and pass a convergence pre-flight gate before generating the final artifact.
-- **Trade-off Symmetry & Costs**: Every recommended option must explicitly state its unavoidable friction, complexity, or risks (`⚠️ Costs`) and its critical vulnerabilities (`❗️ Key assumptions`). Alternative options must define conditions where they become strictly superior (`Applicable scenarios`).
-- **Transparent Inferences with Causality**: Low-risk companion rules are bundled into Option 1 (and custom decisions) with explicitly unadopted alternatives and reasons. They remain strictly causal to the current decision node.
-- **Scenario-Driven Cohesiveness & Minimal Expressive Viewports**: Eliminates the cognitive chasm of disjointed C-series (commitments) and D-series (inferences) bookkeeping ledgers. Ties business guarantees directly to their inlined companion mechanisms and ≤8-line micro-viewports (diff, call-chain, mapping tree) so handoff successors grasp state evolutions in seconds without context hopping.
-- **Bidirectional Cascade Impact (DAG Traversal)**: A decision unblocks downstream frontier questions (forward) and may invalidate, prune, or re-open historical nodes (backward).
+### Dynamic Frontier
 
-## Semantic Boundaries
+Only high-impact human decisions become questions. Selecting a branch prunes alternatives and opens the next dependent frontier. Depth is determined by remaining decisions, not by a fixed number of rounds.
 
-### Complete and Concise
-A complete alignment artifact accounts for every material behavior, rule, condition, state, boundary, and decision source needed to review the active slice before execution.
+### Decision Weight
 
-Concision means removing repetition, filler, and non-value-adding prose. It does NOT mean flattening the decision tree, omitting a section, merging distinct decision sources, or hiding a material inference.
+- Human decisions cover irreversible or high-reversal-cost choices, authority, external guarantees, state transitions, consistency, and remediation strategy.
+- Agent inferences cover low-risk mechanics and remain overrideable.
+- Routine implementation details never become questions or contract entries.
 
-### Universal Verification Views & Integrated Alignment Units
-The specification unifies the four distinct verification dimensions—observable guarantees, companion mechanisms, concrete visual anchors, and prohibited anti-patterns—into self-contained, integrated alignment units (`Integrated Alignment Units`) rather than splitting them into disjointed, redundant chapters.
+### Symmetric Trade-offs
 
-1. **Integrated Alignment Units (图文一体决策对齐单元)**: Each unit pairs a minimal expressive viewport (code/model shape sketch, evolution diff, or call-tree ≤8 lines) directly with its locked business invariants, adopted mechanisms (with discarded alternatives), and strategic anti-patterns. This prevents four-fold redundancy (the "four-times rewritten" syndrome) where the same decision is echoed across disparate sections.
-2. **Preservation of Essential Model Assets**: Domain neutrality does NOT mean code-aversion or abstract hand-waving. In software engineering (including DDD, microservices, protocols, and APIs), structural definitions—such as Aggregate Roots, Entities, Value Objects, state machine enums, schema fields, or core method contracts—ARE essential design decisions. They must be visibly grounded as focused code/schema shape sketches or diffs without stripping their core structural essence.
-3. **Cross-Cutting Technical Inferences (全局跨切面技术规则, Optional)**: Confined to system-wide companion rules and architectural trade-offs that span across all scenarios (e.g., global transaction retries, centralized cache consistency). Omitted if all rules are scenario-local.
-4. **Core Verification Matrix (核心验证预期矩阵, Optional)**: Compact GFM table (≤4 rows) mapping multi-scenario conditions to observable guarantees.
-5. **Anti-Implementation-Leak Guard**: Strictly separates design-level alignment from PR implementation tasks. Alignment specifications must never dump unaffected calling-point whitelists, local automated test script filenames (`.yaml`, `.py`), or routine language-level parameter hygiene (e.g., nil checks, slice length guards).
+Recommended choices expose unavoidable costs and falsifiable assumptions. Alternatives state when they are superior. Symmetry is required during decision-making, not repeated in the final implementation contract.
 
-### Decision Provenance & Weight Separation
-- **User Decisions (P0)** cannot be modified without explicit human instruction.
-- **Agent Inferences (P1)** take effect by default to prevent question storms, but remain independently adjustable without reopening the entire slice.
-- Selecting a recommended option adopts its attached inferences as default rules; it does not turn them into user-originated decisions.
-- **Implementation Details (Sub-P1)**: Routine defensive coding (nil checks, standard error logging) belongs to Sub-P1 and must not bloat Part 2.
+### One Semantic Home
 
-### Semantic Addressing & Cognitive Grips
-The specification replaces rigid, bureaucratic alphanumeric handles (`C1`, `D1`) with self-contained, human-readable scenario headings and structured sub-elements. This eliminates questionnaire/meeting-minutes mimicry while keeping functional units individually addressable and intuitive for handoff successors.
+Every fact, decision, constraint, and acceptance result has one authoritative expression location:
+
+- objective facts → fact primer;
+- choice costs and rejected alternatives → question round;
+- observable result → final `Expected behavior`;
+- structural/lifecycle rule → final `Implementation contract`;
+- branching verification → final `Acceptance`.
+
+A visual may replace prose but never duplicate it. A verification table may compress branching scenarios but its rows must not be restated elsewhere.
+
+### Implementation-Ready Concision
+
+Concision removes repeated expression, filler, ambient context, and template-completion prose. It must preserve every owner, identity, data shape, state transition, interface, compatibility rule, failure policy, and acceptance condition needed to implement the selected design without reopening the conversation.
+Negative boundary constraints and prohibited anti-patterns belong strictly in the implementation contract, not as a standalone repeated section.
+
+Completeness is measured by executable semantics, not by whether every template heading is present.
+
+### Alignment Boundary
+
+The skill may investigate and write an alignment contract, but it does not modify application code, create implementation files, or execute the plan. Implementation begins only after a separate user command.
+
+## Output Model
+
+### During Rounds
+
+- One fact primer per capability slice; later updates are delta-only.
+- One to three orthogonal frontier questions per round.
+- Compact option cards; omit fields that paraphrase another field.
+- Closed questions and unchanged facts are never reprinted.
+- Cascade echoes appear only when interpretation or earlier decisions change.
+
+### Final Contract
+
+Each topic uses only the fields needed from:
+
+- `Expected behavior`
+- `Implementation contract`
+- `Acceptance`
+
+Simple decisions may use one line. Structural assets such as entities, fields, schemas, enums, interfaces, and state machines remain concrete and copyable when they are part of the decision.
+
+PR steps, unaffected call lists, test filenames, shell commands, and routine language hygiene are excluded.
 
 ## Anti-Drift Checks
 
-Before changing this skill, verify that the change:
+Before changing the skill, verify that the change:
 
-- preserves alignment-before-action as the primary outcome;
-- maintains domain neutrality (works for software, planning, strategy without hardcoding framework-specific assumptions);
-- incorporates the minimal expressive viewport philosophy (pick the smallest view, skip preambles, place text next to visual);
-- eliminates four-fold template redundancy by consolidating guarantees, mechanisms, viewports, and boundaries into integrated alignment units;
-- enforces the **Anti-Implementation-Leak Guard**: strictly forbids PR task bloat (unaffected call lists, test script filenames, routine parameter hygiene) while preserving essential model assets (structs, state enums, schemas, method contracts);
-- keeps fact autonomy hypothesis-driven and continuous across rounds without ritualistic tool grinding;
-- enforces **Delta-Relevance** in scenario contracts to prevent boilerplate dumping of unaffected host platform or infrastructure mechanisms;
-- keeps decision depth unconstrained and driven by actual decision-tree frontier traversal;
-- requires symmetric exposure of costs, trade-offs, and falsifiable assumptions;
-- enforces transparent companion inferences with unadopted alternatives, "when to prefer" conditions, and unchosen reasons;
-- strictly maintains the distinction and provenance between User Decisions (P0) and Agent Inferences (P1);
-- enforces the P0 Redline to prevent LLM laziness from silently downgrading high-cost architectural forks into P1 companion inferences;
-- enforces remediation and resolution strategy as P0 User Decisions, preventing agents from unilaterally deciding tactical vs. structural fixes;
-- enforces the structured, adaptive Fact Primer in problem/incident contexts to ground human cognition without narrative dumping or overfitted visual viewports;
-- prevents single-turn premature convergence via the Convergence Pre-Flight Gate when viable alternative solution forks exist;
-- prevents semantics distortion in the alignment specification (never converting diagnostic facts into trade-offs, nor baseline requirements into newly aligned guarantees);
-- maintains Frontier Visibility across questioning rounds without creating artificial questionnaire storms;
-- accounts for bidirectional cascade impact (pruning invalid historical branches upon premise changes);
-- treats concision as removal of non-value-adding expression, not loss of coverage or shallow questioning;
-- keeps the skill file itself authored strictly in English, using explicit runtime localization mapping for user-facing multilingual interactions;
-- preserves the active-slice boundary and execution stop condition;
-- maintains zero file-system side-effects (forbidding standalone HTML generation or external openers during grilling);
-- respects vertical height budgets for visual viewports (≤8 lines in cards, ≤8 lines in alignment units);
-- applies visual viewports domain-neutrally, forbidding language-specific or framework-specific locks;
+- preserves alignment-before-action and the user confirmation stop condition;
+- remains domain-neutral;
+- keeps fact discovery autonomous and intent decisions human-owned;
 - strictly forbids manufacturing synthetic question cards out of diagnostic obstacles or symptom guessing when no genuine architectural trade-offs exist;
-- generalizes a problem instead of encoding a single example as a rule.
-If a proposed optimization conflicts with one of these checks, resolve that conflict before editing the skill.
+- preserves the high-impact decision redline and downstream frontier audit;
+- presents balanced costs and assumptions without carrying rejected options into the final contract;
+- prevents repeated fact primers, answered cards, cascade summaries, and final-contract paraphrases;
+- uses visuals only when they replace prose and keeps them at most eight lines;
+- preserves implementation-critical model shapes and lifecycle contracts;
+- keeps verification matrices optional and non-duplicative;
+- prevents implementation plans and routine code hygiene from entering the contract;
+- keeps the skill authored in English while localizing runtime output;
+- performs no repository or external side effects during alignment;
+- generalizes improvements instead of encoding a single conversation as a special case.
+
+If an optimization improves brevity by hiding a decision or implementation contract, reject it. If it improves completeness by repeating the same claim in multiple forms, consolidate it instead.
