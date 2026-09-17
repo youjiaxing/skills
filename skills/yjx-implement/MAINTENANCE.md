@@ -6,7 +6,7 @@ This document records the architectural rationale, lineage, real-world failure a
 
 ## 1. Design Rationale & Lineage
 
-`yjx-implement` completely replaces Matt Pocock's thin 5-line `/implement` command ("implement per spec", "use /tdd", "run full test suite at the end", "use /code-review", "commit if permitted"), transforming it into an industrial-grade surgical code execution engine balancing master-level software design aesthetics with strict delivery discipline.
+`yjx-implement` adapts Matt Pocock's thin `/implement` command (implement per spec, use `/tdd` where possible, run the full suite, use `/code-review`, and commit) into a scope-aware implementation workflow. It retains mandatory review while deliberately replacing default TDD, unconditional full-suite execution, and unconditional commits with the policies below.
 
 The skill integrates John Ousterhout's *A Philosophy of Software Design* (Deep Modules, Information Hiding, Leverage) and Michael Feathers' seam discipline, deeply calibrated through empirical stress-testing against complex commercial codebases (e.g. distributed game servers, DDD bounded contexts, high-throughput microservices, and large monorepos). It is authored strictly in English and maintains universal applicability across Go, TypeScript, Rust, Java, Python, and other modern software stacks.
 
@@ -65,7 +65,7 @@ The skill integrates John Ousterhout's *A Philosophy of Software Design* (Deep M
 
 ### 11. Governance First & Universal Tracker
 * **Pain Point**: Assuming direct commits on any branch and hardcoding GitHub `#123` assumptions breaks enterprise workflows (protected branches, mandatory CR, Jira/Teambition/GitLab IDs).
-* **Mitigation**: Forbid auto-commits on protected branches or CR-mandated repositories. When committing is allowed, enforce Conventional Commits and universally extract issue IDs in any format (`#123`, `PROJ-456`, `TASK-88`).
+* **Mitigation**: Keep commit authorization separate from the skill's mandatory review: an agent review does not replace project-required external approval. Phase 5 owns commit permissions, Conventional Commits, and issue ID handling.
 
 ### 12. Data Boundary Hoisting & Pseudo-Reuse via Same-Tier Trimming
 * **Pain Point**: Two frequent architectural regressions occur during feature assembly:
@@ -78,11 +78,19 @@ The skill integrates John Ousterhout's *A Philosophy of Software Design* (Deep M
 * **Mitigation**: **Minimal Surgical Diff**: Eliminate the artificial bookkeeping ceremony of static whitelists. Anchor strictly to **causal necessity** (every line changed must be directly justified by the task/spec; zero opportunistic refactoring or formatting of untouched code) and use the environment's true source of truth (`git status` and `git diff`) for verification. Companion tests and local registrations are recognized as natural companion changes.
 
 ### 14. Architectural Decoupling: Sub-Agent Governance
-* **Design Decision**: Multi-agent dispatch and parallel sub-agent launch gates belong exclusively to top-level orchestrators or user rules. Because `yjx-implement` is a leaf implementation execution engine (`disable-model-invocation: true`), it must never be contaminated with multi-agent orchestration policies, preserving its high cohesion and direct execution focus.
+* **Design Decision**: Multi-agent dispatch and parallel sub-agent launch gates belong exclusively to top-level orchestrators or user rules. Because `yjx-implement` is a leaf implementation execution engine (`disable-model-invocation: true`), it must never be contaminated with multi-agent orchestration policies, preserving its high cohesion and direct execution focus. Calling `/code-review` defines a required quality gate, not a dispatch policy; reviewer orchestration stays with that skill and the caller's rules.
 
 ### 15. Evolution of the Line Budget
 * **Design Decision**: The original arbitrary ~70–80 physical line budget was established to prevent prompt sprawl. However, compressing complex architectural principles into terse slogans triggered semantic ambiguity (e.g. models confusing Ousterhout depth with procedural god-objects, or conflating test mocks with architectural ports).
 * **Mitigation**: The physical line budget is replaced with **Conceptual Density & Decidable Exit Gates**. Rules must be strictly formulated as binary-decidable (Yes/No) execution criteria without philosophical fluff or essayistic prose, while giving sufficient precision to eliminate interpretation loopholes.
+
+### 16. Mandatory Review vs. Self-Checks
+* **Pain Point**: Structural self-checks and restrictions on committing do not actually trigger independent review. A commit-only diff also misses work awaiting review before its first commit.
+* **Design Decision**: Phase 4 owns the review scope, resolution loop, and blocking completion gate; Phase 1 supplies the starting state. This preserves the upstream review requirement without treating a report as a substitute or importing reviewer orchestration into the implementation skill.
+
+### 17. Verification Evidence vs. Default TDD
+* **Pain Point**: A red-to-green sequence alone proves neither that a test represents the requirement nor that its expected result is independent of the implementation. A vague "when applicable" mandate can encourage mechanical test slicing or arbitrary opt-outs.
+* **Design Decision**: Phases 2–3 own task-dependent test ordering, regression evidence, and alternative verification. TDD remains an explicit user/project choice, not the default implementation method. This is a deliberate departure from upstream `/implement`, while preserving public-boundary testing and the existing anti-laundering constraints.
 
 ---
 
