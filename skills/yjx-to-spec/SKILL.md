@@ -191,12 +191,14 @@ graph TD
 
 Consult repo conventions (or `docs/agents/issue-tracker.md`) to determine the storage target:
 1. **Local Markdown Tracker (`.scratch/` ecosystem)**:
+   - For this storage mode only, generate a feature slug with a sortable local date-time prefix: `<YYYYMMDD-HHmm>-<descriptive-slug>`.
    - Write to `.scratch/<feature-slug>/spec.md` (or `MASTER_TOPOLOGY_SPEC.md` and `specs/<unit>.md` for multi-unit initiatives).
    - As a contract specification, do NOT assign `Status:` fields that pollute the execution kanban graph.
 2. **Remote Issue Tracker (GitHub / GitLab / etc.)**:
+   - Use a concise natural-language Issue title in the user's conversational language and follow any explicit repository title convention. Add a categorical title prefix only when the repository defines one.
    - If local docs are maintained, commit the markdown spec and open/update the Spec Issue via CLI.
    - Strictly adhere to the repo's canonical triage labels (e.g. apply `ready-for-agent` for completed specs). **Never invent custom labels** on remote trackers.
-   - Express multi-unit hierarchy using issue titles (e.g., `[Spec] <Feature>: Master Architecture`) and native body links (`Parent: #...`, `Blocked by: #...`).
+   - Express multi-unit hierarchy through natural-language titles and native body links (`Parent: #...`, `Blocked by: #...`).
 
 ## 7. Forbidden Execution Paths
 

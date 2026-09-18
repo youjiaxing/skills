@@ -102,6 +102,19 @@ test('prompt stays outcome-oriented and requires a structured result', () => {
   assert.doesNotMatch(prompt, /click the .*button/i);
 });
 
+test('prompt scopes the delegated tester and names only this skill as off-limits', () => {
+  const prompt = buildPrompt('Verify that saving a draft updates the list.');
+  assert.match(prompt, /delegated GUI test agent/);
+  assert.match(prompt, /You are responsible for preparing, building, and launching/);
+  assert.match(prompt, /You are not responsible for product code/);
+  assert.match(prompt, /Do not use the `yjx-codex-cu` skill/);
+  assert.match(prompt, /no nested Codex session, subagent, or Computer Use harness/);
+  assert.match(prompt, /Never drive a different copy of the same product/);
+  assert.match(prompt, /report STATUS: BLOCKED with what you found/);
+  assert.doesNotMatch(prompt, /any Agent Skill/i);
+  assert.doesNotMatch(prompt, /plugin, or rules file/i);
+});
+
 test('Computer Use evidence accepts current and semantic tool surfaces', () => {
   assert.equal(isComputerUseItem({ type: 'mcp_tool_call', server: 'cua_repl', tool: 'js' }), true);
   assert.equal(isComputerUseItem({

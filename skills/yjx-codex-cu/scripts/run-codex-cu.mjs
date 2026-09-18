@@ -114,10 +114,15 @@ export function buildPrompt(brief) {
   const task = brief.trim();
   if (!task) throw new Error('a GUI test brief is required on standard input');
   return [
-    'Use Computer Use to complete one real GUI verification task on this computer.',
-    'Complete the task autonomously: prepare, build, and launch the target as needed, then exercise the relevant user-visible behavior.',
-    'Test and report only. Leave product-code implementation and bug fixes to the invoking agent.',
-    'Base the result on the GUI you actually operated. Do not substitute a website or another app when the task names a specific surface.',
+    'You are the delegated GUI test agent for one task on this computer.',
+    'You are responsible for preparing, building, and launching the target as needed, operating the interface the way a user would, and reporting what you observed with evidence.',
+    'You are not responsible for product code, configuration, or fixes; the invoking agent owns those. Change nothing in the tested repository.',
+    'Use Computer Use to complete the task. Base the result on the GUI you actually operated; do not substitute a website or another app when the task names a specific surface.',
+    'Launch and attach to exactly the copy described in the task. Never drive a different copy of the same product, such as one already installed or already running.',
+    'Confirm that the interface you are driving is the copy you launched. If you cannot confirm it, stop and report STATUS: BLOCKED with what you found.',
+    'Do not use the `yjx-codex-cu` skill or its runner script.',
+    'Do not hand this task to another agent: start no nested Codex session, subagent, or Computer Use harness.',
+    'Stay inside the task; do not investigate the invoking agent or its files.',
     'End with a concise report whose first line is exactly one of: STATUS: PASS, STATUS: FAIL, or STATUS: BLOCKED.',
     'Include the GUI path exercised and the relevant evidence or blocker.',
     '',

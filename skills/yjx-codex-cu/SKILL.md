@@ -24,6 +24,7 @@ Keep implementation and fixes in the current agent. Codex is the GUI tester: it 
 3. Build one outcome-oriented test brief containing:
    - the user-visible behavior to verify;
    - only the implementation context needed to understand that behavior;
+   - the exact artifact to build and launch, and something that identifies that build — a debug build and an installed release build usually share a product name, so the tester cannot tell them apart by name alone;
    - any required application, device, account, or platform boundary;
    - the expected result and useful failure evidence.
 4. Keep the brief flexible. Codex chooses how to prepare, build, launch, navigate, and recover from ordinary UI mistakes. Do not turn the brief into a click-by-click script.
@@ -41,6 +42,14 @@ The complete GUI test brief is read from standard input.
 ```
 
 Use `node <skill-dir>/scripts/run-codex-cu.mjs --help` for the current options and defaults. The runner owns model/Fast policy, Codex CLI arguments, temporary event storage, and evidence parsing.
+
+## Delegation boundary
+
+The runner prepends a fixed notice to every brief that scopes the delegated session rather than cutting its capabilities: it states what the tester owns (preparing, building, launching, operating the interface, reporting evidence) and what it does not own (product code, configuration, fixes), names this skill (`yjx-codex-cu`) and its runner as off-limits, and forbids handing the task to a nested Codex session, subagent, or Computer Use harness. Other skills stay available; only this one is off-limits.
+
+A tester that reads host skills can pick up how to re-delegate GUI control, and one that goes hunting through the invoking agent's processes, logs, or session records spends its run on meta-investigation. Both were observed; naming the specific skill and stating the responsibility boundary is what the notice is for.
+
+The notice also requires build identity: attach to the copy the task describes, never to an installed or already-running copy of the same product, and report `BLOCKED` when the two cannot be told apart. A debug build and an installed release build of the same product carry the same name, so an unnamed brief lets the tester verify the wrong build and report a confident false result.
 
 ## Final report
 

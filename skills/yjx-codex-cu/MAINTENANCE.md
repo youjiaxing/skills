@@ -22,6 +22,16 @@ The runner uses `codex exec --json`. The former `codex mcp-server` command was r
 
 The host sends an outcome-oriented brief once. Codex controls the internal preparation and GUI path. Implementation and fixes return to the host, preventing the tester from becoming a second development owner.
 
+### Confined tester
+
+Codex CLI advertises host skills (`~/.agents/skills`, `~/.codex/skills`) in the tester's context, and `disable-model-invocation: true` does not stop a direct file read. On 2026-09-18 a session read this skill and its runner source, then spent 19 of its 91 tool calls mapping the invoking agent's process tree, temp files, and event logs before starting the GUI work. It did not recurse, but it had learned how.
+
+`buildPrompt` therefore states the delegated-tester role, its responsibility boundary, and only this skill and runner as off-limits, plus nested Codex and Computer Use sessions. It deliberately does not remove other skills, plugins, or rules files: a blanket capability ban would block legitimate work, and the observed failure is about this skill and off-task investigation. This is a prompt-level guard, not a sandbox.
+
+### Build identity
+
+A debug build and an installed release build of the same product share a display name. On 2026-09-18 a tester launched a dev-mode build, then resolved the window by the product's display name; the harness attached to the installed release copy instead — the build *without* the change under test — and the run reported a confident `FAIL` against the wrong artifact. The notice therefore requires attaching to the copy named in the task, forbids driving any other copy of the same product, and makes an unconfirmable identity a `BLOCKED` result. The brief must name the artifact and a signal that identifies it.
+
 ### Deterministic policy and evidence
 
 The Node.js runner is the single source of truth for defaults, override behavior, Codex arguments, and result classification. `SKILL.md` tells the agent when and how to use it without duplicating those volatile details.
@@ -37,6 +47,8 @@ Before changing this skill, verify that:
 - [ ] The host delegates only a remaining real-GUI gap, not routine terminal verification.
 - [ ] One GUI acceptance task maps to one `codex exec` session.
 - [ ] The test brief stays outcome-oriented rather than prescribing ordinary clicks.
+- [ ] `buildPrompt` states what the delegated tester owns and does not own, names `yjx-codex-cu` and its runner as off-limits, and forbids nested Codex or Computer Use sessions, without banning other skills.
+- [ ] `buildPrompt` requires attaching to the copy named in the task and returns `BLOCKED` when build identity cannot be confirmed.
 - [ ] Product implementation and bug fixes remain with the invoking agent.
 - [ ] Model overrides disable Fast unless the user explicitly re-enables it.
 - [ ] Reasoning-only overrides preserve the default Fast policy.
