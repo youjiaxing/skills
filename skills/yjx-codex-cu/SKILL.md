@@ -1,8 +1,7 @@
 ---
 name: yjx-codex-cu
-description: Grant this task permission to delegate necessary real-GUI verification to Codex CLI Computer Use while keeping implementation and fixes in the current agent.
+description: Delegate necessary real-GUI verification to Codex CLI Computer Use when a task has a remaining GUI verification gap that the current agent cannot test equivalently itself; keep implementation and fixes in the current agent. Use for native or desktop app interaction, not routine terminal or browser testing.
 argument-hint: "[--model <id>] [--reasoning <effort>] [--fast on|off]"
-disable-model-invocation: true
 ---
 
 # Codex Computer Use Delegation
@@ -11,9 +10,9 @@ disable-model-invocation: true
 
 Before reviewing, modifying, or redesigning this skill, read [MAINTENANCE.md](MAINTENANCE.md). It is not needed during normal execution.
 
-## Permission boundary
+## Use boundary
 
-Invocation grants permission for the current task to use Codex Computer Use if real-GUI verification becomes necessary. It does not trigger an immediate test, and the permission expires with the task.
+Invoke this skill automatically or explicitly for the current task when real-GUI verification becomes necessary and the current agent cannot perform equivalent verification itself. Loading the skill does not trigger an immediate test, and its scope expires with the task.
 
 Keep implementation and fixes in the current agent. Codex is the GUI tester: it may prepare, build, and launch the application, then operate the interface and report evidence, but it does not modify product code.
 

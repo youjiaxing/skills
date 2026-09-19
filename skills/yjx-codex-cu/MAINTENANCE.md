@@ -4,15 +4,15 @@ Read this file before reviewing, modifying, or redesigning `yjx-codex-cu`. It re
 
 ## 1. Identity and purpose
 
-`yjx-codex-cu` is a user-invoked, host-agnostic delegation skill. It lets an agent that has terminal access delegate necessary real-GUI verification to Codex CLI Computer Use while retaining implementation and bug-fix ownership in the invoking agent.
+`yjx-codex-cu` is a model-invoked, host-agnostic delegation skill that also remains explicitly invocable by the user. It lets an agent that has terminal access delegate necessary real-GUI verification to Codex CLI Computer Use while retaining implementation and bug-fix ownership in the invoking agent.
 
 It must work from Grok Build, Claude Code, and other Agent Skills hosts. Host-specific background-task or MCP APIs are outside its contract.
 
 ## 2. Design rationale
 
-### Manual capability grant
+### Need-based automatic invocation
 
-Computer Use can take over the foreground desktop. The skill therefore remains user-invoked. Invocation grants permission for the current task but does not force immediate delegation; the host first uses its own adequate verification capabilities.
+The user authorizes the agent to invoke this skill when a task has a remaining real-GUI verification gap that the current agent cannot test equivalently itself. Invocation stays scoped to the current task and does not force immediate delegation; the host first uses its own adequate verification capabilities. The model-facing description excludes routine terminal and browser testing so foreground desktop control remains a narrow fallback.
 
 ### Official CLI boundary
 
@@ -24,7 +24,7 @@ The host sends an outcome-oriented brief once. Codex controls the internal prepa
 
 ### Confined tester
 
-Codex CLI advertises host skills (`~/.agents/skills`, `~/.codex/skills`) in the tester's context, and `disable-model-invocation: true` does not stop a direct file read. On 2026-09-18 a session read this skill and its runner source, then spent 19 of its 91 tool calls mapping the invoking agent's process tree, temp files, and event logs before starting the GUI work. It did not recurse, but it had learned how.
+Codex CLI advertises host skills (`~/.agents/skills`, `~/.codex/skills`) in the tester's context, and invocation policy does not stop a direct file read. On 2026-09-18 a session read this skill and its runner source, then spent 19 of its 91 tool calls mapping the invoking agent's process tree, temp files, and event logs before starting the GUI work. It did not recurse, but it had learned how.
 
 `buildPrompt` therefore states the delegated-tester role, its responsibility boundary, and only this skill and runner as off-limits, plus nested Codex and Computer Use sessions. It deliberately does not remove other skills, plugins, or rules files: a blanket capability ban would block legitimate work, and the observed failure is about this skill and off-task investigation. This is a prompt-level guard, not a sandbox.
 
@@ -42,7 +42,7 @@ Computer Use tool names may evolve. Evidence detection recognizes semantic metad
 
 Before changing this skill, verify that:
 
-- [ ] `disable-model-invocation: true` remains present.
+- [ ] `disable-model-invocation` remains absent, and the description limits automatic invocation to a remaining real-GUI verification gap the current agent cannot test equivalently itself.
 - [ ] The workflow is host-agnostic and names no required Grok, Claude, or MCP API.
 - [ ] The host delegates only a remaining real-GUI gap, not routine terminal verification.
 - [ ] One GUI acceptance task maps to one `codex exec` session.
