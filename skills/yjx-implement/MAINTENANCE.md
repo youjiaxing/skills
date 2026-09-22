@@ -74,8 +74,8 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | Scenario | Expected assessment |
 | --- | --- |
 | One implementation behind an interface that isolates storage changes | Evaluate the isolation benefit; implementation count alone is not a defect. |
-| A helper or interface exists only to expose a convenient test seam | It fails the production-shape check; adapt verification to the production design instead. |
-| A small helper owns a stable domain decision or removes meaningful caller knowledge | Keep it when that production responsibility justifies the indirection; line count alone is not a defect. |
+| A helper or interface exists only to expose a convenient test seam and carries no production responsibility | Test convenience is insufficient justification; adapt verification to the production design and assess any review finding under Phase 4's Finding Classification rules. |
+| A small helper owns a stable domain decision or frees callers from duplicating meaningful domain knowledge | The production responsibility justifies the indirection; line count alone is not a defect. |
 | Tests are reorganized during a behavior-preserving refactor | Check behavior and effective coverage, not one-to-one test correspondence. |
 | Confirmed requirements remove an old rejection condition | Verify the replacement behavior and still-valid boundaries; the old assertion may be retired. |
 | An assertion is weakened only because it fails | Treat as an evidence-integrity blocker. |
