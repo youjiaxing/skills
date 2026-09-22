@@ -18,7 +18,7 @@ When reviewing, evolving, or modifying this skill, read [`MAINTENANCE.md`](MAINT
 - **YAGNI**: Implement confirmed needs rather than hypothetical flexibility. Justify additions by the behavior or responsibility they support.
 - **Information Hiding**: Keep decisions and invariants with their authoritative owner; expose intent without leaking the internal knowledge callers would need to duplicate those decisions.
 - **High Cohesion, Low Coupling**: Group related responsibilities and limit change propagation. Judge a boundary by what it isolates, not by its number of implementations or its architectural label.
-- **Deep Modules**: Prefer small, intention-revealing interfaces that hide meaningful complexity. Evaluate indirection by the responsibility and complexity it removes from callers, rather than enforcing a particular layer structure.
+- **Deep Modules & Production Shape**: Let production responsibilities determine structure. Add indirection only when it hides meaningful knowledge, owns an invariant, isolates a real source of change, or materially reduces caller complexity or change propagation. Test convenience alone does not justify production structure.
 - **Compatibility**: Preserve existing consumer guarantees unless the confirmed requirements authorize a change. Assess affected consumers beyond the edited scope before narrowing a shared contract.
 - **Cost Model**: Evaluate computation, memory, and I/O along actual execution paths. Optimize material costs without sacrificing clarity; a narrower representation or fewer hops is not inherently cheaper.
 - **Minimal Diff**: Keep every change causally tied to the task, including necessary tests and integration changes. Leave unrelated refactoring and formatting untouched.
@@ -39,7 +39,7 @@ When reviewing, evolving, or modifying this skill, read [`MAINTENANCE.md`](MAINT
 Choose test-writing order to suit the task; use `/tdd` only when the user or project explicitly requires it. For bug fixes, prefer reproducing the failure before editing. For behavior-preserving refactors, assess existing coverage and add missing characterization tests before changing behavior-sensitive code.
 
 Apply the engineering principles to the task's actual dependencies and constraints. Reuse existing assets, implement the confirmed behavior, and examine the diff for unnecessary complexity and scope expansion.
-*Completion Criterion*: Required behavior implemented; changes causally bounded; relevant compatibility and resource-cost implications assessed.
+*Completion Criterion*: Required behavior implemented; changes causally bounded; every new indirection has a production responsibility that remains useful without its tests; relevant compatibility and resource-cost implications assessed.
 
 ### Phase 3: Verification
 1. **Bounded Verification**: Run applicable compile or syntax checks first, then targeted tests for the changed behavior and affected consumers. Bound execution to relevant packages or suites in medium/large workspaces; reserve full-suite runs for small projects with known short runtimes. Use non-interactive commands.

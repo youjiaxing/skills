@@ -22,9 +22,9 @@ An agent can bypass a project's clock or logging wrapper with a raw library call
 
 ### Speculative Generality & Artificial Seams
 
-Adding a factory and interface solely to mock a small calculation can obscure otherwise direct code. Conversely, a single-implementation repository boundary can isolate storage details usefully. YAGNI, cohesion, and information hiding evaluate those responsibilities without counting implementations or treating every seam as waste.
+Adding a factory and interface solely to mock a small calculation can obscure otherwise direct code. Conversely, a single-implementation repository boundary can isolate storage details usefully. Production Shape asks whether an indirection would still improve production design if its tests disappeared; YAGNI, cohesion, and information hiding then evaluate that responsibility without counting implementations or treating every seam as waste.
 
-A pass-through may protect a stable public contract even when it performs little computation. Removing it requires checking the responsibility it carries; the old deletion test is a diagnostic question, not an automatic removal instruction.
+A pass-through may protect a stable public contract even when it performs little computation. A small helper may likewise own a real domain decision. The production-shape check examines hidden knowledge, invariants, isolated change, and reduced caller complexity; line count and implementation count are not decision rules.
 
 ### Responsibility Leakage
 
@@ -74,6 +74,8 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | Scenario | Expected assessment |
 | --- | --- |
 | One implementation behind an interface that isolates storage changes | Evaluate the isolation benefit; implementation count alone is not a defect. |
+| A helper or interface exists only to expose a convenient test seam | It fails the production-shape check; adapt verification to the production design instead. |
+| A small helper owns a stable domain decision or removes meaningful caller knowledge | Keep it when that production responsibility justifies the indirection; line count alone is not a defect. |
 | Tests are reorganized during a behavior-preserving refactor | Check behavior and effective coverage, not one-to-one test correspondence. |
 | Confirmed requirements remove an old rejection condition | Verify the replacement behavior and still-valid boundaries; the old assertion may be retired. |
 | An assertion is weakened only because it fails | Treat as an evidence-integrity blocker. |
