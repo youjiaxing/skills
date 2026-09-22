@@ -4,7 +4,7 @@ Read this document when reviewing or changing the skill, not during ordinary exe
 
 ## 1. Lineage & Abstraction Level
 
-`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory `/code-review` while replacing default TDD, unconditional full-suite execution, and unconditional commits with task-dependent verification and project governance.
+`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory `/code-review` while replacing default TDD and unconditional full-suite execution with task-dependent verification, project-governed local commits, and separately authorized remote delivery.
 
 Ousterhout's deep modules and information hiding, cohesion and coupling, YAGNI, compatibility, and cost models provide the engineering vocabulary. Each leading term carries a short operational meaning in the runtime document. These principles support judgment across languages and architectures; they do not prescribe a universal code shape.
 
@@ -58,7 +58,7 @@ Static file whitelists can exclude necessary companion tests or encourage workar
 
 A structural self-check cannot replace independent review, and a comparison ending at `HEAD` misses work awaiting its first commit. Phase 1 owns the starting state; Phase 4 owns complete review input, finding classification, and the resolution loop. Preserve the distinction between pre-existing work and task changes even inside the same file.
 
-Dispatch policy belongs to the caller and `/code-review`, not this implementation skill. Phase 5 separately owns commit authorization and ticket handling: successful automated review is not project-required human approval.
+Dispatch policy belongs to the caller and `/code-review`, not this implementation skill. Phase 5 owns delivery authorization: invocation authorizes a local commit on the established branch, project rules and explicit user direction may withhold it, and each remote action requires explicit user authorization. Successful automated review remains evidence rather than project-required human approval.
 
 ## 3. Maintenance Validation
 
@@ -81,4 +81,8 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | An architectural change duplicates an invariant across independently changing callers | A blocker needs concrete evidence of the maintenance or correctness consequence. |
 | Task changes are uncommitted, new, or mixed with pre-existing work | Review the full task changes with context, not just committed history. |
 | Independent review cannot execute, or a blocker remains disputed | Keep the task incomplete until the review gate is satisfied. |
-| Automated review passes on a branch requiring human approval | Report readiness without treating it as commit permission. |
+| The current branch is `main`, `master`, a release branch, or remotely protected, and project rules permit local commits | Commit locally on that branch after review; branch names and remote protection do not redirect the work. |
+| Project rules require a different branch | Establish it before editing; a conflict discovered at delivery leaves the work uncommitted on the current branch for a report and a new, explicitly authorized attempt. |
+| The user directs the skill to leave changes uncommitted, or project rules prohibit local commits | Preserve the working state and produce the delivery report. |
+| A local commit succeeds without explicit remote authorization | Report the local commit and leave push, merge-request creation, and merge pending. |
+| Project-required human approval applies to a remote merge | A local commit may proceed; the remote action waits for that approval and explicit authorization. |
