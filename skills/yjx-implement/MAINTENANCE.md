@@ -4,7 +4,7 @@ Read this document when reviewing or changing the skill, not during ordinary exe
 
 ## 1. Lineage & Abstraction Level
 
-`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory `/code-review` while replacing default TDD and unconditional full-suite execution with task-dependent verification, project-governed local commits, and separately authorized remote delivery.
+`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory two-axis review through `/code-review` while replacing default TDD and unconditional full-suite execution with task-dependent verification, project-governed local commits, and separately authorized remote delivery.
 
 Ousterhout's deep modules and information hiding, cohesion and coupling, YAGNI, compatibility, and cost models provide the engineering vocabulary. Each leading term carries a short operational meaning in the runtime document. These principles support judgment across languages and architectures; they do not prescribe a universal code shape.
 
@@ -44,6 +44,10 @@ Replacing many detailed tests with one happy-path test can lose meaningful cover
 
 When a confirmed requirement removes a restriction, a test expecting its old rejection should change. The relevant distinction is the basis for the change: the new contract justifies a new expectation; a failing result alone does not. Real collaborators, boundary fakes, and transport interception are possible verification techniques rather than universal architectural requirements.
 
+Test Value Admission keeps generated tests tied to durable evidence. Defect and changed-behavior tests establish a pre-change failure caused by the target behavior; characterization tests establish the existing contract before a behavior-preserving refactor and discriminate a plausible regression. A compile failure caused by an invented API shape does not reproduce a business defect. Reaching an unrelated nil dependency or merely avoiding a panic does not observe the requested result. An assertion copied from the implementation cannot independently reject the same mistake, and a production seam created only to make such a test convenient fails Production Shape as well. These candidates add maintenance cost without useful regression discrimination.
+
+A `No new test` decision is complete when it identifies why no candidate passed admission, which existing or substitute checks exercise the affected behavior, and what remains unverified. Review evaluates that evidence and its limits; the absence of a newly created test file is not itself a coverage defect.
+
 ### Verification Scope & Workspace Context
 
 A workspace root may only aggregate repositories; commands run there can use incompatible dependency configurations. An unconstrained suite or interactive watcher can also stall a local task. Phase 1 identifies the owning context and bounded commands; Phase 3 owns execution and evidence. Small projects can still use fast full suites.
@@ -58,7 +62,9 @@ Static file whitelists can exclude necessary companion tests or encourage workar
 
 A structural self-check cannot replace independent review, and a comparison ending at `HEAD` misses work awaiting its first commit. Phase 1 owns the starting state; Phase 4 owns complete review input, finding classification, and the resolution loop. Preserve the distinction between pre-existing work and task changes even inside the same file.
 
-Dispatch policy belongs to the caller and `/code-review`, not this implementation skill. Phase 5 owns delivery authorization: invocation authorizes a local commit on the established branch, project rules and explicit user direction may withhold it, and each remote action requires explicit user authorization. Successful automated review remains evidence rather than project-required human approval.
+Standards and Spec remain separate mandatory axes because primary-agent risk classification can itself be wrong. Their decision context preserves settled trade-offs without silencing evidence-based findings: a rejected branch can reopen for new evidence, contradiction, contract failure, or a previously omitted major risk. The same context makes the test decision reviewable from its actual evidence and limits.
+
+Dispatch mechanics belong to `/code-review`, while this skill requires both outcomes and supplies their common context. Phase 5 owns delivery authorization: invocation authorizes a local commit on the established branch, project rules and explicit user direction may withhold it, and each remote action requires explicit user authorization. Successful automated review remains evidence rather than project-required human approval.
 
 ## 3. Maintenance Validation
 
@@ -68,6 +74,8 @@ Check the changed runtime text against these questions; use the scenarios to exp
 - Do descriptions, completion criteria, and maintenance examples agree on which statements are principles and which are delivery gates?
 - Are concrete techniques confined to explanatory examples unless needed to make a gate executable?
 - Are existing project assets, causal scope, workspace context, and authorization boundaries preserved?
+- Does Test Value Admission remain consistent with both runtime branches: changed behavior and behavior-preserving characterization?
+- Does the `No new test` path remain evidence-bearing and reviewable?
 - Does the review gate retain the complete final change set, blocker disposition, independent re-review, and incomplete status when review cannot execute?
 - Is the skill still English, manually invoked, and independent of a particular language or application architecture?
 
@@ -76,12 +84,18 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | One implementation behind an interface that isolates storage changes | Evaluate the isolation benefit; implementation count alone is not a defect. |
 | A helper or interface exists only to expose a convenient test seam and carries no production responsibility | Test convenience is insufficient justification; adapt verification to the production design and assess any review finding under Phase 4's Finding Classification rules. |
 | A small helper owns a stable domain decision or frees callers from duplicating meaningful domain knowledge | The production responsibility justifies the indirection; line count alone is not a defect. |
+| A proposed regression test fails only to compile because it assumes a nonexistent API | Reject it: the failure is unrelated to the business defect. |
+| A scheduler test succeeds by returning before it reaches nil collaborators but never observes the business outcome | Reject it: control-flow survival does not independently verify the contract. |
+| No candidate test can observe the stable business result without unjustified production seams | Record `No new test`, run existing and substitute targeted checks, and disclose the remaining limit. |
 | Tests are reorganized during a behavior-preserving refactor | Check behavior and effective coverage, not one-to-one test correspondence. |
 | Confirmed requirements remove an old rejection condition | Verify the replacement behavior and still-valid boundaries; the old assertion may be retired. |
 | An assertion is weakened only because it fails | Treat as an evidence-integrity blocker. |
 | A style preference or architectural label is the only finding | Do not turn it into a blocking defect. |
 | An architectural change duplicates an invariant across independently changing callers | A blocker needs concrete evidence of the maintenance or correctness consequence. |
 | Task changes are uncommitted, new, or mixed with pre-existing work | Review the full task changes with context, not just committed history. |
+| The primary labels a change low-risk and proposes skipping one review axis | Run both Standards and Spec reviews; primary risk classification does not reduce the gate. |
+| A Reviewer prefers a previously rejected architecture but has no new evidence or contract failure | Keep the branch closed and review the implemented contract. |
+| A Reviewer flags `No new test` solely because the diff contains no new test file | Reassess the supplied evidence and limits; file absence alone is not a finding. |
 | Independent review cannot execute, or a blocker remains disputed | Keep the task incomplete until the review gate is satisfied. |
 | The current branch is `main`, `master`, a release branch, or remotely protected, and project rules permit local commits | Commit locally on that branch after review; branch names and remote protection do not redirect the work. |
 | Project rules require a different branch | Establish it before editing; a conflict discovered at delivery leaves the work uncommitted on the current branch for a report and a new, explicitly authorized attempt. |
