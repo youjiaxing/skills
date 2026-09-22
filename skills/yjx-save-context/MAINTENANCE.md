@@ -1,31 +1,55 @@
 # yjx-save-context Maintenance Notes
 
-Read when reviewing or changing this skill, not during ordinary execution.
+## Purpose
 
-## Purpose and design decisions
+The skill creates a temporary, independently usable continuation for unfinished work. It preserves enough semantics to resume safely while keeping phase and authorization unchanged.
 
-The user needs room to continue work, not another specification workflow. A long alignment may be ready for implementation, or the conversation may still be resolving a decision when the context window runs low. Both need the same operation: persist enough context for an independent successor without changing the task's phase.
+Its optimization target is **minimum sufficient continuation**:
 
-- **Continuation rather than last-reply export:** important answers, corrections, evidence, and permissions may precede or follow the latest consolidated response. Copying that response alone can lose them.
-- **Natural document structure:** alignment can be prose, diagrams, tables, examples, or dialogue. Coverage requirements belong in the skill; a mandatory output template would distort the source and add ceremony.
-- **Temporary storage:** prefer an existing working-directory `tmp/`, otherwise the OS temporary directory. Creating workspace directories, publishing specs, and updating trackers are outside this operation.
-- **Independent of the old session:** stable project artifacts remain useful references, but conversation-only facts and essential session-local evidence must travel with the file. An archive path is not a substitute for necessary content.
-- **No phase transition:** an agent's proposal, user confirmation, and implementation authorization are distinct. Saving or resuming grants none of them.
-- **Prompt-only and manually invoked:** use existing file tools and available export capabilities. No fixed harness, transcript format, upstream alignment skill, downstream implementation skill, or plan mode is required. Do not add an automatic compaction watcher as part of this skill.
+- **Minimum** keeps one semantic home, references stable sources, and excludes context that cannot affect resumption.
+- **Sufficient** preserves implementation-critical decisions, closed branches, corrections, evidence, and authorization that a fresh agent cannot safely infer.
+
+This differs from a general conversation summary. A shorter file that loses a decision boundary or reopens settled alternatives has failed; a complete file that repeats live state or carries dead metadata has also failed.
+
+## Design decisions
+
+- **Single control point:** phase, authorization, active work, and next permitted action appear together at the top so a successor cannot mistake saving for approval.
+- **Authority plus delta:** use the current authoritative artifact or consolidated content once, then carry only subsequent changes and missing continuation facts.
+- **Decision closure:** compact ledgers preserve the names and closure conditions of rejected branches without reproducing full question cards.
+- **Source-agnostic continuation:** the skill recognizes useful contracts, plans, and issue records semantically. It has no fixed dependency on an upstream alignment skill or downstream implementation workflow.
+- **Triggered references:** a path earns space by naming why and when it must be read. Current work loads current requirements; later branches load their own constraints.
+- **Decision-bearing evidence:** evidence travels when it supports a decision, unresolved item, acceptance condition, or expensive-to-recover fact. Stable evidence stays at its authoritative location.
+- **Ephemeral runtime state:** observations carry time and recheck expectations. Dead handles carry no continuation value.
+- **Operating-system temporary storage:** continuation artifacts stay outside the workspace and identify their temporary lifetime.
+- **Natural body structure:** only the control block is fixed. The preserved contract, diagram, table, or prose keeps the organization that carries its meaning.
+- **Prompt-only operation:** semantic completeness remains a model judgment verified by full readback and scenario review; no transcript format, watcher, or fixed parsing harness is required.
 
 ## Review scenarios
 
-Use these cases to check changes; they are not a runtime questionnaire or output template.
+Use these cases to evaluate changes; they are not runtime headings or a questionnaire.
 
 | Situation | Expected result |
 | --- | --- |
-| Completed alignment contains tables and a diagram; the user authorized implementation | Preserve the substantive content and organization, include necessary earlier constraints, and allow the successor to implement under current workspace rules. |
-| A full proposal exists, but the user has not confirmed it or authorized implementation | Preserve it as a proposal and record the pending confirmation; saving does not approve it. |
-| Alignment stops at an unanswered question just before auto-compaction | Capture the active question, earlier answers, live alternatives, and evidence limits; resume alignment rather than implementation. |
-| A later user correction contradicts an earlier consolidated answer | Keep the correction and identify the superseded decision; do not present both as active agreements. |
-| Existing working-directory `tmp/`; no `tmp/`; `tmp` is a file; destination is unwritable; filename collides | Choose the destination by the runtime rules without creating workspace `tmp/` or overwriting previous saves, and disclose fallback or failure. |
-| A critical fact exists only in a tool result, image, or old session log | Include the necessary fact or excerpt, or preserve an independent supporting artifact; disclose anything that cannot be recovered. |
-| A background command has an uncertain outcome | Preserve that uncertainty and inspection information; do not claim completion or authorize a duplicate side effect. |
-| The host compacts before saving finishes | Use available evidence and report gaps; never promise interception or lossless recovery. |
+| A proposal is awaiting final approval | The control block says approval and implementation authorization are still pending; the successor resumes that confirmation. |
+| A user selected one option from several consequential alternatives | The selected decision remains complete; closed alternatives, decisive closure reason, and applicable reopening condition appear in compact form. |
+| A full user-confirmed contract exists only in the conversation | The contract is carried once as the authoritative content, with later corrections added as deltas. |
+| A current stable plan or issue already owns the full contract | The continuation references it with purpose and loading trigger, and carries only missing continuation state. |
+| The latest assistant response conflicts with a later user correction | The correction is active and the superseded statement is excluded or identified only when needed to explain closure. |
+| The current step is confirmation and implementation rules apply later | Only confirmation inputs are immediate requirements; implementation references are triggered by entering implementation. |
+| Quantitative evidence determines a decision or acceptance condition | The relevant result travels with enough source or counting detail to review it. |
+| A cancelled subagent produced no result | The file states that no result is available and what remains undone; expired identifiers are omitted. |
+| A live background task can still be inspected independently | The file preserves its observed status and usable inspection method. |
+| Mutable repository or service state was checked | The file records the observation time and requires a fresh check before action. |
+| The working directory already contains `tmp/` | The continuation still goes to the operating system temporary directory. |
+| The operating system temporary directory cannot be resolved or written | The operation reports failure without claiming a saved file or using the workspace as fallback. |
+| Current workspace rules or repository state contradict a recorded decision | The successor reports the conflict before changing settled choices and follows current workspace governance. |
+| The host loses context before saving finishes | The file states the recovery gap and avoids claiming complete preservation. |
 
-Repository unit tests can verify skill discovery and placement, but cannot prove semantic completeness or model behavior. Review saved outputs against the supplied source when exercising this skill.
+## Review method
+
+Exercise the skill against source material containing decisions, corrections, authorization changes, references, quantitative evidence, and background work. Compare the saved file with the source and verify both sides of the target:
+
+1. Removing another sentence would lose a continuation-relevant semantic claim.
+2. A fresh agent can continue without reopening closed decisions, inventing missing authority, or accessing the old session.
+
+Repository discovery checks can verify skill placement and frontmatter. They cannot prove semantic completeness, closure fidelity, or correct authority selection; review those through the scenarios above.
