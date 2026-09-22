@@ -92,6 +92,14 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ---
 
+## 个人全局提示词
+
+[`prompts/`](prompts/) 保存跨 Agent 复用的个人沟通和子代理协作规则，与可按需调用的 `skills/` 分开维护。公开规则存放在 `prompts/shared/`，平台差异按需写在 `prompts/targets/`；私密或机器专有内容使用已被 Git 忽略的 `prompts.local/`。
+
+本仓库只存储提示词源文件；激活到各 Agent 的全局配置由后续的独立同步步骤处理。目录结构、组合顺序和维护边界参阅 [`prompts/README.md`](prompts/README.md)。
+
+---
+
 ## 开发者指南
 
 用于本仓库自身的开发维护与本地链接同步（普通 Skill 使用者无需此配置）。

@@ -4,3 +4,5 @@ developer-targets.local.yaml
 npm-debug.log*
 .DS_Store
 tmp/
+prompts.local/
+__pycache__
