@@ -4,15 +4,20 @@ Read this file before reviewing, modifying, or redesigning `yjx-codex-cu`. It re
 
 ## 1. Identity and purpose
 
-`yjx-codex-cu` is a model-invoked, host-agnostic delegation skill that also remains explicitly invocable by the user. It lets an agent that has terminal access delegate necessary real-GUI verification to Codex CLI Computer Use while retaining implementation and bug-fix ownership in the invoking agent.
+`yjx-codex-cu` is a user-invoked, host-agnostic delegation skill. The human types its name; hosts do not select it from the task. It lets an agent that has terminal access delegate necessary real-GUI verification to Codex CLI Computer Use while retaining implementation and bug-fix ownership in the invoking agent.
 
-It must work from Grok Build, Claude Code, and other Agent Skills hosts. Host-specific background-task or MCP APIs are outside its contract.
+It must work from Grok Build, Claude Code, Codex, and other Agent Skills hosts. Host-specific background-task or MCP APIs are outside its contract.
 
 ## 2. Design rationale
 
-### Need-based automatic invocation
+### User invocation
 
-The user authorizes the agent to invoke this skill when a task has a remaining real-GUI verification gap that the current agent cannot test equivalently itself. Invocation stays scoped to the current task and does not force immediate delegation; the host first uses its own adequate verification capabilities. The model-facing description excludes routine terminal and browser testing so foreground desktop control remains a narrow fallback.
+Codex Desktop loads `~/.agents/skills` and would otherwise match a model-facing description, then start another Codex session for a GUI it can already operate. Invocation is manual on every host.
+
+Two files carry the manual-only policy, because the hosts do not share one field:
+
+- `SKILL.md` sets `disable-model-invocation: true`. Grok and Claude Code then keep the skill out of automatic selection. The `description` is a one-line summary for a person browsing commands.
+- `agents/openai.yaml` sets `policy.allow_implicit_invocation: false`. Codex ignores `disable-model-invocation` and defaults implicit invocation to on; this file is what stops Codex Desktop from selecting the skill. Explicit `$yjx-codex-cu` still works.
 
 ### Official CLI boundary
 
@@ -42,7 +47,7 @@ Computer Use tool names may evolve. Evidence detection recognizes semantic metad
 
 Before changing this skill, verify that:
 
-- [ ] `disable-model-invocation` remains absent, and the description limits automatic invocation to a remaining real-GUI verification gap the current agent cannot test equivalently itself.
+- [ ] `disable-model-invocation: true` is set, `agents/openai.yaml` sets `allow_implicit_invocation: false`, and the description is a one-line human summary with no trigger list.
 - [ ] The workflow is host-agnostic and names no required Grok, Claude, or MCP API.
 - [ ] The host delegates only a remaining real-GUI gap, not routine terminal verification.
 - [ ] One GUI acceptance task maps to one `codex exec` session.

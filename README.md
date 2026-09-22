@@ -88,7 +88,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ### 5. 跨 Agent GUI 验证
 
-- **`yjx-codex-cu`**：当任务仍有当前 Agent 无法等价完成的真实 GUI 验证缺口时，可由 Agent 主动调用 Codex CLI 的 Computer Use 完成测试；实现和缺陷修复仍由当前 Agent 负责。
+- **`yjx-codex-cu`**：人工调用。把当前 Agent 无法等价完成的真实 GUI 验证交给 Codex CLI 的 Computer Use；实现和缺陷修复仍由当前 Agent 负责。
 
 ---
 
