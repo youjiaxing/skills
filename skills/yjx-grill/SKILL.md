@@ -105,8 +105,12 @@ Apply labels only to behavior, ownership, data source, state, failure policy, pr
 
 Place active question cards under the localized `Pending decisions` heading. Ask only the unresolved choice and use the minimum fields needed to compare real alternatives:
 
+Before asking for a selection, make each question understandable without assuming the user knows its domain terminology. When the choice needs context, briefly explain the concrete situation, unfamiliar terms in plain language, and why the answer changes a consequential outcome that the agent cannot decide. Use a small hypothetical example if it clarifies the choice; distinguish it from verified facts. Put this explanation in the question card, reuse context already given in the current round, and omit what the user already knows.
+
 ```markdown
 #### Q<N>: <pending decision>
+
+<brief decision context when needed>
 
 1. **<recommended choice>**【recommended】
    - **Outcome**: <behavior or boundary this option selects>

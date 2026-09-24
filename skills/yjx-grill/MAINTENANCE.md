@@ -20,6 +20,7 @@ Its primary outcome is verified shared intent before execution. Each capability 
 8. **Provenance collapse** that turns facts or agent inferences into requirements or decisions.
 9. **Thin results** that gain brevity by removing implementation-critical contracts.
 10. **Reviewer amplification** that revives rejected branches without new evidence or turns speculation into implementation scope.
+11. **Opaque questions** that assume the user understands domain terms or the consequence of a choice before they can judge it.
 
 ## Core Design Principles
 
@@ -101,6 +102,7 @@ Before changing the skill, verify that the change:
 - keeps each item under `Changes` with its implementation consequences, places preserved implementation constraints only in `Unchanged`, and includes `Unchanged` only when omission risks material drift;
 - preserves provenance for material claims and prevents agent inferences from being promoted to requirements or decisions;
 - presents balanced costs and assumptions without carrying rejected options forward;
+- makes each question understandable with only the needed context, without repeating known facts or presenting examples as verified state;
 - preserves implementation-critical model shapes and lifecycle contracts in concrete, copyable form;
 - keeps review depth independent of output mode, requires independent review for candidate contracts, and preserves risk-triggered review for direct results;
 - preserves the independent-review input, assessment, and reopening contract defined in `SKILL.md`;
@@ -119,3 +121,4 @@ Reject brevity that hides a consequential decision or implementation contract. C
 - A high-risk slice with no consequential human decision receives independent review but remains a natural-language direct result.
 - A reviewed result that changes materially receives targeted re-review before it is reported or presented for confirmation.
 - A recommendation carries a fallback or failure policy: the policy remains `推断` until explicitly confirmed and the Reviewer checks that it was not promoted.
+- A consequential question involving unfamiliar terms explains the concrete situation and why the user's choice matters before presenting options, without adding a fixed primer to familiar questions.
