@@ -17,8 +17,9 @@ Its primary outcome is verified shared intent before execution. Each capability 
 5. **Asymmetric options** that hide the recommended choice's real costs.
 6. **Premature convergence** that skips downstream ownership, state, compatibility, or failure forks.
 7. **Fact/intent confusion** that asks humans for discoverable facts or turns diagnostic facts into commitments.
-8. **Thin results** that gain brevity by removing implementation-critical contracts.
-9. **Reviewer amplification** that revives rejected branches without new evidence or turns speculation into implementation scope.
+8. **Provenance collapse** that turns facts or agent inferences into requirements or decisions.
+9. **Thin results** that gain brevity by removing implementation-critical contracts.
+10. **Reviewer amplification** that revives rejected branches without new evidence or turns speculation into implementation scope.
 
 ## Core Design Principles
 
@@ -51,6 +52,10 @@ Recommended choices expose unavoidable costs and falsifiable assumptions. Altern
 The final contract for a decision-bearing slice is emitted once after convergence and organizes `Changes` by topic. Expected behavior, implementation-critical consequences, and independently useful acceptance results stay with the change they describe, avoiding a top-level split between decisions and actions.
 
 `Facts`, `Changes`, and `Unchanged` retain the same order and meaning in decision-bearing rounds and the final contract. Every semantic claim has one authoritative home: `Changes` stays in its topics, `Unchanged` appears only when omission risks material drift, and `Facts` contains only verified state needed by the selected path. Direct results are exempt from these headings.
+
+### Claim Provenance
+
+Material implementation-affecting claims retain one of four sources: explicit requirement, verified fact, user-confirmed decision, or adjustable agent inference. The runtime labels are localized; in Chinese they are `需求`, `事实`, `决策`, and `推断`. A selected recommendation does not change the source of its attached inferences. Routine implementation details stay unlabeled, and provenance never enters production-code comments.
 
 ### Independent Review
 
@@ -94,6 +99,7 @@ Before changing the skill, verify that the change:
 - keeps discussion rounds incremental;
 - uses the same four top-level information roles and order defined in `SKILL.md` across decision-bearing rounds and the final contract while exempting direct results;
 - keeps each item under `Changes` with its implementation consequences, places preserved implementation constraints only in `Unchanged`, and includes `Unchanged` only when omission risks material drift;
+- preserves provenance for material claims and prevents agent inferences from being promoted to requirements or decisions;
 - presents balanced costs and assumptions without carrying rejected options forward;
 - preserves implementation-critical model shapes and lifecycle contracts in concrete, copyable form;
 - keeps review depth independent of output mode, requires independent review for candidate contracts, and preserves risk-triggered review for direct results;
@@ -112,3 +118,4 @@ Reject brevity that hides a consequential decision or implementation contract. C
 - After the user resolves the consequential choices, the slice produces an independently reviewed contract and requests confirmation.
 - A high-risk slice with no consequential human decision receives independent review but remains a natural-language direct result.
 - A reviewed result that changes materially receives targeted re-review before it is reported or presented for confirmation.
+- A recommendation carries a fallback or failure policy: the policy remains `推断` until explicitly confirmed and the Reviewer checks that it was not promoted.

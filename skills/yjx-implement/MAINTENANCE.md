@@ -58,6 +58,8 @@ TDD is an explicit user/project choice, not the definition of verification. Regr
 
 Static file whitelists can exclude necessary companion tests or encourage workarounds inside approved files. Minimal Diff ties changes to the task's cause and uses the actual diff to assess scope, rather than imposing an extra file-list ceremony. Existing project scope restrictions still apply.
 
+Phase 2 applies production-shape and counterfactual reasoning to material semantic additions without turning them into a universal checklist. Phase 4 keeps large standards and diff bodies out of the primary prompt: the primary resolves paths and scope, while independent Reviewers read the authoritative documents and execute the bounded commands.
+
 ### Review & Authorization
 
 A structural self-check cannot replace independent review, and a comparison ending at `HEAD` misses work awaiting its first commit. Phase 1 owns the starting state; Phase 4 owns complete review input, finding classification, and the resolution loop. Preserve the distinction between pre-existing work and task changes even inside the same file.

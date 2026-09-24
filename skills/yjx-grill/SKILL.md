@@ -90,6 +90,17 @@ In Decision Mode, classify top-level informational content with exactly four rol
 
 Facts contain verified current state or diagnostic findings needed to understand the result. Changes contain future behavior already determined by verified evidence or a selected option, and state it as a future target; unselected behavior stays in its question card. Unchanged exclusively contains preserved current behavior or boundaries that materially constrain the result. Pending decisions contains only choices that pass the human-decision gate. Keep one semantic claim per item.
 
+### Claim Provenance
+
+For material claims that can change implementation, prefix the item with its source. Localize the labels; in Chinese use `需求`, `事实`, `决策`, and `推断`:
+
+- `需求`: explicit requirement or constraint.
+- `事实`: verified code, specification, configuration, or runtime state.
+- `决策`: user-confirmed choice.
+- `推断`: agent proposal or implementation default that remains adjustable.
+
+Apply labels only to behavior, ownership, data source, state, failure policy, protocol, boundary, and abstraction claims. Routine implementation details remain unlabelled. Choosing a recommended option never changes an attached `推断` into a `需求` or `决策`. Carry these labels into the independent-review handoff; do not add them to production-code comments.
+
 ### Compact Question Card
 
 Place active question cards under the localized `Pending decisions` heading. Ask only the unresolved choice and use the minimum fields needed to compare real alternatives:
@@ -138,6 +149,7 @@ Before the final contract, verify:
 2. Every changed trigger, state transition, authority boundary, failure policy, and external guarantee has a non-speculative source.
 3. Every question passed the human-decision gate.
 4. The final contract contains only Facts needed by the selected path, Changes, and materially necessary Unchanged.
+5. Every material implementation-affecting claim has provenance, and no `推断` is presented as `需求` or `决策`.
 
 If a Pending decision remains unresolved, ask only the next frontier question.
 
@@ -192,7 +204,7 @@ Every decision-bearing candidate contract must be sent to an independent Reviewe
 - rejected branches with their rejection reasons;
 - remaining assumptions and explicit risk boundaries.
 
-Ask the Reviewer to assess whether the evidence supports the conclusion and whether the overall solution is correct, applicable, maintainable, compatible, and proportionate to the demonstrated risks. Review quality is based on those outcomes, not on selecting the smallest possible change. The Reviewer must identify speculation presented as a requirement and support each finding with concrete evidence and impact.
+Ask the Reviewer to assess whether the evidence supports the conclusion, whether provenance is preserved, and whether the overall solution is correct, applicable, maintainable, compatible, and proportionate to the demonstrated risks. Review quality is based on those outcomes, not on selecting the smallest possible change. The Reviewer must identify speculation presented as a requirement and support each finding with concrete evidence and impact.
 
 Treat a rejected branch as closed unless new evidence appears, its rejection rationale conflicts with evidence, the candidate fails the contract, or a previously omitted major risk is discovered. A preference for another design is insufficient to reopen it.
 
