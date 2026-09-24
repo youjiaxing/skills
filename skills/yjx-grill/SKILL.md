@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # yjx-grill
 
-Align a human and an agent on complex requirements, architectures, remediation strategies, or plans before execution. Investigate facts autonomously, ask only for consequential human judgment, and keep results focused on what changes, what remains unchanged, and what awaits a decision.
+Align a human and an agent on complex requirements, architectures, remediation strategies, or plans before execution. Investigate facts autonomously, ask only for consequential human judgment, and make the user-facing result proportional to the decisions the case actually contains.
 
 Read `MAINTENANCE.md` before reviewing or changing this skill. It is not needed for ordinary execution.
 
@@ -15,7 +15,7 @@ Read `MAINTENANCE.md` before reviewing or changing this skill. It is not needed 
 - This is a user-invoked alignment skill.
 - Do not write application code, modify repository source files, or execute the aligned plan.
 - Render every user-facing label and bold template key in the user's conversational language.
-- A discussion where the human-decision gate never passes ends with a direct result. A discussion where the gate passes ends after the final contract is confirmed.
+- Select the output mode independently for each capability slice. A slice where the human-decision gate never passes ends with a direct result. A decision-bearing slice ends after its final contract is confirmed.
 
 ## 1. Establish Facts Before Asking Intent
 
@@ -23,13 +23,13 @@ Use tools for objective facts: existing code, schemas, logs, current state, task
 
 Use questions for human intent, irreversible trade-offs, business priorities, authority ownership, or guarantees.
 
-For defects or reality gaps, investigate the causal chain before presenting remediation choices. When a primer is useful, place it under Facts and keep it compact:
+For defects or reality gaps, investigate the causal chain before presenting remediation choices. When a primer is useful, keep it compact:
 
 - **Symptom**: actor, action, observable failure.
 - **Break**: the smallest direct call tree, state comparison, diff, or mechanism.
 - **Assessment**: defect nature and eliminated pseudo-causes.
 
-After the first Facts section, report only newly established information under the applicable roles. If investigation establishes the root cause and no consequential trade-off remains, report the applicable roles in their defined order and stop.
+If investigation establishes the root cause and no consequential trade-off remains, prepare a Direct Result that leads with the conclusion, explains the causal fact and selected remedy in natural prose, and includes only material boundaries or risks. Apply any review required by section 8 before reporting it, then stop. Headings are optional; do not force the result into the decision-mode roles.
 
 ## 2. Slice the Problem
 
@@ -45,9 +45,18 @@ Use this gate:
 The user must decide <choice> because either answer materially changes <cost, guarantee, ownership, or strategy>.
 ```
 
-If that sentence cannot be completed with verified consequences, ask zero questions. Infer low-reversal-cost mechanics, routine parameters, and local technical defaults, then report the applicable Facts, Changes, or Unchanged directly. Routine implementation details belong in neither question cards nor final contract topics. Do not turn tooling obstacles, missing permissions, or speculative causes into question cards.
+If that sentence cannot be completed with verified consequences, ask zero questions. Infer low-reversal-cost mechanics, routine parameters, and local technical defaults, then use Direct Result Mode for that slice. Routine implementation details belong in neither question cards nor final contract topics. Do not turn tooling obstacles, missing permissions, or speculative causes into question cards.
+
+### Per-Slice Output Modes
+
+- **Direct Result Mode**: Use when investigation completes without any unresolved choice passing the human-decision gate. State the conclusion, causal facts, selected remedy, and only material risks or verification boundaries in natural prose. Do not require fixed headings, a contract, or user confirmation.
+- **Decision Mode**: Enter as soon as the current slice contains a verified consequential choice that the user must decide. Keep that slice in Decision Mode through its question rounds, convergence, reviewed contract, and confirmation. Other slices choose their mode independently.
+
+Output mode does not determine review depth. Apply independent review according to concrete risk, impact, reversibility, and governing project rules. A reviewed direct result remains a direct result unless review discovers a consequential fork.
 
 ## 4. Traverse the Active Decision Frontier
+
+This section applies when the current slice contains a choice that passes the human-decision gate.
 
 Ask zero to three orthogonal questions per round; zero is the default until the gate passes.
 
@@ -57,9 +66,9 @@ Ask zero to three orthogonal questions per round; zero is the default until the 
 - Use verified assets to prune impossible or already-implemented options before asking.
 - Mention a next frontier only when the answer unlocks another consequential fork.
 
-### Four Information Roles
+### Decision-Mode Information Roles
 
-Classify top-level informational content with exactly four roles, localize their labels, keep the order shown below, and omit empty sections:
+In Decision Mode, classify top-level informational content with exactly four roles, localize their labels, keep the order shown below, and omit empty sections:
 
 ```markdown
 ### <Facts>
@@ -104,9 +113,9 @@ Omit fields that would paraphrase another field. Recommended choices must expose
 
 Use a visual only when it replaces several lines of prose by showing a control-flow divergence, state transition, data shape, or ownership boundary. Keep it within eight lines and do not repeat it in adjacent prose.
 
-## 5. Keep Discussion Incremental
+## 5. Keep Decision Discussion Incremental
 
-Interpret replies by meaning. Only an unambiguous commitment changes decision state.
+In Decision Mode, interpret replies by meaning. Only an unambiguous commitment changes decision state.
 
 - Acknowledge an ordinary selection in one line or proceed directly to the next frontier.
 - Show only Facts, Changes, Unchanged, or Pending decisions added, revised, or removed in the current round.
@@ -117,11 +126,11 @@ Interpret replies by meaning. Only an unambiguous commitment changes decision st
 
 If the user asks for clarification, pause the round, answer only that clarification, and wait. Do not append unanswered cards in the same turn.
 
-If the user says the discussion is unclear, too complex, or asks what is actually being changed, make a one-time exception to the incremental display rule: discard the current presentation and restate the current slice under Facts, Changes, Unchanged, and Pending decisions.
+If the user says the discussion is unclear, too complex, or asks what is actually being changed, discard the current presentation and restate only the relevant content under the information roles. Keep it compact, omit empty roles, and make the pending decision, actual change, and reason human judgment is required immediately clear.
 
-If the human-decision gate never passed, report the result directly and stop. Once any Pending decisions have been answered, continue through the convergence gate and final contract.
+If the human-decision gate never passed for the current slice, use Direct Result Mode and stop that slice before the convergence and contract steps. Once a slice enters Decision Mode, continue through its convergence gate and final contract.
 
-## 6. Convergence Gate
+## 6. Decision-Mode Convergence Gate
 
 Before the final contract, verify:
 
@@ -134,7 +143,7 @@ If a Pending decision remains unresolved, ask only the next frontier question.
 
 ## 7. Build One Single-Source Candidate Contract
 
-After all decisions converge, assemble the candidate result in the same role order. Do not present it for confirmation until it passes independent review. Organize Changes by topic so each change and its implementation consequences stay together:
+For a decision-bearing slice, after all decisions converge, assemble the candidate result in the same role order. Do not present it for confirmation until it passes independent review. Organize Changes by topic so each change and its implementation consequences stay together:
 
 ```markdown
 ## <Facts> <!-- omit when no supporting facts must travel with the result -->
@@ -170,9 +179,13 @@ Preserve implementation-critical detail: source-of-truth ownership, identities a
 
 Exclude PR plans, unaffected call-site inventories, local test file names, shell commands, routine guards, and syntax-level advice unless the user's decision directly concerns them.
 
-## 8. Obtain Independent Contract Review
+## 8. Apply Independent Review
 
-Before asking the user to confirm, send the candidate contract to an independent Reviewer who did not form the proposal. Supply:
+Review depth is driven by risk rather than output mode. Review a Direct Result when concrete impact, reversibility, authority, material data effects, compatibility, security, or governing project rules warrant independent scrutiny. Review its evidence and proposed remedy without converting it into a contract. If review discovers a consequential fork, move that slice into Decision Mode.
+
+Across both modes, resolve substantiated findings and obtain targeted re-review after material revisions. If a correctness blocker remains unresolved, report the blocker instead of the proposed result.
+
+Every decision-bearing candidate contract must be sent to an independent Reviewer who did not form the proposal before asking the user to confirm. Supply:
 
 - the original goal and verified facts with evidence locations;
 - the candidate contract, selected approach, and its material costs;
@@ -183,14 +196,12 @@ Ask the Reviewer to assess whether the evidence supports the conclusion and whet
 
 Treat a rejected branch as closed unless new evidence appears, its rejection rationale conflicts with evidence, the candidate fails the contract, or a previously omitted major risk is discovered. A preference for another design is insufficient to reopen it.
 
-Resolve substantiated findings in the candidate. If a finding introduces a consequential human decision, return to the active decision frontier. Obtain targeted re-review after material revisions. If independent review cannot execute or leaves a supported finding unresolved, report the blocker and stop before confirmation.
+Resolve substantiated findings in the candidate. If a finding introduces a consequential human decision, return to the active decision frontier. If independent review cannot execute or leaves a supported finding unresolved, report the blocker and stop before confirmation.
 
-*Completion Criterion*: The candidate has no unresolved substantiated review findings and remains traceable to verified evidence and the recorded decisions.
+*Completion Criterion*: The reviewed direct result or candidate contract has no unresolved substantiated findings and remains traceable to verified evidence and, when applicable, the recorded decisions.
 
-## 9. Present and Confirm
+## 9. Present and Confirm Decision-Bearing Results
 
 Present the reviewed contract once in the format from section 7.
 
-When the human-decision gate never passed, end after the direct result without requesting approval.
-
-When human decisions were made, ask for confirmation with exactly these meanings, localized for the user: `1. Approved to implement; 2. Items need adjustment`. After approval, end alignment. If the same reply explicitly directs implementation, hand off immediately to the applicable implementation workflow; do not require execution intent to be repeated.
+Ask for confirmation with exactly these meanings, localized for the user: `1. Approved to implement; 2. Items need adjustment`. After approval, end alignment. If the same reply explicitly directs implementation, hand off immediately to the applicable implementation workflow; do not require execution intent to be repeated.
