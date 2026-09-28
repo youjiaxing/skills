@@ -4,7 +4,7 @@ Read this document when reviewing or changing the skill, not during ordinary exe
 
 ## 1. Lineage & Abstraction Level
 
-`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory two-axis review through `/code-review` while replacing default TDD and unconditional full-suite execution with task-dependent verification, project-governed local commits, and separately authorized remote delivery.
+`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory two-axis review through `/code-review` while replacing default TDD and unconditional full-suite execution with task-dependent verification, project-governed commits, and default end-to-end delivery. Project rules or explicit user direction may impose a narrower delivery boundary, including required human review.
 
 Ousterhout's deep modules and information hiding, cohesion and coupling, YAGNI, compatibility, and cost models provide the engineering vocabulary. Each leading term carries a short operational meaning in the runtime document. These principles support judgment across languages and architectures; they do not prescribe a universal code shape.
 
@@ -66,7 +66,7 @@ A structural self-check cannot replace independent review, and a comparison endi
 
 Standards and Spec remain separate mandatory axes because primary-agent risk classification can itself be wrong. Their decision context preserves settled trade-offs without silencing evidence-based findings: a rejected branch can reopen for new evidence, contradiction, contract failure, or a previously omitted major risk. The same context makes the test decision reviewable from its actual evidence and limits.
 
-Dispatch mechanics belong to `/code-review`, while this skill requires both outcomes and supplies their common context. Phase 5 owns delivery authorization: invocation authorizes a local commit on the established branch, project rules and explicit user direction may withhold it, and each remote action requires explicit user authorization. Successful automated review remains evidence rather than project-required human approval.
+Dispatch mechanics belong to `/code-review`, while this skill requires both outcomes and supplies their common context. Phase 5 owns delivery authorization: invocation authorizes local commit and remote delivery by default after the required review and verification gates. Project rules and explicit user direction may withhold or narrow a specific step, and the skill must stop at that exact boundary. Successful automated review remains evidence rather than project-required human approval; when a project requires human review, automated review cannot satisfy that requirement.
 
 ## 3. Maintenance Validation
 
@@ -100,7 +100,9 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | A Reviewer flags `No new test` solely because the diff contains no new test file | Reassess the supplied evidence and limits; file absence alone is not a finding. |
 | Independent review cannot execute, or a blocker remains disputed | Keep the task incomplete until the review gate is satisfied. |
 | The current branch is `main`, `master`, a release branch, or remotely protected, and project rules permit local commits | Commit locally on that branch after review; branch names and remote protection do not redirect the work. |
-| Project rules require a different branch | Establish it before editing; a conflict discovered at delivery leaves the work uncommitted on the current branch for a report and a new, explicitly authorized attempt. |
+| The checkout is detached, or project rules require a different branch | Read the repository naming policy and establish the approved branch before editing; if edits are already present on a detached checkout, create the approved branch before committing and preserve the full starting diff. |
 | The user directs the skill to leave changes uncommitted, or project rules prohibit local commits | Preserve the working state and produce the delivery report. |
-| A local commit succeeds without explicit remote authorization | Report the local commit and leave push, merge-request creation, and merge pending. |
-| Project-required human approval applies to a remote merge | A local commit may proceed; the remote action waits for that approval and explicit authorization. |
+| No project rule or user instruction limits remote delivery | Push, create or update the pull request, wait for required checks, merge, and verify the merged state before completion. |
+| A project rule requires human review before commit, push, pull-request creation, or merge | Stop at the named boundary; do not infer a broader restriction, and report the exact pending action. |
+| A project requires human approval but automated review passes | Automated review is insufficient; preserve the changes and wait at the project-defined human approval boundary. |
+| Remote delivery fails because of permissions, conflicts, failing checks, or infrastructure | Keep the task incomplete, preserve recoverable state, and report the concrete blocker and next action. |
