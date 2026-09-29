@@ -4,7 +4,7 @@ Read this document when reviewing or changing the skill, not during ordinary exe
 
 ## 1. Lineage & Abstraction Level
 
-`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory two-axis review through `/code-review` while replacing default TDD and unconditional full-suite execution with task-dependent verification, project-governed commits, and default end-to-end delivery. Project rules or explicit user direction may impose a narrower delivery boundary, including required human review.
+`yjx-implement` adapts Matt Pocock's thin `/implement` command into a scope-aware implementation workflow. It retains mandatory two-axis review through `/code-review` and restores default red-green slices for admitted behavior tests, while avoiding a universal full-suite requirement or a requirement to manufacture low-value tests. Project rules or explicit user direction may impose a narrower delivery boundary, including required human review.
 
 Ousterhout's deep modules and information hiding, cohesion and coupling, YAGNI, compatibility, and cost models provide the engineering vocabulary. Each leading term carries a short operational meaning in the runtime document. These principles support judgment across languages and architectures; they do not prescribe a universal code shape.
 
@@ -44,7 +44,7 @@ Replacing many detailed tests with one happy-path test can lose meaningful cover
 
 When a confirmed requirement removes a restriction, a test expecting its old rejection should change. The relevant distinction is the basis for the change: the new contract justifies a new expectation; a failing result alone does not. Real collaborators, boundary fakes, and transport interception are possible verification techniques rather than universal architectural requirements.
 
-Test Value Admission keeps generated tests tied to durable evidence. Defect and changed-behavior tests establish a pre-change failure caused by the target behavior; characterization tests establish the existing contract before a behavior-preserving refactor and discriminate a plausible regression. A compile failure caused by an invented API shape does not reproduce a business defect. Reaching an unrelated nil dependency or merely avoiding a panic does not observe the requested result. An assertion copied from the implementation cannot independently reject the same mistake, and a production seam created only to make such a test convenient fails Production Shape as well. These candidates add maintenance cost without useful regression discrimination.
+Test Value Admission keeps generated tests tied to durable evidence. New, defect, and changed-behavior tests establish a pre-change failure caused by the target behavior; characterization tests establish the existing contract before a behavior-preserving refactor and discriminate a plausible regression. A compile failure caused by an invented API shape does not reproduce a business defect. Reaching an unrelated nil dependency or merely avoiding a panic does not observe the requested result. An early return can be the target defect and is not disqualified by its control-flow shape alone. An assertion copied from the implementation cannot independently reject the same mistake, and a production seam created only to make such a test convenient fails Production Shape as well. These candidates add maintenance cost without useful regression discrimination.
 
 A `No new test` decision is complete when it identifies why no candidate passed admission, which existing or substitute checks exercise the affected behavior, and what remains unverified. Review evaluates that evidence and its limits; the absence of a newly created test file is not itself a coverage defect.
 
@@ -52,7 +52,7 @@ A `No new test` decision is complete when it identifies why no candidate passed 
 
 A workspace root may only aggregate repositories; commands run there can use incompatible dependency configurations. An unconstrained suite or interactive watcher can also stall a local task. Phase 1 identifies the owning context and bounded commands; Phase 3 owns execution and evidence. Small projects can still use fast full suites.
 
-TDD is an explicit user/project choice, not the definition of verification. Regression comparisons and characterization coverage address bug fixes and behavior-sensitive refactors without forcing every task into one test-writing order. Changes unsuitable for automated tests still need alternative evidence and disclosed limits.
+Admitted new, changed, and defect behavior uses red-green slices by default: a target-specific test failure precedes the related business implementation, and the same test passes afterward. The recorded commands, results, and order make that claim reviewable; a later back-test against the old implementation proves regression protection but not test-first order. This is a bounded default within `yjx-implement`, not a claim that the full `/tdd` workflow is always active. Behavior-preserving refactors with an admitted characterization candidate record green evidence before and after the refactor; when no characterization candidate passes admission, a complete `No new test` decision with substitute verification is the valid path. Missing required evidence is a failed gate unless an authorized override or complete `No new test` decision applies; changes unsuitable for automated tests still need alternative evidence and disclosed limits.
 
 ### Causal Scope
 
@@ -76,8 +76,11 @@ Check the changed runtime text against these questions; use the scenarios to exp
 - Do descriptions, completion criteria, and maintenance examples agree on which statements are principles and which are delivery gates?
 - Are concrete techniques confined to explanatory examples unless needed to make a gate executable?
 - Are existing project assets, causal scope, workspace context, and authorization boundaries preserved?
-- Does Test Value Admission remain consistent with both runtime branches: changed behavior and behavior-preserving characterization?
+- Does Test Value Admission remain consistent with both runtime branches: red-green changed behavior and green characterization for behavior-preserving refactors, with `No new test` available only when no new, modified, or existing candidate passes?
+- Does every admitted behavior slice require a target-specific red result before its related business implementation, with commands, results, and order available to reviewers?
+- Does every behavior-preserving refactor with an admitted characterization candidate record green evidence before and after the refactor, while a refactor without such a candidate uses complete `No new test` evidence?
 - Does the `No new test` path remain evidence-bearing and reviewable?
+- Do authorized test-order overrides remain distinguishable from missing red-green evidence, with source, scope, and substitute verification recorded?
 - Does the review gate retain the complete final change set, blocker disposition, independent re-review, and incomplete status when review cannot execute?
 - Is the skill still English, manually invoked, and independent of a particular language or application architecture?
 
@@ -87,8 +90,15 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | A helper or interface exists only to expose a convenient test seam and carries no production responsibility | Test convenience is insufficient justification; adapt verification to the production design and assess any review finding under Phase 4's Finding Classification rules. |
 | A small helper owns a stable domain decision or frees callers from duplicating meaningful domain knowledge | The production responsibility justifies the indirection; line count alone is not a defect. |
 | A proposed regression test fails only to compile because it assumes a nonexistent API | Reject it: the failure is unrelated to the business defect. |
+| A new behavior needs a public declaration before its test can run | Permit only the minimum declaration or explicit unimplemented placeholder, then require the running test to fail on the missing behavior before business implementation. |
+| A later back-test against the old implementation passes | Count it as regression evidence, not proof that the test was written and run before implementation. |
+| The red command or its order cannot be located | Fail the verification gate and keep the task incomplete unless an authorized override or complete `No new test` decision applies; disclose the evidence gap. |
+| A project rule or explicit user direction explicitly requires a different test order or waives red-green | Label it an `authorized override`, record the exact source and scope, run substitute verification, and do not treat ordinary implementation authorization or a lower-priority user direction as sufficient. |
+| A project rule or explicit user direction requires TDD or test-first development | Also follow `/tdd`, including seam confirmation; the bounded default red-green loop does not replace that requirement. |
+| Required red-green or refactor-green evidence is missing without an override or complete `No new test` decision | Fail the verification gate and keep the task incomplete. |
+| A behavior-preserving refactor has no characterization candidate that passes admission | Use complete `No new test` with substitute verification and disclosed limits; do not manufacture a low-value characterization test. |
 | A scheduler test succeeds by returning before it reaches nil collaborators but never observes the business outcome | Reject it: control-flow survival does not independently verify the contract. |
-| No candidate test can observe the stable business result without unjustified production seams | Record `No new test`, run existing and substitute targeted checks, and disclose the remaining limit. |
+| No new, modified, or existing candidate test can observe the stable business result without unjustified production seams | Record `No new test`, run existing and substitute targeted checks, and disclose the remaining limit. An existing candidate that passes admission still requires the applicable red-green or refactor-green evidence even when no test file changes. |
 | Tests are reorganized during a behavior-preserving refactor | Check behavior and effective coverage, not one-to-one test correspondence. |
 | Confirmed requirements remove an old rejection condition | Verify the replacement behavior and still-valid boundaries; the old assertion may be retired. |
 | An assertion is weakened only because it fails | Treat as an evidence-integrity blocker. |
