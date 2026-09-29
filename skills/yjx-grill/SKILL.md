@@ -15,7 +15,9 @@ Read `MAINTENANCE.md` before reviewing or changing this skill. It is not needed 
 - This is a user-invoked alignment skill.
 - Do not write application code, modify repository source files, or execute the aligned plan.
 - Render every user-facing label and bold template key in the user's conversational language.
-- Select the output mode independently for each capability slice. A slice where the human-decision gate never passes ends with a direct result. A decision-bearing slice ends after its final contract is confirmed.
+- Select the output mode independently for each capability slice. A slice where the human-decision gate never passes produces a direct result. A decision-bearing slice ends after its final contract is confirmed. Apply the collaborative-discussion rule below before concluding either mode.
+
+When the user explicitly requests collaborative discussion, the absence of consequential questions is not a completion signal. Present an adjustable proposal and wait for feedback. This changes automatic stopping only: select the slice's mode through the existing human-decision gate, without a third mode or new contract or confirmation obligations. Interpret readiness to conclude by meaning, not a fixed phrase; clarify only when ambiguous. Agreement with a discussion proposal alone is neither discussion completion nor authorization to execute. A decision-bearing slice still requires the reviewed contract and confirmation in sections 6 through 9.
 
 ## 1. Establish Facts Before Asking Intent
 
@@ -29,7 +31,7 @@ For defects or reality gaps, investigate the causal chain before presenting reme
 - **Break**: the smallest direct call tree, state comparison, diff, or mechanism.
 - **Assessment**: defect nature and eliminated pseudo-causes.
 
-If investigation establishes the root cause and no consequential trade-off remains, prepare a Direct Result that leads with the conclusion, explains the causal fact and selected remedy in natural prose, and includes only material boundaries or risks. Apply any review required by section 8 before reporting it, then stop. Headings are optional; do not force the result into the decision-mode roles.
+If investigation establishes the root cause and no consequential trade-off remains, prepare a Direct Result that leads with the conclusion, explains the causal fact and selected remedy in natural prose, and includes only material boundaries or risks. Apply any review required by section 8 before reporting it, then follow the completion rule in Execution Boundary. Headings are optional.
 
 ## 2. Slice the Problem
 
@@ -45,7 +47,7 @@ Use this gate:
 The user must decide <choice> because either answer materially changes <cost, guarantee, ownership, or strategy>.
 ```
 
-If that sentence cannot be completed with verified consequences, ask zero questions. Infer low-reversal-cost mechanics, routine parameters, and local technical defaults, then use Direct Result Mode for that slice. Routine implementation details belong in neither question cards nor final contract topics. Do not turn tooling obstacles, missing permissions, or speculative causes into question cards.
+If that sentence cannot be completed with verified consequences, ask zero questions. Infer low-reversal-cost mechanics, routine parameters, and local technical defaults, then use Direct Result Mode for that slice, subject to the collaborative-discussion rule in Execution Boundary. Routine implementation details belong in neither question cards nor final contract topics. Do not turn tooling obstacles, missing permissions, or speculative causes into question cards.
 
 ### Per-Slice Output Modes
 
@@ -66,65 +68,28 @@ Ask zero to three orthogonal questions per round; zero is the default until the 
 - Use verified assets to prune impossible or already-implemented options before asking.
 - Mention a next frontier only when the answer unlocks another consequential fork.
 
-### Decision-Mode Information Roles
+### Discussion Context
 
-In Decision Mode, classify top-level informational content with exactly four roles, localize their labels, keep the order shown below, and omit empty sections:
-
-```markdown
-### <Facts>
-
-- **<topic>**: <current observable state or behavior>.
-
-### <Changes>
-
-- **<topic>**: <future behavior that implementation will introduce>.
-
-### <Unchanged>
-
-- **<topic>**: <existing behavior or boundary the result preserves>.
-
-### <Pending decisions>
-
-<question cards>
-```
-
-Facts contain verified current state or diagnostic findings needed to understand the result. Changes contain future behavior already determined by verified evidence or a selected option, and state it as a future target; unselected behavior stays in its question card. Unchanged exclusively contains preserved current behavior or boundaries that materially constrain the result. Pending decisions contains only choices that pass the human-decision gate. Keep one semantic claim per item.
+Give only the background needed to understand the current question. Use natural prose or a compact visual, omit background the user already knows, and allow no preamble when the choice is already clear. Discussion rounds do not require fixed information roles, headings, or ordering. Keep verified current behavior, proposed changes, and preserved boundaries distinguishable when that distinction affects the choice. The final-contract structure in section 7 applies only to that contract.
 
 ### Claim Provenance
 
-For material claims that can change implementation, prefix the item with its source. Localize the labels; in Chinese use `需求`, `事实`, `决策`, and `推断`:
+Maintain the source and evidence location or corresponding user expression for each material claim that can change implementation. Use the decision record in section 5; source tracking is separate from user-facing presentation. The source categories are localized; in Chinese use `需求`, `事实`, `决策`, and `推断`:
 
 - `需求`: explicit requirement or constraint.
 - `事实`: verified code, specification, configuration, or runtime state.
 - `决策`: user-confirmed choice.
 - `推断`: agent proposal or implementation default that remains adjustable.
 
-Apply labels only to behavior, ownership, data source, state, failure policy, protocol, boundary, and abstraction claims. Routine implementation details remain unlabelled. Choosing a recommended option never changes an attached `推断` into a `需求` or `决策`. Carry these labels into the independent-review handoff; do not add them to production-code comments.
+These categories apply to behavior, ownership, data source, state, failure policy, protocol, boundary, and abstraction claims. Routine implementation details remain unlabelled. In discussion rounds, make source distinctions explicit only when ambiguity could affect judgment; do not prefix every item by default. Preserve explicit source labels in the final contract and independent-review handoff. Choosing a recommended option never changes an attached `推断` into a `需求` or `决策`. Do not add provenance labels to production-code comments.
 
 ### Compact Question Card
 
-Place active question cards under the localized `Pending decisions` heading. Ask only the unresolved choice and use the minimum fields needed to compare real alternatives:
+Keep the question identifier `Q<N>`, number options from 1, and place the recommended option first with a localized recommendation marker. Ask only the unresolved choice; there is no required heading or field schema.
 
 Before asking for a selection, make each question understandable without assuming the user knows its domain terminology. When the choice needs context, briefly explain the concrete situation, unfamiliar terms in plain language, and why the answer changes a consequential outcome that the agent cannot decide. Use a small hypothetical example if it clarifies the choice; distinguish it from verified facts. Put this explanation in the question card, reuse context already given in the current round, and omit what the user already knows.
 
-```markdown
-#### Q<N>: <pending decision>
-
-<brief decision context when needed>
-
-1. **<recommended choice>**【recommended】
-   - **Outcome**: <behavior or boundary this option selects>
-   - **Cost**: <unavoidable downside>
-   - **Critical assumption**: <falsifiable premise>
-   - **Companion rule**: <only when non-obvious and implementation-relevant>
-2. **<alternative>**
-   - **Superior when**: <condition where it wins>
-   - **Not selected now**: <current reason>
-
-🔮 **Next frontier**: <only when this answer unlocks another consequential fork>
-```
-
-Omit fields that would paraphrase another field. Recommended choices must expose their real costs and assumptions; alternatives must state when they are superior.
+Explain the real difference between options and why the first is recommended. For alternatives, state when they are preferable and why they are not recommended now. Let the explanation fit the choice rather than filling fixed Outcome, Cost, Assumption, or Companion rule fields. Present real costs and critical assumptions when they exist and affect judgment; do not hide material downsides or invent them to complete a template.
 
 Use a visual only when it replaces several lines of prose by showing a control-flow divergence, state transition, data shape, or ownership boundary. Keep it within eight lines and do not repeat it in adjacent prose.
 
@@ -133,17 +98,17 @@ Use a visual only when it replaces several lines of prose by showing a control-f
 In Decision Mode, interpret replies by meaning. Only an unambiguous commitment changes decision state.
 
 - Acknowledge an ordinary selection in one line or proceed directly to the next frontier.
-- Show only Facts, Changes, Unchanged, or Pending decisions added, revised, or removed in the current round.
-- Do not reprint answered questions, closed options, Facts already shown, or contract sections whose content did not change.
+- Show only information added, revised, or removed in the current round, using the context guidance in section 4.
+- Do not reprint answered questions, closed options, facts already shown, or contract sections whose content did not change.
 - When a new decision invalidates an earlier one, prune the dead branch and its dependent inferences. Reopen only the conflicting human decision.
 - For a custom answer, extract the commitment, explicit overrides, and hard constraints; derive remaining low-risk mechanics without another questionnaire.
-- Retain a decision record for final review: the selected approach and its costs, rejected branches and rejection reasons, remaining assumptions, and explicit risk boundaries. Keep this record out of the user-facing final contract.
+- Retain a decision record for final review: each material claim's source and evidence location or corresponding user expression, the selected approach and its costs, rejected branches and rejection reasons, remaining assumptions, and explicit risk boundaries. Keep this record out of the user-facing final contract.
 
 If the user asks for clarification, pause the round, answer only that clarification, and wait. Do not append unanswered cards in the same turn.
 
-If the user says the discussion is unclear, too complex, or asks what is actually being changed, discard the current presentation and restate only the relevant content under the information roles. Keep it compact, omit empty roles, and make the pending decision, actual change, and reason human judgment is required immediately clear.
+If the user says the discussion is unclear, too complex, or asks what is actually being changed, discard the current presentation and restate only what resolves that confusion. Make the actual change and, if one remains, the unresolved choice and reason human judgment is required clear without returning to a fixed template.
 
-If the human-decision gate never passed for the current slice, use Direct Result Mode and stop that slice before the convergence and contract steps. Once a slice enters Decision Mode, continue through its convergence gate and final contract.
+Apply the collaborative-discussion rule in Execution Boundary at the completion point. If the human-decision gate never passed for the current slice, use Direct Result Mode without the convergence and contract steps. Once a slice enters Decision Mode and is ready to conclude, continue through its convergence gate and final contract.
 
 ## 6. Decision-Mode Convergence Gate
 
@@ -159,7 +124,7 @@ If a Pending decision remains unresolved, ask only the next frontier question.
 
 ## 7. Build One Single-Source Candidate Contract
 
-For a decision-bearing slice, after all decisions converge, assemble the candidate result in the same role order. Do not present it for confirmation until it passes independent review. Organize Changes by topic so each change and its implementation consequences stay together:
+For a decision-bearing slice, after all decisions converge, assemble the candidate result in the Facts, Changes, Unchanged order defined below. Do not present it for confirmation until it passes independent review. Organize Changes by topic so each change and its implementation consequences stay together:
 
 ```markdown
 ## <Facts> <!-- omit when no supporting facts must travel with the result -->
@@ -203,7 +168,7 @@ Across both modes, resolve substantiated findings and obtain targeted re-review 
 
 Every decision-bearing candidate contract must be sent to an independent Reviewer who did not form the proposal before asking the user to confirm. Supply:
 
-- the original goal and verified facts with evidence locations;
+- the original goal and verified facts, plus each material claim's source and evidence location or corresponding user expression from the decision record;
 - the candidate contract, selected approach, and its material costs;
 - rejected branches with their rejection reasons;
 - remaining assumptions and explicit risk boundaries.
