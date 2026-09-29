@@ -4,7 +4,7 @@ Read this file before reviewing, modifying, or redesigning `yjx-grill`. It recor
 
 ## Identity
 
-`yjx-grill` is a user-invoked alignment tool for complex requirements, architectures, remediation strategies, and plans. It combines autonomous fact-finding with decision-tree exploration when consequential human judgment exists.
+`yjx-grill` is a user-invoked alignment tool for complex requirements, architectures, remediation strategies, and plans. It combines autonomous fact-finding with decision-node coverage auditing and decision-tree exploration when consequential human judgment exists.
 
 Its primary outcome is verified shared intent before execution. Each capability slice independently chooses an output mode. A slice where the human-decision gate never passes produces a concise direct result in natural prose. A decision-bearing slice ends with one topic-organized, human-confirmed, implementation-ready contract. Completion follows the collaborative-discussion rule in `SKILL.md` Execution Boundary. It is not a summary generator, generic questionnaire, or execution-plan generator.
 
@@ -18,9 +18,10 @@ Its primary outcome is verified shared intent before execution. Each capability 
 6. **Premature convergence** that skips downstream ownership, state, compatibility, or failure forks.
 7. **Fact/intent confusion** that asks humans for discoverable facts or turns diagnostic facts into commitments.
 8. **Provenance collapse** that turns facts or agent inferences into requirements or decisions.
-9. **Thin results** that gain brevity by removing implementation-critical contracts.
-10. **Reviewer amplification** that revives rejected branches without new evidence or turns speculation into implementation scope.
-11. **Opaque questions** that assume the user understands domain terms or the consequence of a choice before they can judge it.
+9. **Hidden inference gaps** that leave material implementation decisions unclassified because they look like routine mechanics.
+10. **Thin results** that gain brevity by removing implementation-critical contracts.
+11. **Reviewer amplification** that revives rejected branches without new evidence or turns speculation into implementation scope.
+12. **Opaque questions** that assume the user understands domain terms or the consequence of a choice before they can judge it.
 
 ## Core Design Principles
 
@@ -34,9 +35,13 @@ Questions require a verified, consequential fork. Human decisions cover irrevers
 
 Zero questions is the default until this gate passes. Routine implementation details become neither question cards nor final contract topics. Tooling obstacles, missing permissions, and speculative causes never become question cards.
 
+### Decision Node Coverage
+
+Before asking, after each answer, after any material evidence update, and before concluding a slice, inventory every material implementation-affecting decision node in a mode-independent coverage ledger. A material node is a choice or assumption whose alternatives can change observable behavior, the implementation contract, or a material risk boundary. Record two independent fields: provenance, exactly one of `需求`, `事实`, `决策`, or `推断`; and coverage, such as settled by requirement or fact, traversed through a user decision, resolved as a low-risk inference, constrained by acceptance or review, explicitly closed by a recorded decision, or pruned by verified evidence. Treat ownership, source of truth, identity, state, consistency or concurrency, external contracts, failure or retry guarantees, compatibility or migration, security or authority, and overall strategy as critical-boundary heuristics. A heuristic only triggers a fresh human-decision gate; promote the inference to the human frontier only when that gate has verified consequences. If the gate does not pass, gather facts or establish acceptance/review coverage; if neither is possible, report a blocker rather than conclude with an unconfirmed critical-boundary inference. The coverage ledger is mode-independent; Decision Mode carries it forward as the decision record with selected decisions, rejected branches, and evidence. Convergence requires every material node to have both fields and every consequential branch to be traversed, explicitly closed by a recorded decision, or pruned by verified evidence.
+
 ### Dynamic Frontier
 
-Once the gate passes, selecting a branch prunes alternatives and may open the next dependent frontier. Depth is determined by remaining decisions, not by a fixed number of rounds. A round asks zero to three orthogonal questions.
+Once the gate passes, selecting a branch prunes alternatives and may open the next dependent frontier. The user-facing frontier contains consequential human decisions; the coverage audit also tracks lower-risk nodes so they cannot disappear into an unexamined inference. Depth is determined by remaining decisions, not by a fixed number of rounds. A round asks zero to three orthogonal questions.
 
 ### Incremental Rounds
 
@@ -52,11 +57,15 @@ Questions retain their identifiers, numbered options, and a recommendation marke
 
 The final contract for a decision-bearing slice is emitted once after convergence and organizes `Changes` by topic. Expected behavior, implementation-critical consequences, and independently useful acceptance results stay with the change they describe, avoiding a top-level split between decisions and actions.
 
-The final contract retains the `Facts`, `Changes`, and `Unchanged` order defined in `SKILL.md` section 7; discussion rounds are not bound to that structure. Every semantic claim in the contract has one authoritative home: `Changes` stays in its topics, `Unchanged` appears only when omission risks material drift, and `Facts` contains only verified state needed by the selected path. Direct results are exempt from these headings.
+The final contract retains the `Facts`, `Changes`, and `Unchanged` order defined in `SKILL.md` section 7; discussion rounds are not bound to that structure. Each semantic claim has one primary authoritative home: `Changes` stays in its topics, `Unchanged` appears only when omission risks material drift, and `Facts` contains only verified state needed by the selected path. A claim may reappear when the second form adds a distinct decision, boundary, or independently observable consequence. Direct results are exempt from these headings.
 
 ### Claim Provenance
 
-Material implementation-affecting claims retain one of four sources: explicit requirement, verified fact, user-confirmed decision, or adjustable agent inference. The decision record maps each material claim to its source and evidence location or corresponding user expression. Discussion rounds display source distinctions only when ambiguity could affect judgment; the final contract and review handoff retain explicit source labels. The runtime labels are localized; in Chinese they are `需求`, `事实`, `决策`, and `推断`. A selected recommendation does not change the source of its attached inferences. Routine implementation details stay unlabeled, and provenance never enters production-code comments.
+Material implementation-affecting claims retain one of four sources: explicit requirement, verified fact, user-confirmed decision, or adjustable agent inference. The coverage ledger maps each material claim to its source and evidence location or corresponding user expression; in Decision Mode, the decision record carries that mapping forward with selected decisions and rejected branches. Provenance is traceability metadata, not a mandatory visible prefix. Discussion rounds and direct results expose source distinctions only when ambiguity could affect judgment; the final contract and review handoff retain enough explicit provenance to prevent source confusion without mechanically labeling every bullet. The runtime labels are localized; in Chinese they are `需求`, `事实`, `决策`, and `推断`. A selected recommendation does not change the source of its attached inferences. Routine implementation details stay unlabeled, and provenance never enters production-code comments.
+
+### Presentation Density
+
+User-facing output should group claims with the same source and avoid repeating `事实`, `需求`, `决策`, or `推断` on adjacent items. Labels, headings, and qualifiers appear only when they resolve a real ambiguity or protect an implementation boundary. Give each semantic claim one primary home; repeat it only when the second occurrence adds a distinct decision, boundary, or independently observable consequence. The visible result may be natural prose or a compact list, while the private decision record and reviewer handoff remain complete. The final contract keeps its semantic order and implementation-critical detail, but does not create empty or repetitive source sections for visual symmetry.
 
 ### Independent Review
 
@@ -93,6 +102,7 @@ Before changing the skill, verify that the change:
 - preserves alignment-before-action;
 - remains domain-neutral;
 - keeps fact discovery autonomous and consequential intent decisions human-owned;
+- preserves decision-node coverage auditing, including separate provenance and coverage fields, evidence-update rechecks, branch coverage, and promotion of critical inferences only after the human-decision gate passes;
 - selects output mode independently for each capability slice;
 - allows zero questions and requires no fixed headings, contracts, or confirmation prompts when the human-decision gate never passes;
 - preserves the verified, consequential-fork decision threshold and downstream frontier audit;
@@ -101,8 +111,9 @@ Before changing the skill, verify that the change:
 - keeps discussion context and question explanations flexible while retaining question identifiers, numbered options, and a recommendation marker;
 - preserves the final contract's structure and order defined in `SKILL.md` section 7 without imposing them on discussion rounds;
 - applies the collaborative-discussion completion rule in `SKILL.md` Execution Boundary without adding a mode, a fixed closing phrase, or contract obligations to direct results;
-- keeps each item under `Changes` with its implementation consequences, places preserved implementation constraints only in `Unchanged`, and includes `Unchanged` only when omission risks material drift;
+- keeps each item under `Changes` with its implementation consequences, gives each semantic claim one primary home, permits only functionally useful restatement, places preserved implementation constraints only in `Unchanged`, and includes `Unchanged` only when omission risks material drift;
 - preserves claim-to-source and evidence mappings, shows discussion provenance when ambiguity affects judgment, retains final-contract and review provenance, and prevents agent inferences from being promoted to requirements or decisions;
+- keeps provenance traceable without mechanically exposing a repeated source prefix; groups same-source claims and rewrites form-like output as natural prose;
 - presents real costs and assumptions when they affect judgment, without inventing fields or carrying rejected options forward;
 - makes each question understandable with only the needed context, without repeating known facts or presenting examples as verified state;
 - preserves implementation-critical model shapes and lifecycle contracts in concrete, copyable form;
@@ -122,9 +133,16 @@ Reject brevity that hides a consequential decision or implementation contract. C
 - A familiar consequential choice needs no repeated preamble or fixed Outcome, Cost, or Assumption fields; existing material downsides remain visible.
 - A user explicitly requests collaborative discussion and no consequential question remains: present an adjustable proposal and wait for feedback under the Execution Boundary rule, without inventing questions or declaring completion.
 - An ordinary agreement with a discussion proposal is not execution authorization. Readiness to conclude is interpreted by meaning, without a fixed closing phrase; clarify only when ambiguous.
-- Discussion rounds omit routine source prefixes, but every material claim remains traceable in the decision record and review handoff.
+- Discussion rounds omit routine source prefixes, but every material claim remains traceable in the coverage ledger and, when applicable, the decision record and review handoff.
+- Low-risk agent inferences remain adjustable and need not become questions, but every material inference is classified; a critical-boundary inference reruns the human-decision gate and becomes a user decision only when that gate passes.
+- Direct Result Mode still completes the decision-node coverage audit even when no human question is required.
+- The coverage ledger is mode-independent; a risk-triggered Direct Result review receives the ledger or a concise summary, while an unreviewed direct result keeps it internal.
+- Repeated facts are grouped under one scoped statement instead of rendering `事实` on every adjacent bullet; a second form is retained only when it adds a distinct boundary or independently observable check.
 - After the user resolves the consequential choices, the slice produces an independently reviewed contract and requests confirmation.
 - A high-risk slice with no consequential human decision receives independent review but remains a natural-language direct result.
 - A reviewed result that changes materially receives targeted re-review before it is reported or presented for confirmation.
 - When a recommendation carries a fallback or failure policy, the policy remains `推断` until explicitly confirmed and the Reviewer checks that it was not promoted.
+- A low-risk implementation detail is recorded as an inference or coverage constraint, while an alternative affecting ownership, state, compatibility, guarantees, authority, or strategy reruns the human-decision gate and becomes a new human question only when verified consequences satisfy it.
+- A direct result with no consequential human fork still reports only after all material implementation nodes are classified and consequential branches are traversed, explicitly closed by a recorded decision, or evidenced as pruned.
+- New facts discovered during autonomous investigation trigger a fresh coverage audit before the next question or conclusion.
 - A consequential question involving unfamiliar terms explains the concrete situation and why the user's choice matters before presenting options, without adding a fixed primer to familiar questions.

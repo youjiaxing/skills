@@ -1,6 +1,6 @@
 ---
 name: yjx-grill
-description: Stress-test a plan, architecture, or complex decision through evidence-backed decision-tree exploration, then report a direct result or produce a concise implementation-ready alignment contract.
+description: Stress-test a plan, architecture, or complex decision through evidence-backed decision-tree exploration and implementation-decision coverage, then report a direct result or produce a concise implementation-ready alignment contract.
 disable-model-invocation: true
 ---
 
@@ -49,6 +49,17 @@ The user must decide <choice> because either answer materially changes <cost, gu
 
 If that sentence cannot be completed with verified consequences, ask zero questions. Infer low-reversal-cost mechanics, routine parameters, and local technical defaults, then use Direct Result Mode for that slice, subject to the collaborative-discussion rule in Execution Boundary. Routine implementation details belong in neither question cards nor final contract topics. Do not turn tooling obstacles, missing permissions, or speculative causes into question cards.
 
+### Decision Node Coverage
+
+Before the first question, after each user reply, after any material evidence update, and before concluding any slice, privately inventory every material implementation-affecting decision node in a mode-independent coverage ledger. A material node is a choice or assumption whose alternatives can change observable behavior, the implementation contract, or a material risk boundary. For each node, record two independent fields:
+
+- **Provenance**: exactly one of `需求`, `事实`, `决策`, or `推断`, using the definitions in Claim Provenance;
+- **Coverage**: settled by a requirement or fact, traversed through a user decision, resolved as a low-risk inference, constrained by acceptance or review, explicitly closed by a recorded decision, or pruned by verified evidence.
+
+This audit applies in both Direct Result Mode and Decision Mode. Treat ownership, source of truth, identity, state transitions, consistency or concurrency, external contracts, failure or retry guarantees, compatibility or migration, security or authority, and overall remediation strategy as critical-boundary heuristics. When an inference touches one of them, rerun the human-decision gate with verified consequences; promote it to the active human frontier only if the gate sentence can be completed. If the gate does not pass, gather facts or establish acceptance/review coverage; if neither is possible, report a blocker instead of concluding with an unconfirmed critical-boundary inference. Do not collapse materially different branches into one inference merely because the implementation details are technically familiar.
+
+The audit is complete only when every material node has both fields, every consequential branch is traversed, explicitly closed by a recorded decision, or pruned by verified evidence, and no critical boundary remains supported only by an unconfirmed inference. Keep the complete ledger internal; expose only the nodes needed for the current user judgment. If independent review is triggered, include the ledger or the relevant summary in the reviewer handoff. The coverage ledger is the mode-independent internal record; in Decision Mode, the decision record carries it forward with selected decisions, rejected branches, and their evidence.
+
 ### Per-Slice Output Modes
 
 - **Direct Result Mode**: Use when investigation completes without any unresolved choice passing the human-decision gate. State the conclusion, causal facts, selected remedy, and only material risks or verification boundaries in natural prose. Do not require fixed headings, a contract, or user confirmation.
@@ -74,14 +85,25 @@ Give only the background needed to understand the current question. Use natural 
 
 ### Claim Provenance
 
-Maintain the source and evidence location or corresponding user expression for each material claim that can change implementation. Use the decision record in section 5; source tracking is separate from user-facing presentation. The source categories are localized; in Chinese use `需求`, `事实`, `决策`, and `推断`:
+Maintain the source and evidence location or corresponding user expression for each material claim that can change implementation. Use the coverage ledger in every mode and extend it into the Decision Mode record described in section 5; source tracking is separate from user-facing presentation. The source categories are localized; in Chinese use `需求`, `事实`, `决策`, and `推断`:
 
 - `需求`: explicit requirement or constraint.
 - `事实`: verified code, specification, configuration, or runtime state.
 - `决策`: user-confirmed choice.
 - `推断`: agent proposal or implementation default that remains adjustable.
 
-These categories apply to behavior, ownership, data source, state, failure policy, protocol, boundary, and abstraction claims. Routine implementation details remain unlabelled. In discussion rounds, make source distinctions explicit only when ambiguity could affect judgment; do not prefix every item by default. Preserve explicit source labels in the final contract and independent-review handoff. Choosing a recommended option never changes an attached `推断` into a `需求` or `决策`. Do not add provenance labels to production-code comments.
+These categories apply to behavior, ownership, data source, state, failure policy, protocol, boundary, and abstraction claims. Routine implementation details remain unlabelled. Provenance is primarily coverage-ledger metadata, not a visual prefix for every user-facing sentence. In discussion rounds and direct results, use a source label only when omitting it could make the user's judgment, the selected boundary, or the implementation contract ambiguous. Otherwise group claims with the same source in natural prose and keep the source in the coverage ledger; in Decision Mode, carry that ledger into the decision record. In the final contract, retain explicit provenance where it prevents a requirement, fact, decision, or inference from being mistaken for another; do not mechanically prefix every bullet or force one source section per message. Preserve the full source mapping in the independent-review handoff. Choosing a recommended option never changes an attached `推断` into a `需求` or `决策`. Do not add provenance labels to production-code comments.
+
+### Presentation Density
+
+Optimize the visible result for comprehension, not category coverage. Avoid repeating the same provenance label, heading, or qualification on adjacent items when one sentence, paragraph, or topic heading can establish the scope. Do not create `事实`, `需求`, `决策`, or `推断` sections merely to balance the page, and generally avoid restating a verified baseline after it has already been established unless the restatement adds a boundary or consequence. Prefer:
+
+- one concise lead sentence that scopes several related claims;
+- a short list only when the items are independently actionable or comparable;
+- a local qualifier when one claim has a different source or confidence from its neighbors;
+- omission of labels when the source is obvious from the surrounding prose.
+
+When the output feels like a form or repeats the same label, rewrite it as natural prose before sending it. Treat repetition as a warning, not an absolute ban: give each semantic claim one primary home, and repeat it only when the second occurrence performs a distinct job, such as turning behavior into an independently observable acceptance condition or clarifying a boundary. Add the new condition or consequence instead of merely paraphrasing the original. Keep the internal decision record complete even when the visible presentation is compressed. This rule applies to discussion rounds, direct results, review handoffs, and the final contract; the final contract's semantic order and implementation-critical content still apply.
 
 ### Compact Question Card
 
@@ -100,6 +122,7 @@ In Decision Mode, interpret replies by meaning. Only an unambiguous commitment c
 - Acknowledge an ordinary selection in one line or proceed directly to the next frontier.
 - Show only information added, revised, or removed in the current round, using the context guidance in section 4.
 - Do not reprint answered questions, closed options, facts already shown, or contract sections whose content did not change.
+- Compress repeated claims before presenting them: one scoped statement is preferable to several bullets carrying the same source label or baseline.
 - When a new decision invalidates an earlier one, prune the dead branch and its dependent inferences. Reopen only the conflicting human decision.
 - For a custom answer, extract the commitment, explicit overrides, and hard constraints; derive remaining low-risk mechanics without another questionnaire.
 - Retain a decision record for final review: each material claim's source and evidence location or corresponding user expression, the selected approach and its costs, rejected branches and rejection reasons, remaining assumptions, and explicit risk boundaries. Keep this record out of the user-facing final contract.
@@ -114,11 +137,12 @@ Apply the collaborative-discussion rule in Execution Boundary at the completion 
 
 Before the final contract, verify:
 
-1. No selected decision unlocks another consequential fork.
-2. Every changed trigger, state transition, authority boundary, failure policy, and external guarantee has a non-speculative source.
-3. Every question passed the human-decision gate.
-4. The final contract contains only Facts needed by the selected path, Changes, and materially necessary Unchanged.
-5. Every material implementation-affecting claim has provenance, and no `推断` is presented as `需求` or `决策`.
+1. The decision-node coverage audit is complete: every material implementation-affecting node has provenance and coverage, and every consequential branch is traversed, explicitly closed by a recorded decision, or pruned by verified evidence.
+2. No selected decision or unresolved inference unlocks another consequential fork.
+3. Every changed trigger, state transition, authority boundary, failure policy, and external guarantee has a non-speculative source.
+4. Every question passed the human-decision gate.
+5. The final contract contains only Facts needed by the selected path, Changes, and materially necessary Unchanged.
+6. Every material implementation-affecting claim has provenance, and no `推断` is presented as `需求` or `决策`.
 
 If a Pending decision remains unresolved, ask only the next frontier question.
 
@@ -152,7 +176,7 @@ All fields within a change topic are conditional. A simple change may need one l
 - Keep each change and its implementation consequences in the same topic; do not create separate top-level decision and action summaries.
 - Place stable existing constraints only in `Unchanged`, and only when omission creates material implementation risk.
 - Place supporting facts only in `Facts`; keep choice costs and rejected alternatives in the question rounds.
-- Express each semantic claim once. A diagram, paragraph, table, and acceptance item must not repeat one another.
+- Give each semantic claim one primary home. A diagram, paragraph, table, and acceptance item may restate part of it only when the second form adds a distinct decision, boundary, or independently observable consequence; do not repeat it merely to fill a template or change the wording.
 
 Use a verification table only when it compresses at least three branching scenarios. Keep its rows out of adjacent prose.
 
@@ -168,10 +192,12 @@ Across both modes, resolve substantiated findings and obtain targeted re-review 
 
 Every decision-bearing candidate contract must be sent to an independent Reviewer who did not form the proposal before asking the user to confirm. Supply:
 
-- the original goal and verified facts, plus each material claim's source and evidence location or corresponding user expression from the decision record;
+- the original goal and verified facts, plus each material claim's source and evidence location or corresponding user expression from the coverage ledger or decision record;
 - the candidate contract, selected approach, and its material costs;
 - rejected branches with their rejection reasons;
 - remaining assumptions and explicit risk boundaries.
+
+When a Direct Result receives risk-triggered independent review, supply the coverage ledger or a concise summary of its material nodes, provenance, coverage, and any critical-boundary inference that was checked by the human-decision gate. When no review is triggered, retain the ledger as internal traceability rather than presenting it to the user.
 
 Ask the Reviewer to assess whether the evidence supports the conclusion, whether provenance is preserved, and whether the overall solution is correct, applicable, maintainable, compatible, and proportionate to the demonstrated risks. Review quality is based on those outcomes, not on selecting the smallest possible change. The Reviewer must identify speculation presented as a requirement and support each finding with concrete evidence and impact.
 
