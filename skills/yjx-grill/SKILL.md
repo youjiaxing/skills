@@ -19,6 +19,30 @@ Read `MAINTENANCE.md` before reviewing or changing this skill. It is not needed 
 
 When the user explicitly requests collaborative discussion, the absence of consequential questions is not a completion signal. Present an adjustable proposal and wait for feedback. This changes automatic stopping only: select the slice's mode through the existing human-decision gate, without a third mode or new contract or confirmation obligations. Interpret readiness to conclude by meaning, not a fixed phrase; clarify only when ambiguous. Agreement with a discussion proposal alone is neither discussion completion nor authorization to execute. A decision-bearing slice still requires the reviewed contract and confirmation in sections 6 through 9.
 
+## Presentation Density
+
+This rule governs discussion rounds, direct results, review handoffs, and final contracts. Compose by topic first, then separate sources within that topic. When presenting two or more independently discussable changes or results, give each a short heading naming its actual object or goal. A contract title covering distinct outcomes is not a substitute for those topic headings. Routine details stay with the behavior or boundary they support. A short, single-topic reply needs no heading; internal capability-slice terminology is not required display vocabulary.
+
+Draft each material claim once, in the topic and source identified by its ledger entry. Write user requirements or choices as natural prose with brief contextual attribution. Put necessary verified context in its own prose paragraph. Render material agent proposals as Markdown blockquotes, starting with a short attribution before stating their behavior for the first time. Keep proposal-origin behavior and its implementation consequences inside those quotes, separate from user commitments and facts. A later disclaimer or unquoted summary does not repair a proposal first presented as a fact or commitment. Routine implementation mechanics remain unlabelled.
+
+Use prose for a single commitment or proposal, and lists for several actionable or comparable claims of the same source. Keep necessary context, behavior, implementation consequences, and acceptance local to their topic and source. Omit absent sources and redundant facts. Reduce repeated content and stock introductions, not the visible boundaries; the ledger's categories are not fields to render in every topic. Approval status belongs to the contract's confirmation and cannot replace source attribution.
+
+For illustration, given a user choice to keep CSV, an agent proposal of UTF-8, and a separate requested text change:
+
+```markdown
+**Download format**
+As requested, downloads remain CSV.
+
+> I suggest UTF-8 encoding so names with accents survive export.
+
+**Completion message**
+Change "Finished" to "Complete"; everything else stays the same.
+```
+
+The example is not a required wording, field sequence, domain, or combined approval scope. Its quoted proposal illustrates the source boundary; topics without material agent proposals add no quote.
+
+Before sending, inspect the actual draft: each independent outcome has a content-named group, each material agent proposal first appears attributed inside its quote, and no role-field rows or mixed-source paragraphs replace those distinctions. Rewrite any failing part. Give each semantic claim one primary home; repeat it only when the second occurrence adds a distinct boundary or independently observable consequence. Keep the internal record and implementation-critical content complete.
+
 ## 1. Establish Facts Before Asking Intent
 
 Use tools for objective facts: existing code, schemas, logs, current state, task text, dependencies, and available assets. Do not ask the user to discover facts the agent can verify.
@@ -31,7 +55,7 @@ For defects or reality gaps, investigate the causal chain before presenting reme
 - **Break**: the smallest direct call tree, state comparison, diff, or mechanism.
 - **Assessment**: defect nature and eliminated pseudo-causes.
 
-If investigation establishes the root cause and no consequential trade-off remains, prepare a Direct Result that leads with the conclusion, explains the causal fact and selected remedy in natural prose, and includes only material boundaries or risks. Apply any review required by section 8 before reporting it, then follow the completion rule in Execution Boundary. Headings are optional.
+If investigation establishes the root cause and no consequential trade-off remains, prepare a Direct Result that leads with the conclusion, explains the causal fact and selected remedy in natural prose, and includes only material boundaries or risks. Use Presentation Density for its organization. Apply any review required by section 8 before reporting it, then follow the completion rule in Execution Boundary.
 
 ## 2. Slice the Problem
 
@@ -62,14 +86,14 @@ The audit is complete only when every material node has both fields, every conse
 
 ### Per-Slice Output Modes
 
-- **Direct Result Mode**: Use when investigation completes without any unresolved choice passing the human-decision gate. State the conclusion, causal facts, selected remedy, and only material risks or verification boundaries in natural prose. Do not require fixed headings, a contract, or user confirmation.
+- **Direct Result Mode**: Use when investigation completes without any unresolved choice passing the human-decision gate. State the conclusion, causal facts, selected remedy, and only material risks or verification boundaries in natural prose, organized under Presentation Density. This mode needs no fixed role fields, contract, or user confirmation.
 - **Decision Mode**: Enter as soon as the current slice contains a verified consequential choice that the user must decide. Keep that slice in Decision Mode through its question rounds, convergence, reviewed contract, and confirmation. Other slices choose their mode independently.
 
 Output mode does not determine review depth. Apply independent review according to concrete risk, impact, reversibility, and governing project rules. A reviewed direct result remains a direct result unless review discovers a consequential fork.
 
 ## 4. Traverse the Active Decision Frontier
 
-This section applies when the current slice contains a choice that passes the human-decision gate.
+Decision-frontier traversal, Discussion Context, and Compact Question Card apply when the current slice contains a choice that passes the human-decision gate. Claim Provenance and Presentation Density apply in both output modes and throughout discussion; Confirmation and Authorization governs any contract approval.
 
 Ask zero to three orthogonal questions per round; zero is the default until the gate passes.
 
@@ -81,7 +105,7 @@ Ask zero to three orthogonal questions per round; zero is the default until the 
 
 ### Discussion Context
 
-Give only the background needed to understand the current question. Use natural prose or a compact visual, omit background the user already knows, and allow no preamble when the choice is already clear. Discussion rounds do not require fixed information roles, headings, or ordering. Keep verified current behavior, proposed changes, and preserved boundaries distinguishable when that distinction affects the choice. The final-contract structure in section 7 applies only to that contract.
+Give only the background needed to understand the current question. Use natural prose or a compact visual, omit background the user already knows, and allow no preamble when the choice is already clear. Discussion rounds do not require fixed information roles, headings, or ordering. Keep verified current behavior, proposed changes, and preserved boundaries distinguishable when that distinction affects the choice. The contract-organization requirements in section 7 apply only to the final contract.
 
 ### Claim Provenance
 
@@ -90,20 +114,17 @@ Maintain the source and evidence location or corresponding user expression for e
 - `需求`: explicit requirement or constraint.
 - `事实`: verified code, specification, configuration, or runtime state.
 - `决策`: user-confirmed choice.
-- `推断`: agent proposal or implementation default that remains adjustable.
+- `推断`: agent-originated proposal or implementation default; its implementation authorization is separate from its source.
 
-These categories apply to behavior, ownership, data source, state, failure policy, protocol, boundary, and abstraction claims. Routine implementation details remain unlabelled. Provenance is primarily coverage-ledger metadata, not a visual prefix for every user-facing sentence. In discussion rounds and direct results, use a source label only when omitting it could make the user's judgment, the selected boundary, or the implementation contract ambiguous. Otherwise group claims with the same source in natural prose and keep the source in the coverage ledger; in Decision Mode, carry that ledger into the decision record. In the final contract, retain explicit provenance where it prevents a requirement, fact, decision, or inference from being mistaken for another; do not mechanically prefix every bullet or force one source section per message. Preserve the full source mapping in the independent-review handoff. Choosing a recommended option never changes an attached `推断` into a `需求` or `决策`. Do not add provenance labels to production-code comments.
+These categories apply to behavior, ownership, data source, state, failure policy, protocol, boundary, and abstraction claims. They are internal source classifications, not a set of fields to render for every topic. Routine implementation details remain unlabelled. Preserve the full claim-to-source mapping in the coverage ledger, Decision Mode record, and independent-review handoff; use Presentation Density to express the relevant distinctions to the user. Approval status cannot substitute for origin, and choosing or approving a recommendation never changes an attached `推断` into a `需求` or `决策`. Do not add provenance labels to production-code comments.
 
-### Presentation Density
+### Confirmation and Authorization
 
-Optimize the visible result for comprehension, not category coverage. Avoid repeating the same provenance label, heading, or qualification on adjacent items when one sentence, paragraph, or topic heading can establish the scope. Do not create `事实`, `需求`, `决策`, or `推断` sections merely to balance the page, and generally avoid restating a verified baseline after it has already been established unless the restatement adds a boundary or consequence. Prefer:
+Provenance records who supplied a claim; authorization records whether its implementation is approved. Before final contract approval, agent proposals remain adjustable. Explicit approval of the reviewed contract authorizes only its listed implementation behaviors and boundaries, including the material agent inferences it presents. Record those inferences as approved for implementation while retaining their `推断` source. Agreement during discussion or selection of an option does not approve the whole contract or undisclosed defaults.
 
-- one concise lead sentence that scopes several related claims;
-- a short list only when the items are independently actionable or comparable;
-- a local qualifier when one claim has a different source or confidence from its neighbors;
-- omission of labels when the source is obvious from the surrounding prose.
+Before requesting approval, clearly name the current reviewed contract or state its concrete scope. Other independently aligned results shown as background retain their respective modes and any existing confirmation status and are explicitly outside this request. Display grouping neither creates extra approval units nor combines independent contracts into one authorization.
 
-When the output feels like a form or repeats the same label, rewrite it as natural prose before sending it. Treat repetition as a warning, not an absolute ban: give each semantic claim one primary home, and repeat it only when the second occurrence performs a distinct job, such as turning behavior into an independently observable acceptance condition or clarifying a boundary. Add the new condition or consequence instead of merely paraphrasing the original. Keep the internal decision record complete even when the visible presentation is compressed. This rule applies to discussion rounds, direct results, review handoffs, and the final contract; the final contract's semantic order and implementation-critical content still apply.
+After approval, changing a material contracted behavior or boundary requires renewed alignment and approval. Routine mechanics left outside the contract remain subject to the existing human-decision gate. Approval does not turn an uncertain factual claim into a verified fact, replace consequential question traversal, or expand the execution boundary.
 
 ### Compact Question Card
 
@@ -141,41 +162,25 @@ Before the final contract, verify:
 2. No selected decision or unresolved inference unlocks another consequential fork.
 3. Every changed trigger, state transition, authority boundary, failure policy, and external guarantee has a non-speculative source.
 4. Every question passed the human-decision gate.
-5. The final contract contains only Facts needed by the selected path, Changes, and materially necessary Unchanged.
+5. The final contract organizes the selected changes by topic, separates their sources, and includes only necessary supporting facts and preserved boundaries.
 6. Every material implementation-affecting claim has provenance, and no `推断` is presented as `需求` or `决策`.
 
 If a Pending decision remains unresolved, ask only the next frontier question.
 
 ## 7. Build One Single-Source Candidate Contract
 
-For a decision-bearing slice, after all decisions converge, assemble the candidate result in the Facts, Changes, Unchanged order defined below. Do not present it for confirmation until it passes independent review. Organize Changes by topic so each change and its implementation consequences stay together:
+For a decision-bearing slice, after all decisions converge, assemble one candidate contract organized by change topic. Do not present it for confirmation until it passes independent review. Keep each change's observable behavior, implementation-critical consequences, and independently useful acceptance results together. Apply Claim Provenance within each topic so the user's commitments and agent-derived proposals have distinct source-scoped blocks.
 
-```markdown
-## <Facts> <!-- omit when no supporting facts must travel with the result -->
+Apply Presentation Density for layout, group naming, and concise source attribution. Facts, changes, and preserved constraints retain their semantic roles; they are not mandatory section names or a fixed display order. Supporting facts may provide concise context for a topic.
 
-- <verified fact needed to support the selected change>
-
-## <Changes> <!-- omit when the result requires no changes -->
-
-### <change topic>
-
-- **Expected behavior**: observable result and applicable condition.
-- **Implementation contract**: owner, interface or data shape, decision timing, lifecycle, compatibility, failure handling, and boundary constraints that cannot be inferred from expected behavior.
-- **Acceptance**: scenario or input → independently observable result.
-
-## <Unchanged> <!-- omit by default -->
-
-- <stable constraint whose omission would materially change implementation>
-```
-
-All fields within a change topic are conditional. A simple change may need one line. Use `Acceptance` only when it adds an observable result rather than restating expected behavior or the implementation contract.
+Include ownership, interfaces or data shapes, lifecycle, compatibility, failure handling, and boundary guarantees when they cannot be inferred safely from the observable behavior. Add an acceptance result only when it introduces an independently observable condition or consequence, rather than merely paraphrasing the proposal. Omit empty or redundant blocks.
 
 ### One Semantic Home
 
-- Include only changes introduced by this alignment under `Changes`.
-- Keep each change and its implementation consequences in the same topic; do not create separate top-level decision and action summaries.
-- Place stable existing constraints only in `Unchanged`, and only when omission creates material implementation risk.
-- Place supporting facts only in `Facts`; keep choice costs and rejected alternatives in the question rounds.
+- Include only changes introduced by this alignment as proposed changes.
+- Keep each change and its implementation consequences in the same topic, with sources separated locally; do not create separate top-level decision and action summaries.
+- Include stable existing constraints only when omission creates material implementation risk, and distinguish them from proposed changes.
+- Place supporting facts in clearly scoped context, distinct from commitments and proposals; keep choice costs and rejected alternatives in the question rounds.
 - Give each semantic claim one primary home. A diagram, paragraph, table, and acceptance item may restate part of it only when the second form adds a distinct decision, boundary, or independently observable consequence; do not repeat it merely to fill a template or change the wording.
 
 Use a verification table only when it compresses at least three branching scenarios. Keep its rows out of adjacent prose.
@@ -209,6 +214,6 @@ Resolve substantiated findings in the candidate. If a finding introduces a conse
 
 ## 9. Present and Confirm Decision-Bearing Results
 
-Present the reviewed contract once in the format from section 7.
+Present the reviewed contract once using the topic organization and source separation from section 7.
 
-Ask for confirmation with exactly these meanings, localized for the user: `1. Approved to implement; 2. Items need adjustment`. After approval, end alignment. If the same reply explicitly directs implementation, hand off immediately to the applicable implementation workflow; do not require execution intent to be repeated.
+Ask for confirmation with exactly these meanings, localized for the user: `1. Approved to implement; 2. Items need adjustment`. Apply Confirmation and Authorization to the approved contract, then end alignment. If the same reply explicitly directs implementation, hand off immediately to the applicable implementation workflow; do not require execution intent to be repeated.

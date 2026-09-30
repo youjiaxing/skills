@@ -31,7 +31,7 @@ A request spanning independent domains or lifecycle boundaries splits into cohes
 
 ### Human-Decision Gate
 
-Questions require a verified, consequential fork. Human decisions cover irreversible or high-reversal-cost choices, authority, external guarantees, state transitions, consistency, and remediation strategy. Agent inferences cover low-risk mechanics and remain overrideable.
+Questions require a verified, consequential fork. Human decisions cover irreversible or high-reversal-cost choices, authority, external guarantees, state transitions, consistency, and remediation strategy. Agent inferences cover low-risk mechanics; their implementation authorization is governed separately from their provenance.
 
 Zero questions is the default until this gate passes. Routine implementation details become neither question cards nor final contract topics. Tooling obstacles, missing permissions, and speculative causes never become question cards.
 
@@ -55,17 +55,23 @@ Questions retain their identifiers, numbered options, and a recommendation marke
 
 ### Topic-Based Single-Source Contract
 
-The final contract for a decision-bearing slice is emitted once after convergence and organizes `Changes` by topic. Expected behavior, implementation-critical consequences, and independently useful acceptance results stay with the change they describe, avoiding a top-level split between decisions and actions.
+The final contract for a decision-bearing slice is emitted once after convergence and organizes changes by topic. Expected behavior, implementation-critical consequences, and independently useful acceptance results stay with the change they describe, avoiding a top-level split between decisions and actions.
 
-The final contract retains the `Facts`, `Changes`, and `Unchanged` order defined in `SKILL.md` section 7; discussion rounds are not bound to that structure. Each semantic claim has one primary authoritative home: `Changes` stays in its topics, `Unchanged` appears only when omission risks material drift, and `Facts` contains only verified state needed by the selected path. A claim may reappear when the second form adds a distinct decision, boundary, or independently observable consequence. Direct results are exempt from these headings.
+Facts, changes, and preserved constraints have distinct semantic roles, not mandatory visible headings or a fixed order. Each topic keeps source-scoped blocks for user commitments, agent proposals, and necessary factual context. Include preserved constraints only when omission risks material drift. Each semantic claim has one primary authoritative home; it may reappear when the second form adds a distinct decision, boundary, or independently observable consequence. Omit absent source blocks instead of filling a template.
 
 ### Claim Provenance
 
-Material implementation-affecting claims retain one of four sources: explicit requirement, verified fact, user-confirmed decision, or adjustable agent inference. The coverage ledger maps each material claim to its source and evidence location or corresponding user expression; in Decision Mode, the decision record carries that mapping forward with selected decisions and rejected branches. Provenance is traceability metadata, not a mandatory visible prefix. Discussion rounds and direct results expose source distinctions only when ambiguity could affect judgment; the final contract and review handoff retain enough explicit provenance to prevent source confusion without mechanically labeling every bullet. The runtime labels are localized; in Chinese they are `需求`, `事实`, `决策`, and `推断`. A selected recommendation does not change the source of its attached inferences. Routine implementation details stay unlabeled, and provenance never enters production-code comments.
+Material implementation-affecting claims retain one of four sources: explicit requirement, verified fact, user-confirmed decision, or agent-originated inference. The coverage ledger maps each material claim to its source and evidence location or corresponding user expression; in Decision Mode, the decision record carries that mapping forward with selected decisions and rejected branches. These are internal classifications, not user-facing role fields. Presentation Density owns the visible source separation and attribution rules. Attribution identifies the claim's origin independently of its approval status. When explicit labels are needed, they are localized; in Chinese they are `需求`, `事实`, `决策`, and `推断`. A selected recommendation does not change the source of its attached inferences. Routine implementation details stay unlabeled, and provenance never enters production-code comments.
+
+### Implementation Authorization
+
+Source and approval are independent. Before final approval, agent proposals remain adjustable. Explicit approval of the reviewed contract makes its listed material inferences implementation constraints while preserving their agent origin; undisclosed defaults receive no authorization from that approval. Approval requests clearly identify the current reviewed contract or its scope, excluding other independently aligned results shown as background. Display groups neither add approval units nor merge independent contracts' authorizations. Material changes to approved behaviors or boundaries require renewed alignment and approval. Routine mechanics outside the contract still follow the existing human-decision gate. Approval neither verifies uncertain facts nor replaces consequential decision coverage. Runtime confirmation rules live in `SKILL.md` Confirmation and Authorization.
 
 ### Presentation Density
 
-User-facing output should group claims with the same source and avoid repeating `事实`, `需求`, `决策`, or `推断` on adjacent items. Labels, headings, and qualifiers appear only when they resolve a real ambiguity or protect an implementation boundary. Give each semantic claim one primary home; repeat it only when the second occurrence adds a distinct decision, boundary, or independently observable consequence. The visible result may be natural prose or a compact list, while the private decision record and reviewer handoff remain complete. The final contract keeps its semantic order and implementation-critical detail, but does not create empty or repetitive source sections for visual symmetry.
+Presentation Density is the shared runtime owner, placed before the execution steps so both output modes reach it. It covers discussion, direct results, review handoffs, and final contracts. Its design separates visual structure from wording: content-named topics make distinct outcomes scannable, while attributed blockquotes distinguish material agent contributions without a repeated role-field form. A combined contract title does not replace its topic groups. Short single-topic results and topics without agent proposals remain simple.
+
+Runtime wording, quote boundaries, and the composition check live only in that section. Maintain complete internal provenance, local implementation consequences, and one semantic home per claim. The illustrative example explains separation rather than prescribing phrases, a domain, a field sequence, or an approval scope. Section 7 refers to this owner rather than maintaining parallel prescriptions.
 
 ### Independent Review
 
@@ -87,13 +93,13 @@ The skill may investigate and write an alignment result, but it does not modify 
 
 ## Information Placement
 
-- Direct results lead with the conclusion and use natural prose for causal facts, the selected remedy, and only material boundaries or risks. Headings are optional.
-- Discussion rounds present only the context needed for the current question, without fixed headings. Only verified facts needed by the selected path remain in the final contract's `Facts` section.
+- Direct results lead with the conclusion and use natural prose for causal facts, the selected remedy, and only material boundaries or risks. Shared Presentation Density governs topic headings in both modes.
+- Discussion rounds present only the context needed for the current question, without fixed headings. Only verified facts needed by the selected path remain as clearly scoped context in the final contract.
 - Choice costs and rejected alternatives appear in question rounds and the independent review handoff, while the user-facing final contract stays on the selected path.
-- Each item under `Changes` and its implementation consequences share one change topic.
+- Each proposed change and its implementation consequences share one topic, with user commitments and agent inferences in separate source-scoped blocks.
 - Acceptance stays in that topic only when it adds an independently observable result.
-- Stable constraints appear only in `Unchanged`, and only when omission risks material drift.
-- Question presentation guidance and the final-contract template live in `SKILL.md` with the execution steps that use them.
+- Stable constraints are distinguished from new proposals and included only when omission risks material drift.
+- Question presentation and final-contract organization guidance live in `SKILL.md` with the execution steps that use them.
 
 ## Anti-Drift Checks
 
@@ -109,11 +115,13 @@ Before changing the skill, verify that the change:
 - keeps one contract per capability slice and completes a slice before opening the next;
 - keeps discussion rounds incremental;
 - keeps discussion context and question explanations flexible while retaining question identifiers, numbered options, and a recommendation marker;
-- preserves the final contract's structure and order defined in `SKILL.md` section 7 without imposing them on discussion rounds;
+- preserves the final contract's topic cohesion, source separation, and implementation-critical content without requiring category headings, a fixed display order, or role fields;
+- keeps grouping, attributed proposal quotes, and concise contextual wording in the shared presentation rule for both output modes and discussion rounds, without requiring internal workflow terminology as group names;
 - applies the collaborative-discussion completion rule in `SKILL.md` Execution Boundary without adding a mode, a fixed closing phrase, or contract obligations to direct results;
-- keeps each item under `Changes` with its implementation consequences, gives each semantic claim one primary home, permits only functionally useful restatement, places preserved implementation constraints only in `Unchanged`, and includes `Unchanged` only when omission risks material drift;
+- keeps each proposed change with its implementation consequences, gives each semantic claim one primary home, permits only functionally useful restatement, and includes preserved constraints only when omission risks material drift;
 - preserves claim-to-source and evidence mappings, shows discussion provenance when ambiguity affects judgment, retains final-contract and review provenance, and prevents agent inferences from being promoted to requirements or decisions;
-- keeps provenance traceable without mechanically exposing a repeated source prefix; groups same-source claims and rewrites form-like output as natural prose;
+- keeps material agent inferences separate from user commitments and facts in each topic, scopes each source once, and rewrites form-like output as natural prose without hiding provenance;
+- preserves agent origin after explicit contract approval, clearly scopes each approval request to its reviewed contract rather than background results or display groups, and requires renewed alignment for material changes;
 - presents real costs and assumptions when they affect judgment, without inventing fields or carrying rejected options forward;
 - makes each question understandable with only the needed context, without repeating known facts or presenting examples as verified state;
 - preserves implementation-critical model shapes and lifecycle contracts in concrete, copyable form;
@@ -134,14 +142,26 @@ Reject brevity that hides a consequential decision or implementation contract. C
 - A user explicitly requests collaborative discussion and no consequential question remains: present an adjustable proposal and wait for feedback under the Execution Boundary rule, without inventing questions or declaring completion.
 - An ordinary agreement with a discussion proposal is not execution authorization. Readiness to conclude is interpreted by meaning, without a fixed closing phrase; clarify only when ambiguous.
 - Discussion rounds omit routine source prefixes, but every material claim remains traceable in the coverage ledger and, when applicable, the decision record and review handoff.
-- Low-risk agent inferences remain adjustable and need not become questions, but every material inference is classified; a critical-boundary inference reruns the human-decision gate and becomes a user decision only when that gate passes.
+- Low-risk agent inferences remain adjustable before final approval and need not become questions, but every material inference is classified; a critical-boundary inference reruns the human-decision gate and reaches the human frontier only when that gate passes.
 - Direct Result Mode still completes the decision-node coverage audit even when no human question is required.
 - The coverage ledger is mode-independent; a risk-triggered Direct Result review receives the ledger or a concise summary, while an unreviewed direct result keeps it internal.
-- Repeated facts are grouped under one scoped statement instead of rendering `事实` on every adjacent bullet; a second form is retained only when it adds a distinct boundary or independently observable check.
+- A topic containing a user decision, agent proposal, and supporting fact keeps commitments and facts in distinct prose paragraphs and material agent proposals in attributed quotes.
+- An inference block identifies its agent origin even when an approval status is also shown; a status-only label does not establish provenance.
+- A topic without agent inferences adds no empty inference block; complex topics still retain concrete shapes, compatibility guarantees, and independently useful acceptance conditions.
+- Multiple independent topics in a direct result or decision-bearing contract are visibly grouped with content-specific names; their evidence, boundaries, and acceptance stay with the relevant topic, and source blocks remain separate.
+- A single short result adds no artificial group structure; source attribution remains brief and contextual without stock personal introductions or mandatory replacement phrases.
+- Two independently discussable defects use content-named headings even in Direct Result Mode; that grouping does not create contract or confirmation obligations.
+- A compact reply still separates user commitments from material agent proposals through attributed quotes; an inline source prefix or connective is not sufficient.
+- A proposal is attributed at its first mention and stays in its own block; a later source disclaimer cannot repair an earlier presentation as a user commitment or fact.
+- A multi-topic contract uses natural prose rather than repeating the ledger's categories as field rows; its illustrative example does not become a required output skeleton.
+- Repeated facts are grouped under one scoped statement instead of rendering `事实` on every adjacent bullet or beneath an already source-scoped heading; a second form is retained only when it adds a distinct boundary or independently observable check.
 - After the user resolves the consequential choices, the slice produces an independently reviewed contract and requests confirmation.
 - A high-risk slice with no consequential human decision receives independent review but remains a natural-language direct result.
 - A reviewed result that changes materially receives targeted re-review before it is reported or presented for confirmation.
-- When a recommendation carries a fallback or failure policy, the policy remains `推断` until explicitly confirmed and the Reviewer checks that it was not promoted.
+- When a recommendation carries an agent-derived fallback or failure policy, it retains its `推断` origin; discussion agreement alone does not approve the whole contract.
+- Explicit final approval marks listed material inferences as authorized implementation constraints without changing their origin, authorizing undisclosed defaults, or verifying uncertain facts.
+- An approval request explicitly identifies its reviewed contract or concrete scope; other independently aligned results shown as background retain their own modes and confirmation status and stay outside that request. Display grouping adds neither separate per-group approvals nor cross-contract authorization.
+- A material change to an approved implementation boundary requires renewed alignment and approval; routine mechanics outside that boundary still use the existing human-decision gate.
 - A low-risk implementation detail is recorded as an inference or coverage constraint, while an alternative affecting ownership, state, compatibility, guarantees, authority, or strategy reruns the human-decision gate and becomes a new human question only when verified consequences satisfy it.
 - A direct result with no consequential human fork still reports only after all material implementation nodes are classified and consequential branches are traversed, explicitly closed by a recorded decision, or evidenced as pruned.
 - New facts discovered during autonomous investigation trigger a fresh coverage audit before the next question or conclusion.
