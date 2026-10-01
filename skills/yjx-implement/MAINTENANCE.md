@@ -48,6 +48,16 @@ Test Value Admission keeps generated tests tied to durable evidence. New, defect
 
 A `No new test` decision is complete when it identifies why no candidate passed admission, which existing or substitute checks exercise the affected behavior, and what remains unverified. Review evaluates that evidence and its limits; the absence of a newly created test file is not itself a coverage defect.
 
+### Presentation Details vs. Functional Contracts
+
+Rapidly changing typography, spacing, decoration, and non-functional layout are poor default regression contracts. A visual requirement does not by itself request automated appearance checks. Phase 2 therefore gives presentation-only work a lightweight path: `Test admission not triggered`, a bounded scope, and relevant verification evidence rather than candidate enumeration or a complete `No new test` justification. Phase 3 owns browser inspection and static checks; Phase 4 accepts that evidence without inventing missing red-green obligations.
+
+The boundary follows actual effects, not file types. A slight overflow that leaves content usable differs from an overlay that blocks submission; only the latter introduces a functional defect. Mixed changes retain behavioral admission for business and interaction outcomes without freezing accompanying visual choices. Accessibility semantics and actual keyboard or focus operation can carry meaningful contracts; an accessibility or layout label is not sufficient to introduce computed-style, pixel, or exact-geometry assertions.
+
+Explicit user direction or project rules requiring appearance automation can open that testing scope, but the candidate still needs all four admission conditions. An unresolvable conflict remains a verification blocker pending clarification, not permission to silently substitute inspection. A design reference, brand guideline, existing visual test, or "stable contract" label cannot create this exception on its own. Existing required checks remain applicable; confirmed visual changes may justify revising obsolete appearance assertions, whereas a failure alone cannot.
+
+Browser inspection supplies current-state evidence, not durable automated regression protection. Screenshots can support inspection without becoming baselines. Its recorded scope, results, and limits make the lightweight path reviewable. Review findings need a confirmed requirement or explicit rule violation, or reproducible actual user impact; absent style tests and minor visual differences alone are insufficient.
+
 ### Verification Scope & Workspace Context
 
 A workspace root may only aggregate repositories; commands run there can use incompatible dependency configurations. An unconstrained suite or interactive watcher can also stall a local task. Phase 1 identifies the owning context and bounded commands; Phase 3 owns execution and evidence. Small projects can still use fast full suites.
@@ -76,7 +86,10 @@ Check the changed runtime text against these questions; use the scenarios to exp
 - Do descriptions, completion criteria, and maintenance examples agree on which statements are principles and which are delivery gates?
 - Are concrete techniques confined to explanatory examples unless needed to make a gate executable?
 - Are existing project assets, causal scope, workspace context, and authorization boundaries preserved?
-- Does Test Value Admission remain consistent with both runtime branches: red-green changed behavior and green characterization for behavior-preserving refactors, with `No new test` available only when no new, modified, or existing candidate passes?
+- Does Test Value Admission remain consistent with its behavioral branches: red-green changed behavior and green characterization for behavior-preserving refactors, with `No new test` available only when no new, modified, or existing candidate passes?
+- Does presentation-only work use lightweight verification without candidate enumeration, a complete `No new test` justification, or manufactured red-green evidence, while mixed changes retain admitted behavioral evidence?
+- Can only an explicit direction or project rule requiring appearance automation open that testing scope, without bypassing the four admission conditions or silently ignoring a conflict?
+- Do browser inspection, existing visual-test handling, completion criteria, and review inputs agree on the presentation-only path and its disclosed limits?
 - Does every admitted behavior slice require a target-specific red result before its related business implementation, with commands, results, and order available to reviewers?
 - Does every behavior-preserving refactor with an admitted characterization candidate record green evidence before and after the refactor, while a refactor without such a candidate uses complete `No new test` evidence?
 - Does the `No new test` path remain evidence-bearing and reviewable?
@@ -99,6 +112,14 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | A behavior-preserving refactor has no characterization candidate that passes admission | Use complete `No new test` with substitute verification and disclosed limits; do not manufacture a low-value characterization test. |
 | A scheduler test succeeds by returning before it reaches nil collaborators but never observes the business outcome | Reject it: control-flow survival does not independently verify the contract. |
 | No new, modified, or existing candidate test can observe the stable business result without unjustified production seams | Record `No new test`, run existing and substitute targeted checks, and disclose the remaining limit. An existing candidate that passes admission still requires the applicable red-green or refactor-green evidence even when no test file changes. |
+| Typography, colors, or spacing change without changing functionality | Use `Test admission not triggered` and lightweight verification; do not manufacture style assertions, red-green evidence, or a complete `No new test` argument. |
+| A minor overflow leaves content readable and controls usable, with no confirmed requirement violation | Assess the actual result through relevant inspection; overflow alone is not a regression or blocking finding. |
+| A CSS-only overlay change blocks a required click or keyboard operation | Treat the affected interaction as functional behavior, use its applicable admission and evidence path, and verify the user outcome rather than exact geometry. |
+| A task changes both form submission behavior and visual spacing | Retain admitted behavioral evidence for submission and lightweight presentation evidence for spacing; neither path substitutes for the other. |
+| A design reference or accessibility label is used to justify new pixel, color-value, or exact-size assertions | The label does not authorize appearance automation; preserve meaningful behavioral contracts without freezing their visual mechanism. |
+| An existing visual test fails after a confirmed appearance change | Run required checks, distinguish obsolete appearance expectations from actual regressions, and justify any assertion update from the changed requirement; its presence or failure does not force new style assertions or test-first evidence. |
+| A user or project rule explicitly requires screenshot or computed-style automation | Permit that testing scope subject to all four admission conditions; if a required check cannot pass admission, disclose the conflict and keep verification incomplete pending clarification. |
+| Browser inspection cannot execute for presentation-only work | Report the specific gap and actual substitute evidence and limits; do not claim inspection occurred or demand style tests solely to fill the gap. |
 | Tests are reorganized during a behavior-preserving refactor | Check behavior and effective coverage, not one-to-one test correspondence. |
 | Confirmed requirements remove an old rejection condition | Verify the replacement behavior and still-valid boundaries; the old assertion may be retired. |
 | An assertion is weakened only because it fails | Treat as an evidence-integrity blocker. |
@@ -108,6 +129,7 @@ Check the changed runtime text against these questions; use the scenarios to exp
 | The primary labels a change low-risk and proposes skipping one review axis | Run both Standards and Spec reviews; primary risk classification does not reduce the gate. |
 | A Reviewer prefers a previously rejected architecture but has no new evidence or contract failure | Keep the branch closed and review the implemented contract. |
 | A Reviewer flags `No new test` solely because the diff contains no new test file | Reassess the supplied evidence and limits; file absence alone is not a finding. |
+| A Reviewer demands a complete `No new test` argument for a presentation-only scope | Assess the recorded scope and lightweight evidence instead; absence of behavioral test admission is intentional, not a missing red-green gate. |
 | Independent review cannot execute, or a blocker remains disputed | Keep the task incomplete until the review gate is satisfied. |
 | The current branch is `main`, `master`, a release branch, or remotely protected, and project rules permit local commits | Commit locally on that branch after review; branch names and remote protection do not redirect the work. |
 | The checkout is detached, or project rules require a different branch | Read the repository naming policy and establish the approved branch before editing; if edits are already present on a detached checkout, create the approved branch before committing and preserve the full starting diff. |
