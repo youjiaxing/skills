@@ -4,9 +4,9 @@ Read this file in full when a slice requires a Formal Contract, before drafting,
 
 ## Assemble the Candidate
 
-After convergence, assemble one candidate for the current slice. Keep each change's observable behavior, implementation-critical consequences, and independently useful acceptance results together under a topic named for the actual change. Within each topic, separate user commitments, necessary verified context, and attributed agent proposals using the entrypoint's Presentation Density.
+After convergence, assemble one candidate for the current slice using the entrypoint's result synthesis and Presentation Density. Connect the solution to the understood problem and intended outcome. Keep each change's observable behavior, implementation-critical consequences, and independently useful acceptance results together under a topic named for the actual change. State agreed content naturally and identify new unconfirmed proposals or material assumptions without requiring proposal blockquotes.
 
-Give each semantic claim one primary home. Include only changes introduced by this alignment as proposed changes. Supporting facts are context, not commitments. Include preserved constraints only when omission creates material implementation risk. Keep costs and rejected alternatives in the discussion and reviewer record, not a second final summary.
+Give each semantic claim one primary home. Include only changes introduced by this alignment as proposed changes. Supporting facts are context, not commitments. Include preserved constraints only when omission creates material implementation risk. Keep key reasons and accepted costs with the decision they explain; retain the full alternative comparison in the discussion and reviewer record rather than repeating it as a second summary.
 
 Preserve the owner, source of truth, identities, interfaces/data shapes, lifecycle and state transitions, compatibility/migration, concurrency and failure guarantees, and strategic boundaries when they cannot be safely derived from observable behavior. When an entity, schema, enum, field, interface, or state machine is part of the decision, keep its shape concrete and copyable.
 
@@ -22,7 +22,7 @@ Keep the candidate out of the approval step until it has no unresolved substanti
 
 ## Present and Confirm
 
-Present the reviewed contract once, organized by topic and source. Name this contract or its concrete scope before asking for approval. Other aligned results shown as background retain their own approval status and stay outside this request; grouping creates neither new approval units nor cross-contract authorization.
+Present the reviewed contract once, organized by the resulting solution rather than question order, with provenance clear in the wording. Name this contract or its concrete scope before asking for approval. Other aligned results shown as background retain their own approval status and stay outside this request; grouping creates neither new approval units nor cross-contract authorization.
 
 Ask for confirmation with exactly these meanings, localized:
 

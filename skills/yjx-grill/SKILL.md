@@ -1,12 +1,12 @@
 ---
 name: yjx-grill
-description: Stress-test requirements, plans, architectures, or complex decisions through evidence-backed questioning and decision coverage, then deliver a concise result or a reviewed, implementation-ready alignment contract.
+description: Uncover the problem behind a request, stress-test goals and proposed solutions through evidence-backed discussion, and deliver a concise result or a reviewed, implementation-ready alignment contract.
 disable-model-invocation: true
 ---
 
 # yjx-grill
 
-Align human intent before execution. Investigate facts autonomously, challenge unsupported premises when evidence warrants it, and ask only for unresolved core intent or consequential human judgment. Match the result to the actual stakes, not to whether a question was asked.
+Understand the problem the user needs to solve before aligning a solution for execution. Investigate facts autonomously, test the user's proposed remedy against the desired outcome, and ask only for unresolved core intent or consequential human judgment. Match the result to the actual stakes, not to whether a question was asked.
 
 Read [MAINTENANCE.md](MAINTENANCE.md) before reviewing or changing this skill; ordinary execution does not require it.
 
@@ -16,33 +16,29 @@ Read [MAINTENANCE.md](MAINTENANCE.md) before reviewing or changing this skill; o
 - Render user-facing labels and template keys in the user's conversational language.
 - Choose the delivery form per capability slice under section 6. Independent slices do not share one approval.
 
-When the user explicitly requests collaborative discussion, present an adjustable proposal and wait for feedback even if no question remains. Interpret readiness to conclude by meaning, not a fixed phrase; clarify only when ambiguous. Agreement with a discussion proposal alone is neither discussion completion nor execution authorization. This rule changes automatic stopping, not the risk threshold or confirmation obligations.
+When the user explicitly requests collaborative discussion, present an adjustable synthesis and allow feedback even if no question remains. Interpret readiness to conclude by meaning, not a fixed phrase: agreement with a complete stated result can conclude discussion, while agreement with one proposal does not settle remaining work. Do not repeatedly reconfirm the same unchanged result. Discussion completion is not execution authorization and does not remove required review or formal approval.
 
 ## Presentation Density
 
-This rule governs discussion rounds, direct results, review handoffs, and final contracts. Compose by topic first, then separate sources within that topic. When presenting two or more independently discussable changes or results, give each a short heading naming its actual object or goal. A contract title covering distinct outcomes is not a substitute for those topic headings. Routine details stay with the behavior or boundary they support. A short, single-topic reply needs no heading; internal capability-slice terminology is not required display vocabulary.
+Use the question-first layout in section 5 for discussion questions. Organize explanations and results by their actual subject, with short topic headings when several outcomes need separate treatment. A short, single-topic reply needs no heading. Keep behavior, important consequences, and acceptance local to the topic they support; internal capability-slice terminology is not display vocabulary.
 
-Draft each material claim once, in the topic and source identified by its ledger entry. Write user requirements or choices as natural prose with brief contextual attribution. Put necessary verified context in its own prose paragraph. Render material agent proposals as Markdown blockquotes, starting with a short attribution before stating their behavior for the first time. Keep proposal-origin behavior and its implementation consequences inside those quotes, separate from user commitments and facts. A later disclaimer or unquoted summary does not repair a proposal first presented as a fact or commitment. Routine implementation mechanics remain unlabelled.
+Preserve provenance through accurate wording, not mandatory source-shaped formatting. State confirmed content naturally, using brief attribution where its origin matters. Clearly identify new, unconfirmed proposals and material assumptions at their first appearance; agreement does not turn agent-originated reasoning into a user requirement or a verified fact. Keep complete source/evidence mappings in the private ledger and reviewer handoff, rather than rendering ledger fields to the user.
 
-Use prose for a single commitment or proposal, and lists for several actionable or comparable claims of the same source. Keep necessary context, behavior, implementation consequences, and acceptance local to their topic and source. Omit absent sources and redundant facts. Reduce repeated content and stock introductions, not the visible boundaries; the ledger's categories are not fields to render in every topic. Approval status belongs to the contract's confirmation and cannot replace source attribution.
+Blockquotes primarily carry a question's necessary background, not the category "agent proposal." Put options and their trade-offs outside that background. Use prose for a single conclusion and lists for comparable or actionable items; omit empty categories and stock introductions.
 
-For illustration, given a user choice to keep CSV, an agent proposal of UTF-8, and a separate requested text change:
+Before sending, check the actual draft: the user can locate the question, understand why it matters, and distinguish confirmed content from new suggestions or uncertain claims. Give each semantic claim one primary home; repeat it only when the second occurrence adds a distinct boundary or independently observable consequence. Keep the internal record and implementation-critical content complete.
 
-```markdown
-**Download format**
-As requested, downloads remain CSV.
+## 1. Understand the Problem and Test Premises
 
-> I suggest UTF-8 encoding so names with accents survive export.
+Distinguish the user's observed difficulty, their explanation of its cause, and their proposed remedy or target. A request for a particular solution may express a surface problem rather than the desired outcome. Work from concrete experience toward the practical difficulty and the change the user needs, then test candidate solutions against that outcome.
 
-**Completion message**
-Change "Finished" to "Complete"; everything else stays the same.
-```
+When this is unclear, ask about a recent instance, what the user was trying to accomplish, what got in the way, or what would be different if the problem were solved. Use focused, open questions when choices would prematurely frame the answer. Do not require the user to diagnose or precisely name the underlying problem.
 
-The example is not a required wording, field sequence, domain, or combined approval scope. Its quoted proposal illustrates the source boundary; topics without material agent proposals add no quote.
+Once enough context is available, briefly restate in your own words what you understand the user's goals to be and what problem they are trying to solve. Distinguish the desired outcome, the difficulty preventing it, and any proposed remedy. Synthesize rather than echo the user's wording, and mark inferred causes or deeper needs as tentative.
 
-Before sending, inspect the actual draft: each independent outcome has a content-named group, each material agent proposal first appears attributed inside its quote, and no role-field rows or mixed-source paragraphs replace those distinctions. Rewrite any failing part. Give each semantic claim one primary home; repeat it only when the second occurrence adds a distinct boundary or independently observable consequence. Keep the internal record and implementation-critical content complete.
+Make this understanding visible before comparing solutions, and update it when materially changed. If a consequential uncertainty remains, use the restatement as background beneath a focused question in section 5's layout. Otherwise, continue without requiring a separate confirmation turn. If context is insufficient, ask about concrete experience first rather than inventing a diagnosis.
 
-## 1. Establish Facts and Test Premises
+Let the user correct the interpretation before relying on it to change the goal or scope. Do not repeat unchanged restatements or impose a fixed discovery questionnaire.
 
 Use tools for objective facts: code, schemas, logs, task text, dependencies, available assets, and current state. Do not ask the user to discover facts the agent can verify, or infer the user's desired outcome merely from existing code.
 
@@ -63,15 +59,17 @@ A question is ready only when its factual and decision prerequisites are settled
 Before asking, identify the unresolved choice, why it matters, and why requirements, verified evidence, established constraints, or the user's explicit delegation do not already settle it. Use either entry:
 
 - **Core intent gap**: the missing intent changes what counts as a successful result, its intended use, or a priority the human owns. Ask even when the resulting change would be cheap to reverse.
-- **Consequential trade-off**: verified alternatives materially change cost, guarantees, ownership, authority, or overall strategy, and the choice remains human-owned.
+- **Consequential judgment**: accepting costs, guarantees, ownership, authority, or overall strategy remains human-owned. This includes a single known feasible approach whose consequences or conditions need the user's judgment; several alternatives are not required.
 
 Infer routine mechanics, local technical defaults, and preferences that do not affect the goal. Do not ask merely because several implementations exist. Tooling obstacles, missing permissions, and speculative causes are not decision options.
 
 Assess consequence by actual effects: data loss or migration, authority, external commitments, irreversible resource use, structural redesign, and materially different remediation strategies. A one-line change can have irreversible consequences. Unknown effects require investigation, not a low-risk classification. If necessary evidence cannot be obtained, report the specific blocker and keep that branch unresolved.
 
+An important established fact may need a clear explanation without another question. Ask about unresolved intent, acceptability, or conditions, not merely for acknowledgment of facts the agent has already verified.
+
 The question gate and delivery form are separate: clarifying a reversible core intention does not automatically require a formal contract.
 
-When a consequential human fork is identified, record `contract required` for that slice immediately. Resolving the fork, including choosing to preserve current behavior, settles the choice but does not clear this review-and-approval obligation.
+When consequential human judgment is required, record `contract required` for that slice immediately. Resolving it, including accepting the only known feasible approach or choosing to preserve current behavior, settles the choice but does not clear this review-and-approval obligation.
 
 ## 4. Maintain Coverage and Provenance
 
@@ -92,7 +90,26 @@ Retain selected approaches and material costs, rejected branches and their reaso
 
 Ask zero to three ready, orthogonal questions per round. Each must pass section 3 and remain necessary without changing another question's premises, options, or recommendation. Prioritize pivots such as goal, source of truth, ownership, external guarantees, irreversible transitions, consistency, and failure policy. Prune impossible or already-settled options with evidence.
 
-Keep `Q<N>` identifiers, number options from 1, and place the recommended option first with a localized marker. Explain unfamiliar terms and the concrete consequence only as needed. Explain the recommendation's real costs and critical assumptions; say when alternatives are preferable and why they are not recommended now. Distinguish hypothetical examples from facts. There is no fixed question-card field schema.
+When ready questions remain, lead the round with its first question after at most a brief acknowledgment, not a preliminary diagnosis or proposal. Start each question with a stable `Q<N>` heading that states the actual question. Directly beneath it, put the necessary background in a Markdown blockquote, without a "Context" label or equivalent. Explain the relevant situation, why the question matters, and unfamiliar terms only as needed; distinguish verified facts from hypotheses or hypothetical examples. Place any options below and outside the quote. Keep this reading order without imposing fixed paragraph lengths or extra field labels.
+
+Choose the response form to fit the unresolved judgment:
+
+- **Real alternatives:** number viable options from 1, put the recommendation first with a localized marker, and explain its reasons, real costs, and critical assumptions. Explain when each alternative is preferable and why it is not recommended now. Invite corrections or a custom answer; options aid judgment, not constrain it.
+- **One known feasible approach:** describe it, the evidence limiting alternatives, and its material consequences or conditions. Keep infeasibility claims limited to the verified constraints. Ask the actual acceptability or constraint question without inventing competing options or implying the user must accept. If unacceptable, revisit the constraints or investigate further; do not manufacture feasibility.
+- **Experience or intent exploration:** ask an open question when examples or a free-form account would reveal more than a premature menu. Give the user enough background to answer without supplying a diagnosis for them.
+
+For example, the layout for alternatives is:
+
+```markdown
+**Q1: Which outcome should this change prioritize?**
+
+> The relevant observed situation and why this choice changes the result.
+
+1. **Approach A (recommended).** What it changes, why it fits, and its cost.
+2. **Approach B.** What it changes, when it fits, and why not now.
+```
+
+This illustrates layout, not a stock opening question. Open and single-approach questions retain the heading and necessary background, without a forced option list. A proposal followed only by "Do you agree?" is not a substitute for exploring a real unresolved trade-off.
 
 Use a visual only when it replaces prose by clarifying a control-flow, state, data, or ownership divergence; keep it within eight lines without adjacent repetition.
 
@@ -106,10 +123,12 @@ Convergence requires every material node to have provenance and resolved/pruned 
 
 Choose one of two delivery forms:
 
-- **Direct Result**: no consequential human trade-off arose, including cases where only low-risk core intent needed clarification. Lead with the conclusion and necessary causal facts; include the agreed intent, selected remedy, material assumptions, and boundaries as relevant. Use natural prose, not a mandatory contract or a repeat approval request.
+- **Direct Result**: no consequential human judgment required formal approval, including cases where only low-risk core intent needed clarification. Use natural prose, not a mandatory contract or a repeat approval request.
 - **Formal Contract**: the slice has a recorded `contract required` obligation. Before drafting, reviewing, or requesting approval, read [references/contract.md](references/contract.md) in full. Produce one independently reviewed contract for that slice and obtain explicit approval.
 
-If new evidence reveals a consequential fork, record the obligation and traverse it. Independent review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
+For either form, synthesize the result around the actual problem and intended outcome, then the selected solution with key reasons and accepted costs. Keep related decisions together by topic rather than replaying Q numbers or the conversation. Include relevant boundaries, material assumptions, remaining uncertainties, and the confirmation status or next step. These are content needs, not four mandatory sections: omit empty categories, and let a simple result be one paragraph. New unconfirmed suggestions remain visibly distinct from agreed content; unresolved prerequisites prevent declaring completion.
+
+If new evidence reveals consequential human judgment, record the obligation and address it. Independent review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
 
 Apply the collaborative-discussion rule before concluding either form. Complete only the current slice, then activate the next remaining slice. End the overall alignment only when all in-scope slices are complete, or the user explicitly stops, pauses, or narrows the scope; record remaining choices and review/approval obligations without marking them complete.
 

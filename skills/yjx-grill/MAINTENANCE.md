@@ -4,27 +4,31 @@ Read before reviewing, modifying, or redesigning this skill, not during ordinary
 
 ## Purpose and Decisions
 
-The skill replaces exhaustive interviewing with evidence-backed alignment, without replacing human intent with agent convenience. It is domain-neutral: requirements, technical designs, organizational plans, and other complex decisions can use the same loop.
+The skill replaces exhaustive interviewing with evidence-backed problem discovery and alignment, without replacing human intent with agent convenience. A stated solution can address a symptom rather than the actual difficulty; the agent helps uncover the desired outcome through concrete experience, while keeping its interpretation tentative and correctable. It is domain-neutral: requirements, technical designs, organizational plans, and other complex decisions can use the same loop.
 
 The approved optimization deliberately changes two earlier principles:
 
 - **Intent and consequence are separate reasons to ask.** Reversal cost does not determine who owns the desired outcome. A cheap change may express the user's core intention, while several technical alternatives may require no question. Existing requirements, evidence, and explicit delegation can already settle a choice.
-- **Asking does not force formal approval.** Low-risk intent clarification can end with a concise Direct Result. A consequential human trade-off requires a reviewed Formal Contract even after the user selects an option. Risk-triggered review still applies to Direct Results; it must not manufacture a human fork or an unnecessary contract.
+- **Asking does not force formal approval.** Low-risk intent clarification can end with a concise Direct Result. Consequential human judgment requires a reviewed Formal Contract even after the user answers, including acceptance of a single known feasible approach. Risk-triggered review still applies to Direct Results; it must not manufacture a human fork or an unnecessary contract.
 
 The third approved choice preserves the pressure-testing purpose: challenge a premise for concrete goal mismatch, unsupported material assumptions, infeasibility, or a better-supported reduction in scope. Do not add a universal preliminary questionnaire or reopen closed choices for preference alone.
 
 These choices supersede the former high-reversal-cost-only question gate and the rule that every asked decision automatically required a contract. Do not restore either while editing neighboring wording.
 
+Question layout and provenance serve different purposes. Questions lead with `Q<N>`, followed directly by necessary background in a blockquote and then any real options. The quote has no context label. Open exploration and single-approach acceptability questions are valid; importance does not imply a menu. This supersedes mandatory proposal quotes: source distinctions remain in accurate prose and the private record, while conclusions synthesize the solution rather than replaying the interview.
+
 ## Failure Modes and Rationale
 
 - **Over-questioning and silent intent substitution:** use the dual-entry gate, not "ask everything" or "guess anything reversible."
+- **Polishing the wrong solution:** distinguish observations, causal explanations, and remedies; test the remedy against the user's practical difficulty. A deeper interpretation requires evidence and user correction, not agent certainty.
+- **Proposal monologues and artificial choices:** make the unresolved question visible first, then supply the background needed to answer it. Compare real alternatives, expose a sole approach's consequences, or elicit experience as appropriate.
 - **Cheap edits with irreversible effects:** judge data, authority, external commitments, resource use, and strategic consequences; unknown risk remains pending evidence.
 - **Premature convergence:** ready questions need settled prerequisites; the necessity of two questions does not make them independent. Pending nodes are legitimate ledger states, not proof of completion.
 - **Local completion mistaken for global completion:** a slice returns to the remaining-work loop. Partial execution needs independent, authorized scope and preserves the rest of the alignment.
 - **Approval laundering:** conclusion acknowledgment, scoped implementation authorization, and execution intent have different effects. An old plan's execution instruction cannot authorize a materially different plan.
-- **Provenance collapse:** approval changes permission, not claim origin. The private ledger retains sources and evidence; shared presentation keeps material proposals in attributed quotes without rendering ledger fields.
+- **Provenance collapse:** approval changes permission, not claim origin. The private ledger retains sources and evidence; natural wording distinguishes confirmed content, new proposals, and material assumptions without imposing source-shaped layout.
 - **Reviewer amplification:** scrutiny tests evidence and consequences. Rejected alternatives reopen only for the entrypoint's evidence-based reasons.
-- **Thin or repetitive contracts:** keep implementation-critical semantics with their topic, while removing restatement and routine mechanics rather than correctness boundaries.
+- **Thin or repetitive contracts:** preserve the actual problem, selected solution, key reasons, accepted costs, and implementation-critical semantics with their topic. Remove restatement and routine mechanics rather than correctness boundaries.
 
 ## Information Ownership
 
@@ -41,8 +45,10 @@ When changing the skill, verify that:
 - autonomous fact discovery, dual-entry questioning, zero-question cases, ready-frontier dependency handling, and both delivery forms remain available;
 - coverage and source/evidence mappings survive partial answers, new evidence, review, approval, and handoff;
 - observed high stakes are not erased merely by answering a question, and reviewer unavailability or unresolved correctness findings cannot be presented as successful completion;
-- collaborative discussion remains open to feedback without requiring a fixed closing phrase or adding a contract to low-risk clarification;
-- topic organization, attributed proposal quotes, incremental rounds, numbered choices, and real option costs remain intact;
+- collaborative discussion remains open to feedback, accepts clear closure without a fixed phrase or repeated unchanged confirmations, and preserves separate execution authorization;
+- problem discovery permits open questions and user correction without requiring every discussion to restart from first principles;
+- questions precede their unlabelled background quotes, real alternatives have recommendation-first numbered choices and honest costs, and important single-approach questions do not manufacture options;
+- conclusions organize the understood problem and resulting solution by topic, distinguish new proposals naturally, and scale down without empty sections or question-by-question replay;
 - formal details are discoverable through a mandatory pointer, with shared safety rules still on all execution paths;
 - full implementation-critical model shapes and guarantees survive compression, while empty fields and duplicate summaries do not return;
 - runtime text stays in English and user-facing text is localized; no repository or external mutation occurs during alignment.
