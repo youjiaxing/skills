@@ -8,9 +8,7 @@ disable-model-invocation: true
 
 Break a plan, specification, or conversation consensus into a set of **tracer-bullet tickets**: self-contained, vertically-sliced units of execution, each declaring the tickets that **block** it.
 
-Each ticket is designed to converge cleanly within a **single fresh context window** without triggering lossy context compression, maintain complete **causal cohesion**, and remain **self-explanatory for human review**.
-
-The issue tracker configuration and triage label vocabulary are read from the environment (`docs/agents/issue-tracker.md`, `docs/agents/local-tracker.json`, or `docs/agents/triage-labels.md`). If not configured, tell the user to run the repo's tracker setup.
+Target **single-session completion**, **causal cohesion**, and **review self-containedness**. This skill turns sufficiently clear intent into executable tickets; it does not execute their work or maintain an ongoing task schedule.
 
 ## Maintenance
 
@@ -18,43 +16,52 @@ When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MA
 
 ## 1. Slicing Principles & Semantics
 
-Evaluate every slice against three semantic invariants rather than rigid line counts or artificial file limits:
-
-1. **Causal Cohesion (因果自洽)**:
-   - Every ticket must deliver a complete, observable evidence chain (Intent $\to$ Action $\to$ Verification).
-   - A completed slice is independently runnable and verifiable on its own.
-   - **Anti-Fragmentation**: Never split a single business action into isolated definitions without callers (e.g. DTO without consumers, UI stub without events). If Ticket A cannot be verified without Ticket B, merge them.
-2. **Cognitive Focus & Single-Session Convergence (认知聚焦与单会话收敛)**:
-   - Target a single concern with a self-contained scope, enabling an agent or human to complete the task within one fresh session from understanding to test passage without derailment.
-   - Slices derive naturally from topological milestones and state transitions in the source material.
-3. **Review Self-Containedness (审查自解释性)**:
-   - A reviewer can understand the rationale, changes, and proof of correctness solely from the ticket's code and tests, without consulting unmerged downstream tickets.
-4. **Execution Subject Segregation (执行主体分流)**:
-   - **AFK-First (Default)**: Mark implementation, refactoring, and test tasks as `ready-for-agent` (or the repo's mapped equivalent) when verification is autonomous and self-contained.
-   - **Explicit HITL Gates**: Extract external credential provisioning, cloud infrastructure setup, manual migrations, or subjective visual sign-offs into explicit human tickets (`ready-for-human`), declaring them as blockers for downstream AFK tickets.
+1. **Causal Cohesion (因果自洽)**: Deliver an observable chain from intent through action to verification. A normal ticket must be independently deliverable and verifiable **on the baseline of its completed blockers**. Depending on upstream results is not a reason to merge tickets. If a ticket needs unfinished downstream work to become useful or verifiable, redraw its boundaries instead of automatically merging the dependency chain. Avoid definitions without consumers or UI stubs without working interactions.
+2. **Single-Session Focus (单会话聚焦)**: Use natural behavioral milestones and state transitions, keeping the necessary context, unresolved decisions, and verification work manageable together. Single-session completion is a sizing goal, not a guarantee against context compression. Do not impose line-count or file-count thresholds.
+3. **Review Self-Containedness (审查自解释性)**: Reviewers may consult the ticket, its code and evidence, the upstream Spec/ADRs, and completed blockers. Correctness must not depend on unfinished downstream work, except for the explicit wide-refactor integration case below.
+4. **Execution Subject (执行主体)**: Prefer AFK when the intended executor has the capability and permission to perform and verify the work. Use HITL for prerequisites requiring human access, approval, or judgment, with blockers only where their outcomes are needed. Cloud setup, migration, or naming a human owner does not by itself make execution HITL. Map these roles to the project's actual `ready-for-agent` / `ready-for-human` equivalents; classification grants no new permissions.
 
 ## 2. Process
 
 ### Step 1: Gather Context & Invariants
-- Ingest input from the conversation history, an upstream specification file, PRD, or plan notes passed as an argument.
-- If an upstream Spec or design doc exists:
-  - Record its path as the canonical reference link (SSOT).
-  - Extract its core **System Invariants**, **Touched Areas**, and **Forbidden Paths** to ensure zero requirement leakage during slicing.
-- If working from raw conversation, synthesize the confirmed goals, constraints, and boundaries directly.
+- Read the supplied conversation, Spec, PRD, or plan. For referenced issues or documents, read the full body and relevant comments/decisions. Preserve the canonical source link; without a document, summarize the confirmed intent in the tickets.
+- Extract goals, requirements, system invariants, touched areas, and forbidden changes. Inspect relevant implementation, domain vocabulary, ADRs, and verification entrypoints only as needed to establish scope, dependencies, and acceptance. Consider necessary prefactoring, not a general codebase survey.
+- Read the applicable tracker contract and label vocabulary together: `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and, for a configured local tracker, `docs/agents/local-tracker.json`. Use project paths and role mappings. Resolve configuration conflicts before publication; if unconfigured, direct the user to the repo's tracker setup without prescribing a particular skill.
+
+Handle unknowns by their effects:
+
+- **Discoverable facts**: investigate them rather than asking the user to do the lookup. Report unavailable evidence instead of inventing facts.
+- **Local implementation choices**: leave them to the executor when they do not change delivery goals, permission boundaries, external contracts, or dependencies.
+- **Choices affecting task structure or major boundaries**: discuss them before finalizing affected implementation tickets. Unrelated drafts may continue.
+- **Questions requiring an independent experiment**: propose an exploration ticket only when needed, with its question, evidence output, and completion condition, for user confirmation. Experimental results are not design approval: obtain confirmation of the design choices affecting the breakdown before finalizing downstream implementation tickets.
 
 ### Step 2: Draft Vertical Slices & Dependency DAG
-- Decompose the effort into tracer-bullet slices cutting vertically through the necessary domain layers.
-- For each slice, formulate:
-  - **What it delivers**: The end-to-end behavior or observable milestone made functional.
-  - **Invariants & Scope**: The specific boundaries, constraints, and relevant invariants governing this slice.
-  - **Falsifiable Acceptance Criteria**: Deterministic, observable checks (concrete automated test commands, physical measurement tolerances, or verifiable state changes).
-  - **Blocking Edges (`Blocked by`)**: Explicit upstream tickets that must be resolved before this slice can begin. Independent tickets start unblocked.
-- **Wide Refactor Exception**: For broad changes with massive blast radius across shared contracts, sequence as **expand–contract** (expand new form $\to$ batch-migrate callers $\to$ contract old form) rather than forcing into a single tracer bullet.
+Cut through the domain layers needed for each outcome, not every possible layer. Each ticket states:
+
+- **Delivery & rationale**: the end-to-end behavior and necessary background.
+- **Scope bounds**: allowed areas, relevant invariants, and explicit non-goals. Keep the Spec as the global source of truth; carry only the constraints relevant to this ticket.
+- **Acceptance & verification**: pair an observable expected result with a way to check it. A command alone is not acceptance. Identify existing verification entrypoints versus verification the ticket must add; never invent an existing command. Use domain-appropriate evidence, such as tests, measurement tolerances, state changes, or explicit human sign-off criteria.
+- **Blocked by**: only upstream outcomes genuinely needed before this work can begin. Retain necessary edges to completed tickets; their completion satisfies the dependency rather than erasing it. Schedule necessary prefactoring ahead of the work it enables.
+
+#### Wide Refactor Exception
+
+For broad shared-contract changes that cannot sensibly land as ordinary vertical slices:
+
+1. **Expand**: introduce the new form alongside the old while retaining compatibility.
+2. **Migrate**: batch callers into context-sized tickets, each blocked by expand. Keep each batch green when possible.
+3. **Contract**: remove the old form in a ticket blocked by all migration batches; verify that no old callers remain.
+
+If batches cannot independently pass whole-system verification, propose an isolated integration branch and a final integrate-and-verify ticket blocked by all necessary migration and contract work. Each batch still needs a bounded, observable milestone and local acceptance, not a claim of complete end-to-end delivery. State the integration owner, isolation, local checks, whole-system success criteria, and failure handling in the breakdown for approval. Do not finalize affected tickets while these boundaries are unclear. Batch completion is not overall delivery; the combined result is not releasable before whole-system verification passes.
 
 ### Step 3: Traceability & Anti-Fragmentation Self-Audit
-Before presenting to the user, conduct an internal audit:
-- **Traceability Check**: Ensure every critical invariant, edge case, and touch boundary from the input is accounted for across the generated tickets.
-- **Anti-Fragmentation Check**: Verify no ticket is an incomplete stub lacking verifiable utility. Merge tightly coupled micro-slices.
+Keep a lightweight internal mapping from requirements/invariants to tickets and acceptance evidence. Check that:
+
+- Requirements, critical edge cases, and safety boundaries have owners and meaningful verification.
+- Cross-ticket invariants have an explicit final verification owner, which may be an existing ticket; do not mechanically add an aggregate ticket.
+- Tickets satisfy the slicing principles, references resolve, and the dependency graph has no self-dependencies or cycles.
+- Execution subjects match project status mappings, and no unresolved choice has been disguised as an executable implementation plan.
+
+Correct gaps before presenting a final breakdown. Surface remaining omissions, unresolved decisions, and cross-ticket verification responsibilities; a large traceability matrix is not a required user-facing artifact.
 
 ### Step 4: Review Breakdown with User
 Present the draft breakdown clearly:
@@ -63,65 +70,56 @@ Present the draft breakdown clearly:
 ### Proposed Breakdown
 
 1. **[01] <Ticket Title>**
-   - **Execution**: AFK (`ready-for-agent`) | HITL (`ready-for-human`)
-   - **Blocked by**: None
-   - **What it delivers**: <End-to-end outcome>
-   - **Key Verification**: <Concrete test command or verifiable proof>
-
-2. **[02] <Ticket Title>**
-   - **Execution**: AFK (`ready-for-agent`)
-   - **Blocked by**: 01
-   - **What it delivers**: <End-to-end outcome>
-   - **Key Verification**: <Concrete test command or verifiable proof>
+   - **Execution**: <AFK or HITL; actual mapped project status>
+   - **Blocked by**: <Necessary upstream tickets, including completed ones; None only if independent>
+   - **What it delivers**: <Outcome and necessary rationale; bounded milestone for an approved exception>
+   - **Acceptance & verification**: <Observable expected result; how it will be checked>
 ```
 
-Ask the user:
-- Does the granularity feel balanced (neither too coarse nor over-fragmented)?
-- Are the dependencies and execution subjects (AFK vs HITL) accurate?
-- Should any slices be adjusted or merged?
-
-Iterate until the user approves.
+For wide refactors, include the exception's integration boundaries above. Ask about granularity, genuine dependencies, execution subjects, and any needed boundary adjustments. Iterate until the user approves the finalized breakdown; approval of an exploration ticket does not approve a speculative downstream plan.
 
 ### Step 5: Publish Tickets to Configured Tracker
-Publish approved tickets following the repo's configured tracker protocol:
+Publish only approved, finalized tickets following the configured tracker protocol.
 
-- **Local Markdown Tracker (`.scratch/<feature-slug>/issues/<NN>-<slug>.md`)**:
-  - Number sequentially from `01` in dependency order.
-  - Apply the Local Ticket Template below.
-- **Remote Issue Tracker (GitHub, Linear, Jira, etc.)**:
-  - Publish issues via CLI/API in dependency order.
-  - Establish native parent / blocking relationships and apply canonical triage labels (`ready-for-agent` / `ready-for-human`).
+- **Before writing**: inspect existing tickets and previous publication results. Create new tickets or resume this approved publication, retaining existing identities. On retry, fill only missing parts clearly attributable to the approved work. If identity is uncertain, content conflicts, or implementation has started, pause the affected part and report it; do not overwrite or blindly create duplicates. Changes to historical tickets require a separate diff and user confirmation.
+- **Local Markdown**: write one file per ticket under the configured path (default `.scratch/<feature-slug>/issues/<NN>-<slug>.md`). For a fresh feature, number from `01` in dependency order; when extending one, preserve existing numbers and use unused numbers for new tickets. Use the local template with resolved blocker references and mapped status values.
+- **Remote tracker**: create issues in dependency order using real identifiers. Record parent and blocking relationships separately using native relationships where supported; otherwise use explicit body references. Apply the project's mapped labels, not unmapped canonical names.
+- **After writing**: read back contents, execution statuses/labels, and dependencies against the approved breakdown. Report actual identifiers and any unfinished parts; do not claim complete publication until the approved results are verified.
 
-Do NOT modify or close parent spec/map issues during publication.
+Do not modify or close parent spec/map issues. This step does not add task scheduling, staged activation, a publication state machine, or an atomic-publication guarantee.
 
 ---
 
 ## 3. Ticket Templates
+
+Both templates use stable domain/module boundaries rather than prescribing a stale file-by-file implementation. Specific source references or protected paths are appropriate when needed for traceability or scope. Include code snippets only when a decision-rich state machine, schema, type shape, or formula is more precise than prose; retain its source.
+
+For a wide-refactor batch, replace the normal delivery description with its bounded milestone and include the approved isolation, local acceptance, integration owner, final verification ticket, and failure handling. Do not present batch completion as releasable delivery. For a confirmed exploration ticket, describe its question, evidence output, and completion condition instead of inventing an implementation outcome. Omit optional source/parent fields when absent.
 
 ### Local Markdown Template (`.scratch/<feature>/issues/<NN>-<slug>.md`)
 
 ```markdown
 # <NN>: <Ticket Title>
 
-Status: ready-for-agent
-Blocked by: None
+Status: <actual project status mapped from the execution role>
+Blocked by: <necessary upstream references, including completed tickets, or None>
 
-<!-- If a parent spec or source document exists, link it here -->
-Spec: <relative/path/to/spec.md>
+Spec: <canonical source reference, if present>
 
 ## What to build
 
-<Describe the end-to-end behavior this ticket delivers, from a functional perspective. Avoid stale code snippets unless encoding an exact state machine or mathematical formula.>
+<End-to-end behavior and necessary rationale, or the bounded outcome defined above.>
 
 ## Invariants & Scope Bounds
 
-- **Touched Areas**: <Allowed modules, files, or physical scopes>
-- **Relevant Invariants**: <Key rules and forbidden patterns governing this ticket>
+- **Touched Areas**: <Allowed modules or physical scopes>
+- **Relevant Invariants**: <Rules and safety boundaries relevant to this ticket>
+- **Non-goals**: <Explicit exclusions>
 
 ## Acceptance criteria
 
-- [ ] <Deterministic verification assertion or automated test command>
-- [ ] <Observable behavior or error handling proof>
+- [ ] <Observable expected result>; verify by <existing check or verification this ticket adds>.
+- [ ] <Relevant error/edge-case result>; verify by <test, measurement, state evidence, or human sign-off criterion>.
 ```
 
 ### Remote Issue Body Template
@@ -131,28 +129,23 @@ Spec: <relative/path/to/spec.md>
 <Link to parent issue/spec if applicable, otherwise omit>
 
 ## What to build
-<The end-to-end behavior this ticket delivers.>
+<End-to-end behavior and necessary rationale, or the bounded outcome defined above.>
 
 ## Invariants & Scope Bounds
 - **Touched Areas**: <Allowed scopes>
-- **Relevant Invariants**: <Key rules and constraints>
+- **Relevant Invariants**: <Rules and safety boundaries relevant to this ticket>
+- **Non-goals**: <Explicit exclusions>
 
 ## Acceptance criteria
-- [ ] <Deterministic verification assertion or automated test command>
-- [ ] <Observable behavior or error handling proof>
+- [ ] <Observable expected result>; verify by <existing check or verification this ticket adds>.
+- [ ] <Relevant error/edge-case result>; verify by <test, measurement, state evidence, or human sign-off criterion>.
 
 ## Blocked by
-- <Reference to blocking issues, or "None">
+- <Necessary upstream references, including completed tickets, or "None">
 ```
 
 ---
 
-## 4. Forbidden Paths
+## 4. Execution Boundary
 
-- **NEVER** use arbitrary magic numbers (e.g. rigid line count limits) as mechanical slicing rules.
-- **NEVER** slice into incomplete, untestable stubs that break causal cohesion.
-- **NEVER** forbid or discourage downstream executors from consulting the parent Spec when needed.
-- **NEVER** mandate specific preceding or succeeding skill workflows.
-- **NEVER** drop or dilute system invariants and safety boundaries during ticket creation.
-- **NEVER** invent unmapped custom triage labels on remote issue trackers.
-- **NEVER** modify production application source code within this skill.
+Create ticket artifacts, not production application changes or the work described by the tickets. Do not require specific preceding or succeeding skills. Existing project lifecycle and authorization rules continue to govern execution; this skill does not redefine them.
