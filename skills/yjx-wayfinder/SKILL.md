@@ -84,10 +84,20 @@ Each ticket carries a `wayfinder:<type>` label: `research`, `prototype`, `grilli
 
 Every ticket is either **HITL** (human in the loop, worked with a human who speaks for themselves) or **AFK** (driven autonomously by the agent). A HITL ticket only resolves through live human exchange; the agent never stands in for the human's side.
 
-- **`grilling` (HITL)**: Align on core trade-offs, scope boundaries, and decision forks. Delegate to the `yjx-grill` skill. `yjx-wayfinder` treats `yjx-grill` as a black-box alignment engine: when human confirmation is reached, record its confirmed output as the ticket's resolution. Always consult `domain-modeling` alongside if domain terminology or models are involved.
+- **`grilling` (HITL)**: Align on core trade-offs, scope boundaries, and decision forks. Delegate to the `yjx-grill` skill. Treat it as a black-box alignment engine and accept either a Direct Result or an approved Formal Contract under [Alignment Result Handoff](#alignment-result-handoff). Always consult `domain-modeling` alongside if domain terminology or models are involved.
 - **`research` (AFK)**: Reading documentation, investigating APIs, or surveying external facts that a decision waits on. Resolved by delegating to the `research` skill. Use when external knowledge is required.
 - **`prototype` (HITL)**: Raise discussion fidelity by making a cheap, rough, concrete, disposable artifact to react to (an outline draft, UI wireframe stub, or code spike) by delegating to the `prototype` skill. The prototype is explicitly an exploratory spike, not production delivery.
 - **`task` (HITL or AFK)**: Non-decision manual work that must happen before a decision can be made (e.g. provisioning access, running a data-sampling query, measuring physical dimensions). Output facts and environment status; do not implement production deliverables.
+
+### Alignment Result Handoff
+
+These receipt rules apply after an alignment permitted by the user and host; they do not change invocation permissions.
+
+A Direct Result may contain verified facts, answered user intent, and agent inferences. Preserve those sources instead of treating the whole result as fact or as an approved contract. An unapproved contract candidate is not an approved Formal Contract.
+
+Before closing a `grilling` ticket, ensure that live human confirmation explicitly covers its final conclusion and every material premise needed to unblock downstream work, including any such agent inference. A partial answer or acknowledgment does not approve subsequently added content. Keep unconfirmed necessary premises unresolved: do not close the ticket or graduate dependents on their basis. Reuse an existing explicit confirmation of the same complete scope rather than asking twice.
+
+Confirmation of a Direct Result here is ticket-conclusion confirmation, not implementation authorization and not a request to turn it into a Formal Contract. An approved Formal Contract retains only its existing scoped authorization. Closing a ticket neither enlarges authority nor starts execution. Confirmed agent inferences retain their source; carry material boundaries and their confirmation scope into the resolution artifact and dependent decisions.
 
 ## Fog of War & Graduation
 
@@ -134,7 +144,8 @@ User invokes with a map or ticket (e.g. `/yjx-wayfinder <map>` or `/yjx-wayfinde
 2. **Choose & Claim the Ticket**: If the user specified a ticket, use it. Otherwise, recommend an unblocked Frontier ticket (prioritizing high-leverage bottlenecks that unblock major fog). Claim it by assigning it to yourself.
 3. **Resolve the Ticket**: Zoom into the ticket body and any related closed decisions. Delegate to the matching skill (`yjx-grill`, `research`, `prototype`, or `task`).
 4. **Record the Resolution**:
-   - Post the confirmed resolution artifact as a comment on the ticket.
+   - For a `grilling` ticket, apply [Alignment Result Handoff](#alignment-result-handoff) before closing or unblocking anything.
+   - Post the resolution artifact as a comment on the ticket, retaining its sources, material boundaries, and applicable confirmation scope.
    - Close the ticket issue.
    - Append a one-line gist and link to the map's `## Decisions so far` (or apply the [Decision Superseding](#decision-superseding) protocol if an earlier decision was overridden).
 5. **Graduate Fog**: Scan `## Not yet specified`. For any text item whose blockers are now closed, remove it from `## Not yet specified` and create a new physical Frontier issue. Update the Map issue.

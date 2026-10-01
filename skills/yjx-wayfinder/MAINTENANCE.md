@@ -28,7 +28,9 @@ It is explicitly **domain-agnostic**: designed equally for software architecture
 * **Problem**: Original Wayfinder hardcoded a 29-line unstructured `grilling` prompt that lost subtle invariants across sessions. Conversely, tightly coupling to the exact internal section layout of `yjx-grill` creates fragile abstractions.
 * **Design**: 
   - **Macro Charting**: `yjx-wayfinder` passes explicit prompt constraints into `yjx-grill` (*"Breadth-first exploration; focus on Destination and boundary scope; do not drill down into low-level implementation/parameter details"*).
-  - **Micro Resolution**: `yjx-wayfinder` treats `yjx-grill` as a black-box alignment engine, recording its final confirmed artifact as the ticket's resolution without hardcoding internal section names.
+  - **Micro Resolution**: `yjx-wayfinder` accepts either a Direct Result or an approved Formal Contract without hardcoding internal section names. The runtime's Alignment Result Handoff owns receipt and closeout: it preserves sources and requires human confirmation of the complete ticket conclusion and material premises needed to unblock dependents. This avoids treating a short result as pure fact, a partial answer as approval of attached assumptions, or an unapproved candidate as an approved contract.
+  - **Authority Separation**: Ticket confirmation does not force a Direct Result into a contract or grant implementation authority. Existing formal-contract authorization keeps its scope; ticket closure neither extends it nor starts execution. Confirmed inferences retain their origin.
+  - **Compatibility Boundary**: These changes concern results from alignments already permitted by the user and host. Invocation metadata and cross-host triggering remain unchanged and are not validated by this handoff contract.
 
 ### 4. Lightweight Decision Superseding
 * **Problem**: When exploring uncharted territory, later discoveries frequently invalidate or amend earlier premises. Without a revision protocol, subsequent sessions read contradictory or stale decisions from the map.
@@ -58,6 +60,7 @@ Before modifying or reviewing this skill, verify that the proposed changes satis
 - [ ] **Strict Anti-Premature Ticketing**: Never creates physical tracker issues for blocked or hypothetical downstream steps. Only unblocked frontier items become physical issues.
 - [ ] **Single Source of Truth**: The Map issue is the canonical index. A decision lives in exactly one place (its ticket), and the Map only gists and links.
 - [ ] **Loose-Coupling with `yjx-grill`**: Does not hardcode assumptions about `yjx-grill`'s internal sections or field names.
+- [ ] **Scoped Result Confirmation**: Preserves claim sources and binds HITL closeout to the complete conclusion and material downstream premises; partial approval cannot unblock dependents or authorize execution.
 - [ ] **Maintains Plan, Don't Do**: Preserves strict boundaries on ticket types (`task` and `prototype` are for fact-finding and disposable spikes, never for unaligned production implementation).
 - [ ] **Retains Decision Superseding**: Keeps the lightweight strikethrough/pointer protocol for overridden decisions.
 - [ ] **Preserves Closeout Synthesis**: Ensures the map lifecycle terminates in a cohesive destination artifact synthesis.
