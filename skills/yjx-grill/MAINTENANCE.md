@@ -15,7 +15,11 @@ The third approved choice preserves the pressure-testing purpose: challenge a pr
 
 These choices supersede the former high-reversal-cost-only question gate and the rule that every asked decision automatically required a contract. Do not restore either while editing neighboring wording.
 
-Question layout and provenance serve different purposes. Questions lead with `Q<N>`, followed directly by necessary background in a blockquote and then any real options. The quote has no context label. Open exploration and single-approach acceptability questions are valid; importance does not imply a menu. This supersedes mandatory proposal quotes: source distinctions remain in accurate prose and the private record, while conclusions synthesize the solution rather than replaying the interview.
+Question layout and provenance serve different purposes. Genuine intent/judgment questions and required formal approval requests lead with `Q<N>`, followed directly by necessary background in a blockquote and then any real options. The quote has no context label; its relevant situation, unresolved judgment, and consequences are content needs, not mandatory fields. Open exploration and single-approach acceptability questions are valid; importance does not imply a menu. This supersedes mandatory proposal quotes: source distinctions remain in accurate prose and the private record, while conclusions synthesize the solution rather than replaying the interview.
+
+The conversation retrospective exposed a routing failure, not a need to number every reply: an ordinary conclusion ended in an ambiguous feedback checkpoint, then a formatting correction prompted unnecessary alternatives. Keep the question gate ahead of formatting, and leave explanations, status reports, and completed conclusions unnumbered. Collaborative feedback remains welcome without manufacturing an extra approval gate; this does not waive required review, formal approval, or unresolved material premises.
+
+Formal-contract approval confirms the reviewed conclusion, not permission to implement it. This replaces the former "Approved to implement" approval meaning, which left consequential planning decisions without a completion path when the user withheld implementation authority. Keep the existing consequence gate and independent review; confirmation, implementation authorization, and execution intent can share one explicit reply without becoming synonymous. Earlier explicit authorizations retain their actual scope.
 
 ## Failure Modes and Rationale
 
@@ -26,7 +30,7 @@ Question layout and provenance serve different purposes. Questions lead with `Q<
 - **Premature convergence:** ready questions need settled prerequisites; the necessity of two questions does not make them independent. Pending nodes are legitimate ledger states, not proof of completion.
 - **Local completion mistaken for global completion:** a slice returns to the remaining-work loop. Partial execution needs independent, authorized scope and preserves the rest of the alignment.
 - **Approval laundering:** conclusion acknowledgment, scoped implementation authorization, and execution intent have different effects. An old plan's execution instruction cannot authorize a materially different plan.
-- **Provenance collapse:** approval changes permission, not claim origin. The private ledger retains sources and evidence; natural wording distinguishes confirmed content, new proposals, and material assumptions without imposing source-shaped layout.
+- **Provenance collapse:** neither conclusion confirmation nor implementation authorization changes claim origin. The private ledger retains sources and evidence; natural wording distinguishes confirmed content, new proposals, and material assumptions without imposing source-shaped layout.
 - **Reviewer amplification:** scrutiny tests evidence and consequences. Rejected alternatives reopen only for the entrypoint's evidence-based reasons.
 - **Thin or repetitive contracts:** preserve the actual problem, selected solution, key reasons, accepted costs, and implementation-critical semantics with their topic. Remove restatement and routine mechanics rather than correctness boundaries.
 
@@ -46,6 +50,9 @@ When changing the skill, verify that:
 - coverage and source/evidence mappings survive partial answers, new evidence, review, approval, and handoff;
 - observed high stakes are not erased merely by answering a question, and reviewer unavailability or unresolved correctness findings cannot be presented as successful completion;
 - collaborative discussion remains open to feedback, accepts clear closure without a fixed phrase or repeated unchanged confirmations, and preserves separate execution authorization;
+- a request for Q-numbered questions does not manufacture a decision; explanation requests receive an explanation, while genuine questions and required approval requests use the question-first layout;
+- background supplies enough context to decide without fixed fields or lengths, leading assumptions, duplicated option comparisons, or a required link detour; conclusions without pending decisions or approvals do not create an unspecified feedback checkpoint;
+- a reviewed planning-only contract can be confirmed without implementation authority; bare agreement does not start execution, permission without a start instruction remains permission, and an explicit instruction to implement the reviewed result needs no duplicate confirmation;
 - problem discovery permits open questions and user correction without requiring every discussion to restart from first principles;
 - questions precede their unlabelled background quotes, real alternatives have recommendation-first numbered choices and honest costs, and important single-approach questions do not manufacture options;
 - conclusions organize the understood problem and resulting solution by topic, distinguish new proposals naturally, and scale down without empty sections or question-by-question replay;

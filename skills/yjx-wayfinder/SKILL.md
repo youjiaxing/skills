@@ -97,7 +97,7 @@ A Direct Result may contain verified facts, answered user intent, and agent infe
 
 Before closing a `grilling` ticket, ensure that live human confirmation explicitly covers its final conclusion and every material premise needed to unblock downstream work, including any such agent inference. A partial answer or acknowledgment does not approve subsequently added content. Keep unconfirmed necessary premises unresolved: do not close the ticket or graduate dependents on their basis. Reuse an existing explicit confirmation of the same complete scope rather than asking twice.
 
-Confirmation of a Direct Result here is ticket-conclusion confirmation, not implementation authorization and not a request to turn it into a Formal Contract. An approved Formal Contract retains only its existing scoped authorization. Closing a ticket neither enlarges authority nor starts execution. Confirmed agent inferences retain their source; carry material boundaries and their confirmation scope into the resolution artifact and dependent decisions.
+Confirmation of a Direct Result here is ticket-conclusion confirmation, not implementation authorization and not a request to turn it into a Formal Contract. A reviewed and approved Formal Contract can likewise settle a planning ticket without implementation authority, subject to the same premise and durable-resolution checks. Preserve any separately established implementation authorization at its actual scope; neither contract approval nor ticket closure grants or enlarges it or starts execution. Confirmed agent inferences retain their source; carry material boundaries and their confirmation scope into the resolution artifact and dependent decisions.
 
 ## Fog of War & Graduation
 

@@ -24,11 +24,11 @@ Keep the candidate out of the approval step until it has no unresolved substanti
 
 Present the reviewed contract once, organized by the resulting solution rather than question order, with provenance clear in the wording. Name this contract or its concrete scope before asking for approval. Other aligned results shown as background retain their own approval status and stay outside this request; grouping creates neither new approval units nor cross-contract authorization.
 
-Ask for confirmation with exactly these meanings, localized:
+Use the entrypoint's question-first layout for this required approval request. Ask for confirmation with exactly these meanings, localized:
 
-1. Approved to implement.
+1. Approve this conclusion.
 2. Items need adjustment.
 
-The first grants the scoped implementation authorization defined in the entrypoint, not an automatic start command. A reply with a material condition or change returns to alignment and required re-review before renewed approval; an old candidate's approval cannot approve new content.
+The first confirms this reviewed conclusion and its boundaries, including for planning-only work; it does not itself authorize implementation. Apply the entrypoint's authorization rules when the same reply also authorizes implementation or directs execution, without requiring separate turns. A reply with a material condition or change returns to alignment and required re-review before renewed approval; an old candidate's approval cannot approve new content.
 
 After approval, return to the entrypoint's slice-completion loop rather than ending a multi-slice request prematurely. If a still-valid execution instruction covers this scope, hand off without asking the user to repeat it, subject to remaining dependencies and the execution boundary.

@@ -18,6 +18,8 @@ Read [MAINTENANCE.md](MAINTENANCE.md) before reviewing or changing this skill; o
 
 When the user explicitly requests collaborative discussion, present an adjustable synthesis and allow feedback even if no question remains. Interpret readiness to conclude by meaning, not a fixed phrase: agreement with a complete stated result can conclude discussion, while agreement with one proposal does not settle remaining work. Do not repeatedly reconfirm the same unchanged result. Discussion completion is not execution authorization and does not remove required review or formal approval.
 
+Allowing feedback is not an additional confirmation gate. When no user-owned decision or required approval remains, state the result and current status, then continue ready work within the agreed scope or conclude; do not leave an unspecified request to validate the result as a waiting point. Unconfirmed material premises remain pending, not implicitly accepted.
+
 ## Presentation Density
 
 Use the question-first layout in section 5 for discussion questions. Organize explanations and results by their actual subject, with short topic headings when several outcomes need separate treatment. A short, single-topic reply needs no heading. Keep behavior, important consequences, and acceptance local to the topic they support; internal capability-slice terminology is not display vocabulary.
@@ -90,7 +92,11 @@ Retain selected approaches and material costs, rejected branches and their reaso
 
 Ask zero to three ready, orthogonal questions per round. Each must pass section 3 and remain necessary without changing another question's premises, options, or recommendation. Prioritize pivots such as goal, source of truth, ownership, external guarantees, irreversible transitions, consistency, and failure policy. Prune impossible or already-settled options with evidence.
 
-When ready questions remain, lead the round with its first question after at most a brief acknowledgment, not a preliminary diagnosis or proposal. Start each question with a stable `Q<N>` heading that states the actual question. Directly beneath it, put the necessary background in a Markdown blockquote, without a "Context" label or equivalent. Explain the relevant situation, why the question matters, and unfamiliar terms only as needed; distinguish verified facts from hypotheses or hypothetical examples. Place any options below and outside the quote. Keep this reading order without imposing fixed paragraph lengths or extra field labels.
+Decide whether human input is needed before choosing a question format. Use `Q<N>` for genuine questions about intent or judgment and for required formal approval requests, not for every reply. Answer the user's requests for explanation, acknowledge settled choices, and report facts, progress, blockers, or conclusions in ordinary prose unless a new question independently passes the gate. A formatting preference does not justify inventing options or reopening settled choices.
+
+When ready questions remain, lead the round with its first question after at most a brief acknowledgment, not a preliminary diagnosis or proposal. Start each question with a stable `Q<N>` heading that states the actual question. Directly beneath it, put the necessary background in a Markdown blockquote, without a "Context" label or equivalent. Place any options and their trade-offs below and outside the quote.
+
+Make the background sufficient to judge the question: include the established situation or constraints, the unresolved judgment, and what the answer changes, only as needed. Distinguish verified facts, assumptions, and suggestions naturally. Explain unfamiliar terms and cite decisive evidence briefly, but keep the question understandable without opening links. Omit investigation history and option comparisons already covered below. Use one paragraph when enough, without mandatory fields, sentence counts, or fixed lengths; the background must not present the recommended choice as an established premise.
 
 Choose the response form to fit the unresolved judgment:
 
@@ -103,7 +109,7 @@ For example, the layout for alternatives is:
 ```markdown
 **Q1: Which outcome should this change prioritize?**
 
-> The relevant observed situation and why this choice changes the result.
+> The relevant situation, what remains undecided, and what the answer changes.
 
 1. **Approach A (recommended).** What it changes, why it fits, and its cost.
 2. **Approach B.** What it changes, when it fits, and why not now.
@@ -142,9 +148,11 @@ Resolve substantiated findings and obtain targeted independent re-review after m
 
 ## 8. Preserve Authorization Across Handoff
 
-Distinguish acknowledging a conclusion, authorizing specified implementation behavior, and directing execution. A discussion answer or a Direct Result is not automatically implementation authorization. Formal approval authorizes only the reviewed contract's listed behaviors and boundaries, including disclosed material inferences while preserving their source. Undisclosed defaults receive no authority from that approval.
+Distinguish confirming a conclusion, authorizing specified implementation behavior, and directing execution. Approval of a Formal Contract confirms its reviewed conclusion and boundaries; like a discussion answer or Direct Result, it does not by itself grant implementation authority. Record explicit implementation authorization separately, limited to the stated behaviors and boundaries, including disclosed material inferences while preserving their source. Undisclosed defaults receive no authority from that authorization.
 
-Material changes to an approved behavior or boundary require renewed alignment and approval; a conditional approval is an adjustment, not approval of an unrevised contract. Approval does not verify uncertain facts or replace coverage or review.
+These distinctions do not require separate turns. An explicit instruction to implement the reviewed result can confirm it, authorize its implementation, and direct execution together. Permission to implement without a direction to start is not an execution instruction. Preserve earlier explicit authorizations according to their actual wording and scope; do not retroactively expand or revoke them, or infer authorization from ambiguous records.
+
+Material changes to an approved behavior or boundary require renewed alignment, required review, and approval; a conditional approval is an adjustment, not approval of an unrevised contract. Approval does not verify uncertain facts or replace coverage or review.
 
 Hand off only on an explicit execution instruction that still covers the current aligned and authorized scope, including the current reviewed contract where required. An instruction limited to an old plan does not transfer to a materially changed plan; if withdrawn, invalidated, or unclear in scope, obtain a new instruction. A still-valid earlier instruction or one in the approval reply needs no repetition.
 

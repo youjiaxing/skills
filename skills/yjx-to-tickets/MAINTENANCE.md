@@ -33,7 +33,9 @@ These refinements preserve the original tracer-bullet purpose while making its b
 - **Grounding without over-design**: inspect supplied sources, relevant decisions, and existing implementation only far enough to establish scope, dependencies, and evidence. Leave ordinary implementation choices to executors. Choices affecting task structure or major boundaries require discussion; genuine experiments may become explicitly confirmed exploration tickets, but their results do not approve a downstream design.
 - **Controlled wide refactors**: retain the original expand/migrate/contract dependency structure. An isolated integration exception allows locally verifiable batches only with an owner, failure handling, and final whole-system verification. All templates must distinguish a batch milestone from releasable delivery.
 - **Evidence, not commands alone**: every acceptance result needs a checking method. Distinguish existing entrypoints from verification to be added; support software tests, physical measurements, state evidence, and human sign-offs without inventing commands.
+- **Behavioral scope, not location whitelists**: tickets do not create file or module whitelists. Optional impact locations preserve the Spec's non-exhaustive navigation evidence; the agreed behavior, contracts, invariants, non-goals, and existing explicit restrictions govern scope. Unlisted locations are not automatically out of scope, and listed ones do not grant arbitrary modification rights.
 - **Bounded publication**: create approved tickets or restore clearly identified missing parts of that publication. Preserve identities and stop affected work on ambiguity, content conflict, or implementation progress. Historical-ticket changes need separate confirmation; parent issues remain untouched. Read back results and report incomplete work without claiming success.
+- **Consumer-compatible relationships**: replace the unconditional body-reference fallback with the project's actual relationship protocol. All readiness and execution consumers must recognize the representation. In the GitHub/`yjx-gh-kanban` workflow, native relationships remain authoritative; a body link does not establish a blocker. Check write/read capability before affected publication and verify established relationships afterward, while allowing creation to obtain real identities first. This changes the publisher rules, not kanban parsing or atomicity guarantees.
 - **Keep the skill small**: the runtime remains a five-step workflow. Do not grow it into task scheduling, staged activation, transactional publication, or ongoing plan synchronization. Runtime rules live in `SKILL.md`; this file records rationale and review cases, not a second execution protocol.
 
 ## Anti-Drift Validation Checklist
@@ -44,11 +46,13 @@ When modifying this skill, ensure none of the following regressions occur:
 - [ ] **Causal Cohesion Intact**: Are normal tickets verifiable on completed blockers without downstream-dependent stubs or automatic chain merging?
 - [ ] **Controlled Integration**: Are wide-refactor milestones, dependencies, local evidence, and the final integration gate consistent across rules and templates?
 - [ ] **SSOT & Open Inspection**: Does the skill maintain links to the parent Spec (if present) without forbidding full Spec inspection?
+- [ ] **Behavioral Boundaries**: Do both templates preserve behavior-based scope without creating file/module whitelists or treating impact locations as permissions?
 - [ ] **Traceability Enforced**: Do requirements and invariants have acceptance evidence, including an owner for cross-ticket checks?
 - [ ] **Acceptance Is Observable**: Do the review example and both ticket templates require a result plus a verification method, not a command alone?
 - [ ] **Unknowns Stay Honest**: Are local choices left open while task-shaping decisions and experiment-dependent designs remain unapproved until confirmed?
 - [ ] **AFK/HITL Segregation**: Do actual capabilities, permissions, and human judgment determine the role, including in examples?
 - [ ] **Native Tracker Alignment**: Does the output strictly adhere to the repo's configured tracker and triage label mappings?
+- [ ] **Recognized Relationships**: Are required dependencies written and verified through a source recognized by every readiness/execution consumer, with capability gaps stopping affected publication rather than triggering an incompatible fallback?
 - [ ] **Publication Scope**: Are retries distinguishable from historical-ticket edits, with existing identities protected and incomplete results reported?
 - [ ] **Decoupled Framing**: Are hardcoded upstream/downstream slash command mandates avoided?
 
@@ -67,3 +71,7 @@ Use these as semantic review or forward-testing cases, not wording snapshots. Pa
 | A local helper choice is open, but a migration strategy still needs a decision | Leave the helper to the executor; pause only implementation drafts affected by the strategy. |
 | An experiment establishes feasibility | Obtain confirmation of the resulting task-shaping design before finalizing downstream implementation tickets. |
 | Publication stops after some tickets exist | Reuse verified identities and fill only attributable gaps; pause on conflicts or progress rather than overwrite or duplicate. |
+| A GitHub publisher can write issue bodies but cannot establish the native blockers consumed by the configured kanban | Pause affected publication; do not substitute prose for native relationships. |
+| Bodies contain every blocker but the authoritative relation readback is empty or fails | Report missing or unverified relationships and incomplete publication, not success. |
+| A project uses body-based relationships and every readiness/execution consumer supports that protocol | Allow that representation; do not impose GitHub-native requirements on other trackers. |
+| A necessary change touches an unlisted helper while another proposal changes unrelated behavior in a listed module | Do not treat the helper's location as a scope violation; reject the unrelated behavior expansion. Preserve existing explicit project restrictions. |

@@ -39,9 +39,11 @@ Handle unknowns by their effects:
 Cut through the domain layers needed for each outcome, not every possible layer. Each ticket states:
 
 - **Delivery & rationale**: the end-to-end behavior and necessary background.
-- **Scope bounds**: allowed areas, relevant invariants, and explicit non-goals. Keep the Spec as the global source of truth; carry only the constraints relevant to this ticket.
+- **Scope bounds**: agreed behavior and contract changes, relevant invariants, explicit non-goals, and existing user or project restrictions. Keep the Spec as the global source of truth; carry only the constraints relevant to this ticket.
 - **Acceptance & verification**: pair an observable expected result with a way to check it. A command alone is not acceptance. Identify existing verification entrypoints versus verification the ticket must add; never invent an existing command. Use domain-appropriate evidence, such as tests, measurement tolerances, state changes, or explicit human sign-off criteria.
 - **Blocked by**: only upstream outcomes genuinely needed before this work can begin. Retain necessary edges to completed tickets; their completion satisfies the dependency rather than erasing it. Schedule necessary prefactoring ahead of the work it enables.
+
+Impact locations are optional, non-exhaustive navigation or impact evidence; distinguish inspected locations from predicted ones. Do not create file or module modification whitelists. A necessary change at an unlisted location does not by itself require renewed approval, and a listed location does not authorize unrelated behavior changes. Crossing an agreed behavioral or contract boundary requires renewed alignment. Preserve existing explicit user or project restrictions rather than deriving new permissions or prohibitions from location lists.
 
 #### Wide Refactor Exception
 
@@ -81,10 +83,12 @@ For wide refactors, include the exception's integration boundaries above. Ask ab
 ### Step 5: Publish Tickets to Configured Tracker
 Publish only approved, finalized tickets following the configured tracker protocol.
 
+Establish the project's relationship source of truth and the ability to write and read it before affected publication; if that capability is unavailable, pause the affected publication and report the blocker. Body references can serve as relationship records only when the project protocol permits them and every consumer determining readiness or execution eligibility recognizes them. For GitHub with `yjx-gh-kanban`, native relationships are authoritative; body links are explanatory, not a fallback. Missing write capability does not change that protocol.
+
 - **Before writing**: inspect existing tickets and previous publication results. Create new tickets or resume this approved publication, retaining existing identities. On retry, fill only missing parts clearly attributable to the approved work. If identity is uncertain, content conflicts, or implementation has started, pause the affected part and report it; do not overwrite or blindly create duplicates. Changes to historical tickets require a separate diff and user confirmation.
 - **Local Markdown**: write one file per ticket under the configured path (default `.scratch/<feature-slug>/issues/<NN>-<slug>.md`). For a fresh feature, number from `01` in dependency order; when extending one, preserve existing numbers and use unused numbers for new tickets. Use the local template with resolved blocker references and mapped status values.
-- **Remote tracker**: create issues in dependency order using real identifiers. Record parent and blocking relationships separately using native relationships where supported; otherwise use explicit body references. Apply the project's mapped labels, not unmapped canonical names.
-- **After writing**: read back contents, execution statuses/labels, and dependencies against the approved breakdown. Report actual identifiers and any unfinished parts; do not claim complete publication until the approved results are verified.
+- **Remote tracker**: create issues in dependency order using real identifiers, then establish parent and blocking relationships separately through the project's authoritative mechanism. Apply the project's mapped labels, not unmapped canonical names.
+- **After writing**: read back contents, execution statuses/labels, and relationships from their configured sources of truth against the approved breakdown, not just the body references. Missing or unverifiable required relationships mean publication is incomplete. Report actual identifiers and any unfinished parts; do not claim complete publication until the approved results are verified.
 
 Do not modify or close parent spec/map issues. This step does not add task scheduling, staged activation, a publication state machine, or an atomic-publication guarantee.
 
@@ -92,7 +96,7 @@ Do not modify or close parent spec/map issues. This step does not add task sched
 
 ## 3. Ticket Templates
 
-Both templates use stable domain/module boundaries rather than prescribing a stale file-by-file implementation. Specific source references or protected paths are appropriate when needed for traceability or scope. Include code snippets only when a decision-rich state machine, schema, type shape, or formula is more precise than prose; retain its source.
+Both templates express the behavioral scope and impact-location distinction from Step 2 rather than prescribing a file-by-file implementation. Include existing protected paths only with their user or project basis. Include code snippets only when a decision-rich state machine, schema, type shape, or formula is more precise than prose; retain its source.
 
 For a wide-refactor batch, replace the normal delivery description with its bounded milestone and include the approved isolation, local acceptance, integration owner, final verification ticket, and failure handling. Do not present batch completion as releasable delivery. For a confirmed exploration ticket, describe its question, evidence output, and completion condition instead of inventing an implementation outcome. Omit optional source/parent fields when absent.
 
@@ -112,7 +116,8 @@ Spec: <canonical source reference, if present>
 
 ## Invariants & Scope Bounds
 
-- **Touched Areas**: <Allowed modules or physical scopes>
+- **Scope**: <Agreed behavior and contract changes>
+- **Impact Locations**: <Optional, non-exhaustive navigation evidence; distinguish inspected from predicted locations>
 - **Relevant Invariants**: <Rules and safety boundaries relevant to this ticket>
 - **Non-goals**: <Explicit exclusions>
 
@@ -132,7 +137,8 @@ Spec: <canonical source reference, if present>
 <End-to-end behavior and necessary rationale, or the bounded outcome defined above.>
 
 ## Invariants & Scope Bounds
-- **Touched Areas**: <Allowed scopes>
+- **Scope**: <Agreed behavior and contract changes>
+- **Impact Locations**: <Optional, non-exhaustive navigation evidence; distinguish inspected from predicted locations>
 - **Relevant Invariants**: <Rules and safety boundaries relevant to this ticket>
 - **Non-goals**: <Explicit exclusions>
 
