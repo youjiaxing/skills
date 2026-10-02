@@ -9,15 +9,16 @@ Its optimization target is **minimum sufficient continuation**:
 - **Minimum** keeps one semantic home, references stable sources, and excludes context that cannot affect resumption.
 - **Sufficient** preserves implementation-critical decisions, closed branches, corrections, evidence, and authorization that a fresh agent cannot safely infer.
 
-This differs from a general conversation summary. A shorter file that loses a decision boundary or reopens settled alternatives has failed; a complete file that repeats live state or carries dead metadata has also failed.
+This differs from a general conversation summary. Sufficiency comes before pruning: a shorter file that loses a decision boundary or reopens settled alternatives has failed. Remove repetition and dead metadata without weakening a fresh agent's ability to continue correctly.
 
 ## Design decisions
 
-- **Single control point:** phase, authorization, active work, and next permitted action appear together at the top so a successor cannot mistake saving for approval.
+- **Single control point:** phase, authorization, active work, and next permitted action appear together at the top. Saving neither grants nor revokes permission; potentially confusing old control information is explicitly historical or superseded, without changing the substantive agreement or original artifacts.
+- **Evidence-backed sufficiency:** goal, scope, constraints, acceptance, progress, and action boundaries are coverage checks, not mandatory sections. Decisions, completed work, verified results, and unknown outcomes remain distinct; saving does not run task verification.
 - **Authority plus delta:** use the current authoritative artifact or consolidated content once, then carry only subsequent changes and missing continuation facts.
 - **Decision closure:** compact ledgers preserve the names and closure conditions of rejected branches without reproducing full question cards.
 - **Source-agnostic continuation:** the skill recognizes useful contracts, plans, and issue records semantically. It has no fixed dependency on an upstream alignment skill or downstream implementation workflow.
-- **Triggered references:** a path earns space by naming why and when it must be read. Current work loads current requirements; later branches load their own constraints.
+- **Triggered references:** a path earns space by naming why and when it must be read. Established later-stage dependencies, including skills, remain available without immediate loading or implied execution permission. Existing version cues may signal changes; agents resolve routine discrepancies from known sources without a new verification workflow or delegating checks to the user.
 - **Decision-bearing evidence:** evidence travels when it supports a decision, unresolved item, acceptance condition, or expensive-to-recover fact. Stable evidence stays at its authoritative location.
 - **Ephemeral runtime state:** observations carry time and recheck expectations. Dead handles carry no continuation value.
 - **Operating-system temporary storage:** continuation artifacts stay outside the workspace and identify their temporary lifetime.
@@ -31,11 +32,16 @@ Use these cases to evaluate changes; they are not runtime headings or a question
 | Situation | Expected result |
 | --- | --- |
 | A proposal is awaiting final approval | The control block says approval and implementation authorization are still pending; the successor resumes that confirmation. |
+| Implementation was authorized with a prohibition on committing | The successor retains implementation permission and the prohibition, without asking for the same authorization again. |
+| A design was selected, an edit was made, and its verification has not run | The continuation distinguishes the decision, completed edit, and unverified result; saving neither invents a pass nor runs task verification. |
 | A user selected one option from several consequential alternatives | The selected decision remains complete; closed alternatives, decisive closure reason, and applicable reopening condition appear in compact form. |
 | A full user-confirmed contract exists only in the conversation | The contract is carried once as the authoritative content, with later corrections added as deltas. |
 | A current stable plan or issue already owns the full contract | The continuation references it with purpose and loading trigger, and carries only missing continuation state. |
 | The latest assistant response conflicts with a later user correction | The correction is active and the superseded statement is excluded or identified only when needed to explain closure. |
-| The current step is confirmation and implementation rules apply later | Only confirmation inputs are immediate requirements; implementation references are triggered by entering implementation. |
+| A carried contract contains old authorization or next-action text | Confusable old control information is explicitly historical or superseded by the control block; the substantive agreement and original artifact stay unchanged. |
+| The current step is confirmation and a later implementation skill was already selected | The skill reference survives with its loading trigger; only confirmation inputs are immediate requirements, and listing the skill grants no execution permission. |
+| A critical reference has a known version cue and a later change | The cue is a lightweight signal; the agent resolves the discrepancy from known sources and corrects only the continuation, without changing confirmed decisions or sending routine checks to the user. |
+| A reference has no version cue, or a discrepancy cannot be resolved | No mandatory version field, fingerprinting, or snapshot workflow is introduced; unsupported conclusions stay unknown. |
 | Quantitative evidence determines a decision or acceptance condition | The relevant result travels with enough source or counting detail to review it. |
 | A cancelled subagent produced no result | The file states that no result is available and what remains undone; expired identifiers are omitted. |
 | A live background task can still be inspected independently | The file preserves its observed status and usable inspection method. |
@@ -47,9 +53,11 @@ Use these cases to evaluate changes; they are not runtime headings or a question
 
 ## Review method
 
-Exercise the skill against source material containing decisions, corrections, authorization changes, references, quantitative evidence, and background work. Compare the saved file with the source and verify both sides of the target:
+During skill maintenance, exercise saving and resumption independently: give a saving agent realistic source material containing decisions, corrections, authorization changes, references, evidence, and background work. Give a separate successor only the resulting file and its accessible references, not the original conversation or expected answers. Compare its interpretation and next permitted action with the source. This is maintenance verification, not a subagent requirement or added workflow for ordinary saves.
 
-1. Removing another sentence would lose a continuation-relevant semantic claim.
-2. A fresh agent can continue without reopening closed decisions, inventing missing authority, or accessing the old session.
+Verify sufficiency first, then economy:
+
+1. A fresh agent identifies the task, evidence-backed progress, remaining gaps, and action boundaries without reopening closed decisions, inventing authority, or accessing the old session.
+2. Repetition and irrelevant material are removed without losing continuation-critical meaning; sentence-by-sentence irreducibility is not an acceptance condition.
 
 Repository discovery checks can verify skill placement and frontmatter. They cannot prove semantic completeness, closure fidelity, or correct authority selection; review those through the scenarios above.

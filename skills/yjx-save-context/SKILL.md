@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Save Context
 
-Write one standalone continuation file, then return its path and a copyable resume prompt. Saving preserves the current phase; implementation still requires explicit authorization.
+Write one standalone continuation file, then return its path and a copyable resume prompt. Saving preserves the current phase and existing authorization; it neither grants nor revokes permission.
 
 When reviewing or redesigning this skill, read [MAINTENANCE.md](MAINTENANCE.md) first. It is not needed for ordinary execution.
 
@@ -21,14 +21,16 @@ Place one localized control block at the start of the file:
 ## <Continuation control>
 
 - **<Current phase>**: <where the task stopped>
-- **<Authorization>**: <what the successor may do>
+- **<Authorization>**: <permitted actions, applicable prohibitions, and prerequisites>
 - **<Active item>**: <open question or unresolved work; omit when none>
 - **<Next permitted action>**: <the first action allowed after resuming>
 ```
 
-Distinguish proposals, user-confirmed decisions, and authorized actions. The control block is the single semantic home for phase, authorization, active work, and the next permitted action; later sections point to it instead of restating it.
+Distinguish proposals, user-confirmed decisions, and authorized actions. The control block is the single semantic home for phase, authorization, active work, and the next permitted action; later sections point to it instead of restating it. When carried source text contains old control information that could be mistaken for current state, mark it as historical or explicitly superseded by the control block. Normalize only the continuation's presentation, preserving the substantive agreement and original artifacts.
 
 ## 2. Preserve the minimum sufficient continuation
+
+Check sufficiency before pruning. Cover the task's goal, scope, constraints, and critical acceptance conditions; distinguish decisions, completed work, verified results, and unknown outcomes, including gaps that affect continuation; preserve the action boundaries in the control block. These are internal coverage checks, satisfied by carried content or triggered references, not required output sections. Record only states supported by existing evidence: execution is not verification, and saving does not call for new task verification.
 
 Select the current authoritative source before writing:
 
@@ -36,7 +38,7 @@ Select the current authoritative source before writing:
 2. Otherwise use the latest consolidated conversation content that later messages have not superseded.
 3. Otherwise reconstruct the active state from confirmed decisions and corrections, and disclose any gap.
 
-Make the authoritative source available exactly once: reference it when it is a stable independently accessible artifact, or carry it into the continuation file when it exists only in the conversation. Then add only later corrections, authorization, unresolved work, and continuation-critical facts absent from that source. Preserve exact wording when an interface, example, state transition, limit, or acceptance condition depends on it. Keep the source's natural organization after the control block and omit empty sections.
+Choose one representation: reference a stable independently accessible source without reproducing its contents, or carry conversation-only authoritative content into the file. Then add only later corrections, authorization, unresolved work, and continuation-critical facts absent from that source. Preserve exact wording when an interface, example, state transition, limit, or acceptance condition depends on it. Keep carried content's natural organization after the control block and omit empty sections.
 
 For consequential human decisions, retain a compact decision ledger:
 
@@ -51,7 +53,9 @@ Leave full question cards, repeated comparisons, and superseded intermediate rea
 
 Include evidence when it supports an active decision, constrains unresolved work, determines acceptance, avoids repeating costly investigation, or cannot be recovered from a stable artifact. Give quantitative conclusions the minimum source or counting rule needed for independent review. When a stable artifact owns the evidence, record the relevant conclusion and purpose with its reference.
 
-Give each referenced artifact a purpose and a loading trigger. Require immediate reading only for the current permitted action; identify later-stage references by the branch that needs them. Declare the workspace root once and use relative paths within it; use absolute paths for external artifacts. Mention a suggested skill only when it directly supports the next permitted action.
+Give each artifact or skill reference a purpose and a loading trigger, retaining established later-stage dependencies. Require immediate reading only for the current permitted action; listing a skill does not authorize its execution. Declare the workspace root once and use relative paths within it; use absolute paths for external artifacts.
+
+For critical references, retain any already-known version cue as a lightweight change signal, not a prerequisite or separate verification workflow. On a mismatch, the agent uses known sources to resolve it and correct only continuation references or understanding, not project artifacts or confirmed decisions. Leave unsupported conclusions unknown rather than offloading routine checks to the user.
 
 Record mutable state as a timestamped observation that must be rechecked before action. For live work, preserve its last known status and a usable inspection method. For cancelled or unreachable work with no result, preserve the outcome and its consequence without dead process handles, task IDs, or other unusable identifiers.
 
@@ -67,13 +71,13 @@ Identify the original working directory in the file. State that the continuation
 
 ## 5. Read back, prune, and return
 
-Read the saved file in full, using bounded chunks when needed. Repair omissions and verify:
+Read the saved file in full, using bounded chunks when needed. Repair coverage gaps before pruning repetition, and verify:
 
 1. A fresh agent can identify what is settled, closed, open, authorized, and permitted next.
-2. The authoritative content appears once, and the control block is the only complete statement of live phase and authorization.
+2. Stable sources are referenced rather than recopied; conversation-only authoritative content appears once, and the control block is the only complete statement of live phase and authorization.
 3. Closed alternatives have enough closure context to prevent routine reopening.
 4. The workspace root is absolute; every reference has a purpose and loading trigger, and every required local reference is independently accessible.
-5. Every included fact or status can affect continuation; quantitative facts are reviewable and dead identifiers are absent.
+5. Every included fact or status can affect continuation; mutable observations are dated, quantitative facts are reviewable, and dead identifiers are absent.
 6. The successor instruction covers current workspace rules, mutable-state rechecks, and material contradictions.
 7. The saved file exists at the reported path and works without the old session or transcript.
 
