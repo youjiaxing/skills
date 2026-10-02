@@ -4,9 +4,9 @@ Read this file before reviewing, modifying, or redesigning `yjx-wayfinder`. It r
 
 ## 1. Identity & Core Purpose
 
-`yjx-wayfinder` is a multi-session cognitive navigation and decision cartography skill. It plans large, ambiguous efforts as a shared map of decision tickets on the repo's issue tracker, exploring the active frontier with `yjx-grill` and graduating fog into clear decisions until reaching the destination.
+`yjx-wayfinder` breaks a requirements or planning effort too large for one session into coherent decision tickets. Independent sessions explore them in parallel, with a shared tracker map preserving context and a final synthesis reconnecting their conclusions.
 
-Its primary outcome is **structured, high-fidelity alignment across sessions without context budget exhaustion or speculative ticket pollution**.
+Its primary outcome is **complete, consistent alignment across sessions without oversized tickets, fragmented micro-tickets, or speculative issue pollution**. The tracker supports the discussion; building a scheduling or coordination system is not the goal.
 
 It is explicitly **domain-agnostic**: designed equally for software architecture, book writing, course syllabus design, organizational structuring, or physical planning (such as garden design).
 
@@ -14,41 +14,55 @@ It is explicitly **domain-agnostic**: designed equally for software architecture
 
 ## 2. Origin & Evolution Rationale
 
-`yjx-wayfinder` was redesigned to solve five critical failure modes observed in real-world use and community field reports:
+The runtime rules express the following design choices. Keep the mechanics in `SKILL.md`; this file explains their purpose and review boundaries.
 
-### 1. Context-Budget Protection
-* **Problem**: Large efforts cannot be solved in a single agent session without exceeding context limits, leading to hallucination, instruction drift, and severe quality degradation.
-* **Design**: Wayfinder acts as a **cross-session context isolation scheduler**. Each decision ticket is sized for a single, focused session where deep alignment runs within a clean token budget.
+### 1. Coherent Ticket Size
+* **Problem**: Oversized tickets defeat cross-session exploration, while undersized tickets repeatedly reload the same context and fragment coupled choices.
+* **Design**: A ticket has an independently useful outcome, tightly related decisions, and room for investigation, discussion, verification, and recording within one session. A pivotal fact may be a complete research ticket. Fixed token counts, turn counts, or one-choice-per-ticket rules are not sizing criteria.
+* **Adjustment**: Splits and merges preserve history, references, and actual prerequisite obligations. Narrowing a question is not evidence that its omitted work is complete.
 
 ### 2. Anti-Premature Ticketing (Deferred Expansion)
 * **Problem**: In exploratory planning, most dependencies are *directional/forking* (the answer to Ticket A determines whether Ticket B even exists). Pre-creating blocked issues in the tracker produces phantom/garbage issues when upstream decisions pivot.
-* **Design**: Physical issue tracker issues represent **ONLY the active, unblocked, takeable frontier**. All blocked, conditional, or future questions remain as structured plain text in the Map's `## Not yet specified` (Fog of War) section. They graduate into physical issues only after upstream dependencies close.
+* **Design**: Readiness restricts **creation**, not every later state of an issue. New blocked, conditional, or coarse questions remain in the fog; existing tickets may become blocked while retaining identity and history. An upstream answer triggers evaluation of branch applicability and premise validity, not mechanical creation on closure.
+* **Disposition**: Graduation, retention, and pruning are normal outcomes. A pruned conditional branch is not necessarily outside the destination. Scope exclusions can be text without creating issues for them.
 
 ### 3. Loose-Coupling Delegation to `yjx-grill`
-* **Problem**: Original Wayfinder hardcoded a 29-line unstructured `grilling` prompt that lost subtle invariants across sessions. Conversely, tightly coupling to the exact internal section layout of `yjx-grill` creates fragile abstractions.
+* **Problem**: Unbounded delegation can pull the whole effort into a single ticket; coupling to another skill's internal sections makes the integration fragile.
 * **Design**: 
   - **Macro Charting**: `yjx-wayfinder` passes explicit prompt constraints into `yjx-grill` (*"Breadth-first exploration; focus on Destination and boundary scope; do not drill down into low-level implementation/parameter details"*).
-  - **Micro Resolution**: `yjx-wayfinder` accepts either a Direct Result or an approved Formal Contract without hardcoding internal section names. The runtime's Alignment Result Handoff owns receipt and closeout: it preserves sources and requires human confirmation of the complete ticket conclusion and material premises needed to unblock dependents. This avoids treating a short result as pure fact, a partial answer as approval of attached assumptions, or an unapproved candidate as an approved contract.
+  - **Micro Resolution**: Pass the ticket question, sufficient-answer criterion, valid premises, and neighboring boundaries. Resolve necessary prerequisites or report their block; hand later questions back to the map. `yjx-wayfinder` accepts either a Direct Result or an approved Formal Contract without hardcoding internal section names.
+  - **Receipt & Confirmation**: Alignment Result Handoff preserves sources and requires confirmation of the complete HITL conclusion and material downstream premises. It does not treat a short result as pure fact, a partial answer as approval of attached assumptions, or an unapproved candidate as an approved contract. AFK work resolves verified facts, not human choices; result format cannot bypass a ticket's confirmation obligations.
   - **Authority Separation**: Ticket confirmation does not force a Direct Result into a contract or grant implementation authority. A reviewed and approved Formal Contract can settle a planning-only ticket; any separately established implementation authorization keeps its actual scope. Contract approval and ticket closure neither grant that authority nor start execution. Confirmed inferences retain their origin.
   - **Compatibility Boundary**: These changes concern results from alignments already permitted by the user and host. Invocation metadata and cross-host triggering remain unchanged and are not validated by this handoff contract.
 
-### 4. Lightweight Decision Superseding
+### 4. Decision Revalidation & Superseding
 * **Problem**: When exploring uncharted territory, later discoveries frequently invalidate or amend earlier premises. Without a revision protocol, subsequent sessions read contradictory or stale decisions from the map.
-* **Design**: The map is an *index, not a store*. Superseded decisions are marked inline with strikethrough and a pointer to the overriding ticket (`~~[#1 Old Decision](link)~~ (superseded by [#3 New Decision](link))`).
+* **Design**: With no valid replacement, reopen the original question and preserve its old answer as history. With a valid replacement, retain the old ticket and point to the replacement. Check affected open tickets, completed conclusions, and fog; do not invalidate unrelated work. Changed premises do not themselves put a question out of scope.
+* **Index & Dependencies**: The map visibly distinguishes current conclusions from under-review or superseded history. Dependent work must use effective premises, not infer validity from an old ticket's terminal state. Reuse the configured tracker lifecycle and blocking relationships rather than adding status enums.
 
 ### 5. Destination Closeout & Synthesis
 * **Problem**: When all tickets close and fog clears, ending abruptly leaves a fragmented trail of individual tickets without a unified deliverable.
-* **Design**: A formal closeout step synthesizes all resolved answers into the final promised `Destination` artifact, posts a Closeout Summary, and closes the Map issue.
+* **Design**: A formal closeout step checks all children and research ownership, then verifies destination coverage, valid-decision compatibility, and gaps between tickets. It synthesizes ticket details into the promised artifact and preserves the original destination. Empty queues and terminal states alone are insufficient evidence.
+* **Authority**: The artifact is a derived synthesis, not an independent source of new decisions. Presentation work may proceed; important missing decisions or contradictions return to exploration.
+
+### 6. Lightweight Parallelism
+* **User Choice**: Multiple independent sessions may progress on one map. Heavy coordination, default single-writer scheduling, locks, and leases were rejected.
+* **Design**: Advisory claims, fresh reads immediately before mutation, scoped merges, deduplication, and readback reduce accidental interference. Persist results before removing their source notes, and resume partial operations from existing evidence.
+* **Accepted Limit**: This is best-effort coordination, not atomic updates, guaranteed exclusivity, or zero lost writes. Readback does not close every race window. Shared assignees do not establish session ownership.
+
+### 7. Bounded Helpers
+* **Research**: The initiating session owns collection, verification, and recording. Temporary workers are collected in-session; durable continuation requires actual host support. Without recoverability, keep an ordinary unclaimed research ticket rather than starting an orphaned worker.
+* **Prototype & Tasks**: Use domain-appropriate exploratory artifacts and authorized prerequisite work. Helper instructions cannot expand the effort into production implementation. Keep evidence, artifacts, and human conclusions linked from the ticket.
 
 ---
 
-## 3. Session Transition Heuristics (Zero-Guesswork)
+## 3. Session Transition Heuristics
 
-AI agents cannot reliably inspect physical token counts. Therefore, session transitions follow simple, observable behavioral heuristics:
+Use discussion coherence and context burden rather than a claimed exact token budget:
 
 * **Default Baseline**: **One ticket, one fresh session**. Starting a clean session is the standard recommendation to ensure maximum reasoning fidelity.
-* **Single Exception**: If and only if the current ticket was a **rapid micro-ticket** (resolved in 1–2 brief turns with minimal context cost) AND the next frontier ticket is a **direct, tight continuation**, the agent may suggest in-place continuation.
-* **All Other Cases**: Recommend opening a fresh session (`yjx-wayfinder #N`).
+* **Exception**: A tightly related follow-up with little context burden may continue in place. This is not a reason to make artificially small tickets or a fixed turn-count gate.
+* **Recovery**: The next session should need the bounded question, relevant premises, conclusions, and pending work, not a reconstruction of the chat history. Use tracker-appropriate links or invocations for handoff.
 
 ---
 
@@ -57,10 +71,14 @@ AI agents cannot reliably inspect physical token counts. Therefore, session tran
 Before modifying or reviewing this skill, verify that the proposed changes satisfy all of the following:
 
 - [ ] **Preserves Domain Agnosticism**: Does not assume codebases, compilers, PRs, or databases. The skill must work seamlessly for garden planning, book writing, and technical architecture alike.
-- [ ] **Strict Anti-Premature Ticketing**: Never creates physical tracker issues for blocked or hypothetical downstream steps. Only unblocked frontier items become physical issues.
-- [ ] **Single Source of Truth**: The Map issue is the canonical index. A decision lives in exactly one place (its ticket), and the Map only gists and links.
+- [ ] **Coherent Granularity**: Tickets are independently useful and feasible for a focused session, not fixed-size fragments. Resizing preserves real dependencies.
+- [ ] **Strict Anti-Premature Ticketing**: Only ready questions become new issues; existing issues may become blocked without deletion or false completion.
+- [ ] **Semantic Graduation**: Checks branch applicability and valid prerequisites; records pruning reasons without misclassifying them as scope exclusions.
+- [ ] **Single Source of Truth**: The map is the index, tickets own detailed conclusions, and the destination artifact synthesizes effective conclusions without inventing decisions.
 - [ ] **Loose-Coupling with `yjx-grill`**: Does not hardcode assumptions about `yjx-grill`'s internal sections or field names.
 - [ ] **Scoped Result Confirmation**: Preserves claim sources and binds HITL closeout to the complete conclusion and material downstream premises; partial approval cannot unblock dependents or authorize execution.
 - [ ] **Maintains Plan, Don't Do**: Preserves strict boundaries on ticket types (`task` and `prototype` are for fact-finding and disposable spikes, never for unaligned production implementation).
-- [ ] **Retains Decision Superseding**: Keeps the lightweight strikethrough/pointer protocol for overridden decisions.
-- [ ] **Preserves Closeout Synthesis**: Ensures the map lifecycle terminates in a cohesive destination artifact synthesis.
+- [ ] **Preserves Decision Recovery**: Reopens challenged conclusions or links valid replacements, checks affected downstream work, and distinguishes history from current truth.
+- [ ] **Lightweight Concurrency**: Preserves parallel independent sessions and explicit best-effort limits without a new coordinator or tracker protocol.
+- [ ] **Owned Research**: Every launched task has a real collection path; persistent pointers are not mistaken for persistent execution.
+- [ ] **Preserves Closeout Synthesis**: Checks all work, actual dispositions, coverage, and consistency before producing the cohesive destination artifact.

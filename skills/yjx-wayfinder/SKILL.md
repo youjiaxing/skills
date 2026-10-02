@@ -1,12 +1,12 @@
 ---
 name: yjx-wayfinder
-description: Plan a large, ambiguous effort (spanning multiple agent sessions) as a shared map of decision tickets on your issue tracker, explore the active frontier with yjx-grill, and graduate fog into clear decisions until reaching the destination.
+description: Break a large requirements or planning effort into coherent decision tickets for parallel sessions, explore them with yjx-grill, and synthesize the valid conclusions into the agreed destination.
 disable-model-invocation: true
 ---
 
-A loose idea has arrived, too big for one agent session, and wrapped in fog: the way from here to the **destination** isn't visible yet. Wayfinding is about finding that way, not charging blindly at the destination. This skill charts the way as a **shared map** on the repo's issue tracker, then works its **decision tickets** (questions whose resolution is a decision or verified fact, not slices of a build to execute) one at a time until the route is clear.
+Break a requirements or planning effort too large for one session into **decision tickets**: coherent questions whose answers are decisions or verified facts, not implementation slices. Independent sessions can advance different tickets in parallel; the **map** keeps their context connected until their conclusions form a complete, consistent **destination**.
 
-The destination varies per effort, and naming it is the first act of charting: it shapes every ticket. It might be a technical spec, an architecture decision, a course syllabus, an organizational plan, a book outline, or a physical project (like a garden design). The map is **domain-agnostic**: whatever fits the shape of multi-step cognitive exploration.
+The destination sets the scope and completion criteria. It might be a technical specification, architecture decision, course syllabus, organizational plan, book outline, or garden design. Keep the workflow **domain-agnostic**.
 
 ## Maintenance
 
@@ -14,7 +14,7 @@ When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MA
 
 ## Plan, don't do
 
-Wayfinder is **planning** by default: each ticket resolves a decision or pre-condition, and the map is done when the way is clear, with nothing left to decide before someone goes and executes the build. An effort can override this in its **Notes**, carrying execution into the map itself, but absent that, produce decisions, not deliverables.
+Wayfinder is **planning** by default. Produce the decisions, evidence, and planning artifact promised by the Destination, not the implementation it describes. An explicit execution authorization recorded in **Notes** may extend an effort's scope; recording a decision, closing a ticket, or invoking a helper skill never grants that authorization by itself.
 
 ## Refer by name
 
@@ -24,18 +24,18 @@ Every map and ticket is an issue, so it has a **name**: its title. In everything
 
 The map is a single issue on this repo's issue tracker, labelled `wayfinder:map`, the canonical artifact. Its tickets are child issues of the map.
 
-The map is an **index**, not a store. It lists the decisions made and points at the tickets that hold their detail; a decision lives in exactly one place, its ticket, so the map never restates it, only gists it and links.
+The map is an **index**, not a store. Detailed conclusions live in their tickets; the map only gists and links them, visibly distinguishing valid conclusions from those under review or superseded. The final artifact synthesizes these sources rather than introducing a second set of decisions.
 
 Where the map, its child tickets, blocking, and frontier queries physically live is tracker-specific. Consult the tracker doc's "Wayfinding operations" section for how this repo expresses them. If no tracker has been configured, default to the local-markdown tracker.
 
 ### The Map body
 
-The whole map at low resolution, loaded once per session:
+Load this low-resolution view to orient each session; refresh it before mutations under [Lightweight Parallel Updates](#lightweight-parallel-updates). Discover open children through the tracker rather than duplicating their status in the map.
 
 ```markdown
 ## Destination
 
-<what reaching the end of this map looks like: the spec, architecture, outline, or plan this effort is finding its way to. One or two lines; every session orients to it before choosing a ticket.>
+<the goal, scope, promised artifact, and observable completion criteria; keep this concise and preserve it during closeout>
 
 ## Notes
 
@@ -43,30 +43,34 @@ The whole map at low resolution, loaded once per session:
 
 ## Decisions so far
 
-<!-- the index: one line per closed ticket, enough to judge relevance, then zoom the link for the detail the ticket holds -->
+<!-- one-line conclusions and links; mark historical or under-review entries so they cannot be mistaken for current premises -->
 
-- [<closed ticket title>](link): <one-line gist of the decision>
+- [<ticket title>](link): <one-line gist of the conclusion>
 
 ## Not yet specified
 
-<!-- the fog of war: all downstream, conditional, or blocked items waiting as plain text notes; graduates into physical issues as the frontier advances -->
+<!-- in-scope questions not yet ready for new tickets; record relevant conditions and prerequisite links, not speculative issue trees -->
 
-- [ ] <unspecified or blocked question title> (Blocked by: <prerequisite>)
+- [ ] <question or area to clarify; when it matters and what it waits on>
 
 ## Out of scope
 
-<!-- work consciously ruled beyond the destination; closed, never graduates -->
+<!-- actual scope exclusions and reasons; add a ticket link only when one already exists -->
 
-- [<ticket title>](link): <why this is out of scope>
+- <excluded work>: <why it is beyond this destination>
 ```
 
-## Anti-Premature Ticketing & The Frontier
+## Ticket Granularity
 
-To avoid polluting the issue tracker with speculative tickets that become invalid when upstream decisions pivot, **physical tracker issues represent ONLY the active, unblocked, takeable frontier**.
+A ticket should be worth a separate session without overwhelming it:
 
-- **Frontier (Physical Issues)**: Questions whose prerequisites are fully settled, open right now, and immediately takeable. These are created as child issues on the tracker.
-- **Fog of War (Text Notes in `## Not yet specified`)**: All downstream, blocked, conditional, or coarsely-phrased questions remain as plain text checklist items in the map's `## Not yet specified` section. **Never pre-create physical issues for blocked downstream steps.**
-- **Claiming**: A session claims a frontier ticket by assigning it to the dev/agent driving the map before starting work, ensuring concurrent sessions skip it.
+- **Useful outcome**: Its answer is reusable by another session, not merely one conversational turn. A single pivotal fact can justify a research ticket.
+- **Coherent discussion**: Keep tightly coupled choices sharing context and trade-offs together. If separate sessions would repeatedly negotiate the same choices, the split is probably too fine.
+- **Room to finish**: Allow enough attention for investigation, discussion, verification, and recording the answer. Several independent contexts or unresolved branches competing for that attention suggest a split.
+
+Do not size tickets by fixed token counts, turn counts, or one decision per ticket. Preserve the original question and confirmed partial conclusions when resizing. Move remaining questions to tickets only when ready; otherwise keep them in the fog. Before closing a narrowed ticket, verify that every downstream dependency still points to the work it actually needs. If this cannot be represented safely, leave the original ticket unfinished rather than declaring its omitted premises complete.
+
+Unclaimed tickets with heavily overlapping context may be merged. Retain their identities/history and a pointer to the surviving question; redirect affected dependencies before retiring duplicates. A merge or cancellation must not falsely unblock unfinished work.
 
 ### Ticket Body Format
 
@@ -75,19 +79,56 @@ Each physical ticket is a child issue of the map:
 ```markdown
 ## Question
 
-<the specific decision, investigation, or prerequisite this ticket resolves>
+<the bounded question and what answering it sufficiently means>
 ```
 
-Each ticket carries a `wayfinder:<type>` label: `research`, `prototype`, `grilling`, `task` (see [Ticket Types](#ticket-types)).
+Add only the context needed to work independently: relevant premise/evidence links and boundaries with neighboring questions. Each ticket carries a `wayfinder:<type>` label under the tracker convention.
+
+## Frontier & Fog
+
+**New tickets are created only for ready questions**: necessary within the destination, sharp enough to discuss, and supported by settled, still-valid prerequisites. Downstream, conditional, blocked, or coarse questions stay as text in **Not yet specified**. Existing tickets may later become blocked without losing their identity or history.
+
+The **frontier** is the open, unblocked, unclaimed children whose substantive prerequisites still hold. Tracker closure alone does not prove a premise valid. Use the configured tracker states and dependency relationships; a review annotation is not a new status enum, and `claimed` is not a substitute for blocked.
+
+After an answer or new evidence, revisit affected fog and newly discovered questions:
+
+- **Graduate** when the question remains necessary and is now ready. Check for an existing equivalent ticket, create or reuse it, and confirm its durable identity before removing the corresponding fog text.
+- **Retain** when the question is still needed but its conditions or discussion scope are not settled.
+- **Prune** when the answer makes the branch unnecessary. Record the reason with the causative ticket's conclusion, or a map note when no such ticket exists, before removing the fog.
+
+A false branch condition is not automatically **Out of scope**. Reserve that section for actual destination boundaries; close existing out-of-scope tickets with their reason, not a fabricated decision. Do not create tickets merely to give exclusions or pruned branches links.
+
+## Lightweight Parallel Updates
+
+Independent sessions may progress in parallel. Claims and refreshes are **best-effort coordination**, not locks or guarantees of atomicity, mutual exclusion, or zero lost updates. Do not add a central coordinator, leases, or a new tracker protocol.
+
+1. **Read before claiming.** Even for a user-specified ticket, check current state, blockers, premise validity, and ownership. Claim a ready ticket through the tracker before work. Record enough ownership context to distinguish sessions sharing an assignee; the same account is not proof of ownership. Resume an existing claim only with established ownership or an explicit handoff.
+2. **Refresh before each mutation.** Read the latest ticket and map at the time of writing. Recheck claims, states, and relevant premises. Merge only this ticket's changes into current content, preserving unrelated updates; do not submit the session's old map wholesale. A conflicting change requires reassessment, not an overwrite.
+3. **Persist before removing.** Check for an existing resolution, child, or index entry before retrying. Save conclusions and confirm created/reused ticket references before closing or removing their source notes. Preserve successful steps and record what remains after a partial failure.
+4. **Read back.** Verify the intended updates and retained neighboring content. If a conflict is detected, reread and reconcile non-conflicting changes; keep contradictory conclusions unresolved rather than choosing a winner silently. This check does not eliminate the remaining race window.
+
+If another session owns an affected ticket, record the changed premise without taking over its claim. Its owner must revalidate the answer's premises before closing. After interruption, inspect existing results and unfinished updates before restarting work or delegation.
 
 ## Ticket Types & Skill Delegation
 
-Every ticket is either **HITL** (human in the loop, worked with a human who speaks for themselves) or **AFK** (driven autonomously by the agent). A HITL ticket only resolves through live human exchange; the agent never stands in for the human's side.
+Every ticket is either **HITL** (worked with a human who speaks for themselves) or **AFK** (driven autonomously). Result format does not change that obligation: never reclassify a HITL ticket to bypass confirmation. If an AFK answer requires a human choice or an important unsupported inference, keep it unresolved and obtain evidence or route the decision through HITL discussion.
 
 - **`grilling` (HITL)**: Align on core trade-offs, scope boundaries, and decision forks. Delegate to the `yjx-grill` skill. Treat it as a black-box alignment engine and accept either a Direct Result or an approved Formal Contract under [Alignment Result Handoff](#alignment-result-handoff). Always consult `domain-modeling` alongside if domain terminology or models are involved.
-- **`research` (AFK)**: Reading documentation, investigating APIs, or surveying external facts that a decision waits on. Resolved by delegating to the `research` skill. Use when external knowledge is required.
-- **`prototype` (HITL)**: Raise discussion fidelity by making a cheap, rough, concrete, disposable artifact to react to (an outline draft, UI wireframe stub, or code spike) by delegating to the `prototype` skill. The prototype is explicitly an exploratory spike, not production delivery.
+- **`research` (AFK)**: Use `research` to investigate facts against authoritative evidence, recording sources and limits. Resolve only what the evidence supports; do not turn an unresolved product choice into a factual answer.
+- **`prototype` (HITL)**: Produce a disposable artifact suited to the domain, such as an outline, spatial sketch, or UI/logic spike. Use `prototype` when its capabilities fit. Bound its write scope and capture the artifact, observations, and human conclusion; helper instructions to fold a result into production do not authorize implementation.
 - **`task` (HITL or AFK)**: Non-decision manual work that must happen before a decision can be made (e.g. provisioning access, running a data-sampling query, measuring physical dimensions). Output facts and environment status; do not implement production deliverables.
+
+### Discussion Scope
+
+Give the alignment skill the current question, sufficient-answer criterion, relevant confirmed premises, and boundaries with other questions. Macro charting concerns the destination and breadth of the question space; ticket work concerns that ticket's coherent problem. These are semantic inputs, not assumptions about `yjx-grill`'s internal sections.
+
+A newly discovered prerequisite that can change the current answer's validity must be investigated, discussed, or left as an explicit blocker. A later question that consumes the answer belongs back on the map under [Frontier & Fog](#frontier--fog). Complete the ticket's scope without pretending the whole effort is complete or chasing every downstream fork.
+
+### Research Ownership
+
+The initiating session owns claiming, collecting, verifying, and recording its research results. Workers return evidence; they do not independently close tickets or mutate the shared map. Choose one delegation layer rather than recursively spawning workers through a helper.
+
+Temporary workers must be collected in the same session. Cross-session research is permitted only when the host genuinely supports durable execution and result recovery; persist the owner, task/result pointer, and remaining steps. A pointer alone does not keep an agent alive. If collection cannot be guaranteed, leave the research ticket unclaimed for another session instead of launching it. Pending or failed research is not a resolution; on resume, check for an existing task or result before launching another.
 
 ### Alignment Result Handoff
 
@@ -95,30 +136,26 @@ These receipt rules apply after an alignment permitted by the user and host; the
 
 A Direct Result may contain verified facts, answered user intent, and agent inferences. Preserve those sources instead of treating the whole result as fact or as an approved contract. An unapproved contract candidate is not an approved Formal Contract.
 
-Before closing a `grilling` ticket, ensure that live human confirmation explicitly covers its final conclusion and every material premise needed to unblock downstream work, including any such agent inference. A partial answer or acknowledgment does not approve subsequently added content. Keep unconfirmed necessary premises unresolved: do not close the ticket or graduate dependents on their basis. Reuse an existing explicit confirmation of the same complete scope rather than asking twice.
+Before closing a HITL ticket, including `grilling`, ensure that live human confirmation explicitly covers its final conclusion and every material premise needed to unblock downstream work, including any such agent inference. A partial answer or acknowledgment does not approve subsequently added content. Keep unconfirmed necessary premises unresolved: do not close the ticket or graduate dependents on their basis. Reuse an existing explicit confirmation of the same complete scope rather than asking twice.
 
 Confirmation of a Direct Result here is ticket-conclusion confirmation, not implementation authorization and not a request to turn it into a Formal Contract. A reviewed and approved Formal Contract can likewise settle a planning ticket without implementation authority, subject to the same premise and durable-resolution checks. Preserve any separately established implementation authorization at its actual scope; neither contract approval nor ticket closure grants or enlarges it or starts execution. Confirmed agent inferences retain their source; carry material boundaries and their confirmation scope into the resolution artifact and dependent decisions.
 
-## Fog of War & Graduation
+## Decision Revalidation & Superseding
 
-The map is *deliberately* incomplete: don't chart what you cannot yet see.
+When new evidence materially challenges a premise, inspect the affected open tickets, completed conclusions, and fog using their premise links. Recheck actual dependencies, not every unrelated decision.
 
-- **Fog or Ticket?**
-  - **Create a physical ticket when**: The question is sharp AND all prerequisites are already resolved (the active frontier).
-  - **Leave in `## Not yet specified` when**: The question depends on an open ticket OR is still too coarse to state sharply.
-- **Graduation (迷雾升级)**: When an upstream ticket is resolved and closed, scan `## Not yet specified`. Any item whose prerequisites are now cleared is **graduated**: remove the text line from `## Not yet specified` and create a fresh physical Frontier issue for it.
+- **No valid replacement yet**: Reopen the original ticket through the existing tracker lifecycle. Preserve its old answer as history; record the new evidence, affected parts, and question to re-examine. Mark the map entry as under review, not a current valid premise. Restore relevant blocking relationships and reopen affected completed tickets when their own answers need review.
+- **A valid replacement exists**: Retain the original as history and link the replacing ticket. Check and update affected downstream premises and blocking relationships to the replacement before treating them as ready; the old ticket's closed state cannot justify readiness.
 
-## Decision Superseding
+For example:
 
-During exploration, new facts or downstream answers may prove an earlier closed decision invalid or obsolete.
-Wayfinder uses a lightweight inline protocol to maintain truth on the map without complex revision trees:
+```markdown
+- ~~[Storage selection](link): PostgreSQL~~ (under review; see the reopened ticket)
+- ~~[Earlier storage decision](link): PostgreSQL~~ (superseded by [Embedded storage](link))
+- [Embedded storage](link): SQLite for the confirmed local deployment
+```
 
-- In `## Decisions so far`, apply strikethrough to the superseded decision and link to the overriding ticket:
-  ```markdown
-  - ~~[#1 Storage Selection](link): Use PostgreSQL cluster~~ (superseded by [#5 Embedded DB Adoption](link))
-  - [#5 Embedded DB Adoption](link): Adopt SQLite for local single-binary deployment
-  ```
-- If downstream open tickets were based on the invalid premise, update or close them as `Out of scope`.
+Neither a challenged premise nor a temporary block makes the question out of scope. Do not silently replace a human-confirmed choice. Apply the ticket's confirmation rules to the revised conclusion, then update its index entry and revisit affected questions.
 
 ## Invocation Modes
 
@@ -126,41 +163,27 @@ Wayfinder uses a lightweight inline protocol to maintain truth on the map withou
 
 User invokes with a loose, multi-session idea.
 
-1. **Name the Destination**: Invoke `yjx-grill` with an explicit macro constraint prompt:
-   > *"We are in the macro charting phase of Wayfinder. The objective is to define the Destination and high-level decision branches across the entire system. Restrict grilling breadth-first to scope boundaries and high-level trade-offs; do not drill down into low-level implementation details or micro parameters."*
-   Consult `domain-modeling` to lock key terminology.
-2. **Map the Frontier & Fog Check**: Conduct a breadth-first scan across the problem space to identify the immediate open decisions and the downstream fog.
-   - **Fog Check**: If this breadth-first scan reveals **zero fog** (the whole path is already clear, small, and solvable in the current session), **stop and report this fact to the user**. Ask if they prefer direct delivery in the current session or still want a persistent Map.
-3. **Create the Map Issue** (label `wayfinder:map`): Populate `## Destination` and `## Notes`, leave `## Decisions so far` empty, and write all conditional/downstream items as text into `## Not yet specified`.
-4. **Create Frontier Tickets**: Create physical child issues **ONLY** for the immediate, unblocked frontier questions.
-5. **Fire Research Subagents**: If any AFK `research` tickets were created on the frontier, launch subagents to research them in the background.
-6. **Stop**: Charting is one session's work; it does not hand-resolve decisions.
+1. **Name the Destination**: Use `yjx-grill` under the macro discussion scope to establish the goal, scope boundaries, promised artifact, and completion criteria. Consult `domain-modeling` for key terminology. Survey the question space breadth-first without resolving every downstream detail.
+2. **Check whether a map is useful**: Identify ready questions and fog. If the whole effort is clear and small enough for this session, explain that a map is optional and ask how the user wants to proceed.
+3. **Create the Map** (label `wayfinder:map`): Preserve the agreed destination and standing constraints, record actual exclusions in **Out of scope**, and sketch deferred questions and their conditions in **Not yet specified**. Start the conclusion index empty.
+4. **Create Ready Tickets**: Apply the granularity and readiness criteria, checking existing children first. Keep blocked or speculative future questions in the fog.
+5. **Handle Research & Stop**: Dispatch ready research only under [Research Ownership](#research-ownership). Collect temporary workers and record verified results through Mode 2's resolution steps before ending; otherwise leave durable recovery context or undispatched tickets. Charting does not work through HITL decision tickets.
 
 ### Mode 2: Work Through the Map (单票推进与迷雾升级)
 
 User invokes with a map or ticket (e.g. `/yjx-wayfinder <map>` or `/yjx-wayfinder #N`).
 
-1. **Load the Map**: Load the low-resolution map view (`Destination`, `Notes`, `Decisions so far`, `Not yet specified`).
-2. **Choose & Claim the Ticket**: If the user specified a ticket, use it. Otherwise, recommend an unblocked Frontier ticket (prioritizing high-leverage bottlenecks that unblock major fog). Claim it by assigning it to yourself.
-3. **Resolve the Ticket**: Zoom into the ticket body and any related closed decisions. Delegate to the matching skill (`yjx-grill`, `research`, `prototype`, or `task`).
-4. **Record the Resolution**:
-   - For a `grilling` ticket, apply [Alignment Result Handoff](#alignment-result-handoff) before closing or unblocking anything.
-   - Post the resolution artifact as a comment on the ticket, retaining its sources, material boundaries, and applicable confirmation scope.
-   - Close the ticket issue.
-   - Append a one-line gist and link to the map's `## Decisions so far` (or apply the [Decision Superseding](#decision-superseding) protocol if an earlier decision was overridden).
-5. **Graduate Fog**: Scan `## Not yet specified`. For any text item whose blockers are now closed, remove it from `## Not yet specified` and create a new physical Frontier issue. Update the Map issue.
-6. **Session Transition Guidance**:
-   - **Default Baseline**: Recommend opening a fresh, clean session for the next ticket (e.g. `yjx-wayfinder #<next-id>`) to protect the context budget and maximize reasoning quality.
-   - **Exception**: If and only if the current ticket was resolved rapidly in 1–2 turns with low context load AND the next ticket is a direct, tight logical continuation, in-place continuation is permitted.
+1. **Orient & Recover**: Load the map, including scope exclusions and Notes; consult named skills as applicable. For a supplied ticket, locate its parent map. Inspect any interrupted work or existing results before continuing.
+2. **Choose & Claim**: Validate a specified ticket or select a frontier question, favoring useful bottlenecks. Follow the claim and refresh rules. If there is no ready ticket but unresolved work remains, report the actual blockers or refine the fog; an empty frontier is not completion.
+3. **Work the Bounded Question**: Read related premise tickets as needed and use the matching discussion, research, prototype, or prerequisite-task method. Reassess granularity when new evidence changes the scope. Preserve partial results when blocked; do not close an unfinished question.
+4. **Record the Resolution**: Revalidate current premises and apply [Alignment Result Handoff](#alignment-result-handoff) to HITL work, or verify the evidence for AFK work. Save the answer through the tracker with its key reasons, necessary evidence/premise links, important rejected alternatives, unresolved neighboring questions, source distinctions, and confirmation scope. Keep detail proportional; link assets rather than pasting them or the conversation. Close only after the answer is durable, then gist and link it in the map, repairing partial updates under the parallel-update rules.
+5. **Revisit the Map**: Record newly discovered questions as well as revisiting existing fog. Apply graduation, retention, pruning, or decision revalidation as appropriate. Recording a follow-up does not require solving it in this session.
+6. **Hand Off**: Prefer a fresh session for the next coherent ticket, with a name-wrapped link or tracker-appropriate invocation. In-place continuation is an exception for a tightly related follow-up with little context burden, not a fixed turn-count rule.
 
 ### Mode 3: Destination Closeout (终态收官)
 
-Triggered when **`## Not yet specified` is empty** and **all Frontier tickets are closed**.
+An empty fog and apparently finished tickets invite a closeout check; they do not prove the destination reached.
 
-1. **Synthesize Destination Artifact**: Aggregate the resolutions across all closed tickets in `## Decisions so far` and synthesize them into the final promised `Destination` artifact (e.g. a comprehensive architecture document, plan, outline, or proposal).
-2. **Deliver Artifact**:
-   - Update the Map's `## Destination` section with the final synthesized summary or link.
-   - If the Destination specifies an output document in the project (e.g. `docs/design-spec.md`), write the synthesized content to that file.
-3. **Closeout Map**:
-   - Post a final **Closeout Summary comment** on the Map issue highlighting all settled core decisions, invariants, and next steps.
-   - Mark the Map issue as **Closed**.
+1. **Check the whole effort**: Read the current map and **all** children, not just the frontier. Any open child (including claimed, blocked, or reopened tickets), unconfirmed conclusion, necessary fog question, or uncollected research result prevents closeout. For each terminal ticket, establish a valid conclusion or an evidenced disposition: scope exclusion, branch pruning, cancellation, or a merge/replacement linked to a ticket with a valid conclusion. `closed` or `wontfix` alone proves none of these. Repair missing result/index updates, and exclude challenged or superseded conclusions from the active decision set.
+2. **Check coverage & synthesize**: Compare the effective conclusions with the original destination and completion criteria. Check compatibility, gaps between tickets, and whether the next stage can proceed without guessing important requirements. Synthesize the promised artifact from the ticket details, not only their gists. Ordinary presentation edits are allowed; a new consequential choice, contradiction, or missing prerequisite returns to exploration. Explicitly bound details legitimately deferred to the next stage instead of disguising important unresolved questions as minor parameters.
+3. **Deliver & close**: Preserve the original Destination and add the verified artifact link or outcome. Write a promised project document at its agreed location. Refresh the map and children before publishing or closing; relevant changes require reconciliation and a renewed check. Post a closeout summary with the artifact, settled boundaries, and handoff, then close the map. These remain best-effort updates, not a locked snapshot.
