@@ -1,6 +1,7 @@
 ---
 name: yjx-issue-flow
 description: Coordinate multiple implementation issues from a project's configured issue tracker, including dependency-aware serial or parallel execution, independent Codex workers, integration, and issue closeout. Use when the user explicitly names this skill or asks to coordinate a parent issue, child issues, or multiple implementation issues; do not use for an ordinary single-issue implementation.
+disable-model-invocation: true
 ---
 
 # Yjx Issue Flow

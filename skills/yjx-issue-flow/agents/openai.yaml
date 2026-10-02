@@ -1,3 +1,5 @@
 interface:
   display_name: "Issue Flow"
   short_description: "Coordinate multiple implementation issues"
+policy:
+  allow_implicit_invocation: false
