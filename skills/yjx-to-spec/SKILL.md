@@ -1,213 +1,113 @@
 ---
 name: yjx-to-spec
-description: Compile aligned discussions, decision artifacts, or completed planning maps into a cohesive, domain-adaptive, high-fidelity specification blueprint with explicit invariants, open parameter range limits, and brownfield safety boundaries.
+description: Check readiness, then compile and publish aligned discussions or decision artifacts into a domain-native specification with explicit contracts, change boundaries, and verifiable acceptance.
 disable-model-invocation: true
 ---
 
-Compile the confirmed consensus from the conversation, structured alignment artifacts, or completed planning maps into a cohesive, high-density, authoritative **Specification Blueprint**.
+# yjx-to-spec
 
-A specification defines the **complete, invariant truth of the destination** (what the finished system/artifact looks like, its change boundaries, contracts, and what must NOT break). It is NOT an interview questionnaire, NOT a lossy narrative summary, and NOT a premature execution schedule.
+Compile the agreed destination into a specification and create or update it at the project's configured storage target. Invoking this skill requests creation and publication together, without a separate draft-approval step. Invocation, or an upstream agent declaring discussion complete, is not evidence that the input is ready.
+
+A specification describes the promised outcome, contracts, change boundaries, and verification basis. It is not an interview, an implementation schedule, or a collection of execution tickets. Remain independent of particular upstream alignment tools and downstream implementation workflows. Do not modify application code or create, update, or execute implementation tickets.
 
 ## Maintenance
 
-When reviewing, modifying, or redesigning this skill, read [`MAINTENANCE.md`](MAINTENANCE.md) first. It records design rationale, community issue lineage, real-world topology validation, and anti-drift rules; it is not needed for ordinary runtime execution.
+Before reviewing or changing this skill, read [MAINTENANCE.md](MAINTENANCE.md). Ordinary execution does not require it.
 
-## 1. Core Principles & Philosophy
+## 1. Ground the Request
 
-- **High-Cohesion Blueprint (No Premature Slicing)**:
-  Describe the complete system, its holistic entities, and its unified state machine as an indivisible whole. **Do NOT prematurely slice the Spec into vertical execution schedules or task tickets inside the document.** Slicing is the exclusive responsibility of downstream planning or ticketing workflows.
-- **Upstream & Downstream Decoupling**:
-  Never assume or mandate specific preceding workflows (e.g. particular interview tools) or specific downstream execution tools (e.g. particular testing or review commands). Produce a standalone, self-contained specification that any human engineer, QA team, contractor, or automated agent can directly consume.
-- **Brownfield Safety & Surgical Scope**:
-  In existing codebases or environments, explicitly declare **Touched Areas** (physical whitelist of files/schemas/packages allowed to change) and define **System Invariants** (inviolable contracts of untouched surrounding systems). For greenfield projects, naturally adapt to structural component definitions.
-- **Epistemological Separation**:
-  Strictly separate **Human Confirmed Choices (P0 Locked / Solid Lines)** from **AI Inferred Open Parameters (P1 Range Limits / Dashed Slots)**. Surface these via a top-level **Readiness Radar**. If all parameters are settled or no open variables exist, P1 is naturally empty without forced padding.
-- **Decisions & Discarded Alternatives (ADR-Lite)**:
-  Every major architectural or structural decision must record its **Rationale** and **Discarded Alternatives & Reasons** to prevent downstream implementers from re-proposing rejected approaches.
-- **Contract vs. Implementation Separation**:
-  Mandate exact public data structures (Struct, Interface, Proto, SQL DDL diff, state transition tables, or BOMs). **Strictly forbid private helper logic, internal glue code, or hidden scripts** inside the Spec.
-- **Verifiable Acceptance (High-Signal Criteria)**:
-  Focus acceptance criteria on essential behaviors, high-impact failure modes, and system invariant verifications, rather than enumerating trivial or repetitive checks. Choose whichever presentation makes verification clearest: narrative scenarios for critical flows, or a compact table when handling multiple parameter combinations.
-- **Domain-Adaptive Native Projection**:
-  Reason internally using the universal meta-skeleton, but **render the final document 100% in the native terminology, schemas, and concrete artifacts of the target domain**. Never output abstract meta-jargon.
-- **Zero-Modal Friction**:
-  Synthesize the Spec in a single turn without interrupting popups. Surface open uncertainties as explicit parameter range limits in Section 4.
+- Read the available conversation, decisions, and referenced artifacts. Establish the intended outcome, agreed scope, and whether this is a new requirement or a revision.
+- Inspect the relevant environment to check current contracts and constraints. For software, consult applicable project instructions, domain vocabulary, ADRs, and relevant existing tests; use equivalent evidence in other domains.
+- Establish the formal storage target and triage conventions from project instructions or `docs/agents/issue-tracker.md`. Do not invent a tracker, destination, or label vocabulary when these are missing.
+- For a revision, locate and read the original specification using an explicit path, Issue reference, or reliable project association. Title similarity alone is insufficient. Apply the revision rules in section 5 before replacing content.
 
-## 2. Upstream Context Ingestion
+Separate **confirmed choices**, **verified facts**, and **inferences** while reasoning. Give important decisions, derived constraints, and remaining implementation choices enough attribution to understand their basis; do not force a provenance field on every sentence or output a large classification ledger. Approval of a proposal does not turn its agent-derived reasoning into a user-originated requirement or a verified fact.
 
-Autonomously ingest the upstream context without imposing rigid workflow assumptions:
-1. Extract confirmed user intent, verified facts, and architectural choices from the conversation, uploaded notes, meeting memos, or previous artifacts (e.g., from `/yjx-grill`).
-2. Independently explore the existing environment (codebase, schemas, or project docs) to ground the design and identify brownfield safety boundaries.
-3. Automatically derive safe boundary range limits for unaddressed micro-parameters without inventing concrete unvetted numbers.
+Preserve known decision rationale and actually discussed rejected alternatives. If that history is absent, leave it absent or say it was not recorded; do not invent a decision process to fill a template.
 
-## 3. Domain-Adaptive Native Projection & Localization
+## 2. Check Readiness Before Generating
 
-Identify the domain archetype and project the sections into concrete, hard-edged domain representations:
+The goal, scope, externally observable behavior, key constraints, and acceptance basis must be sufficiently clear, supported, and mutually consistent. Check the requested deliverable as a whole, including shared commitments when it contains multiple specifications.
 
-- **Software & Systems Engineering**:
-  - Output exact Protobuf definitions, SQL DDL diffs, typed domain structs, and error code tables with complete field comments.
-  - Render concrete API/RPC signatures, idempotency keys, and transaction boundary notes.
-  - Detail exact invariant equations (e.g., balance conservation) and concrete automated test assertions.
-- **Physical & Space Design (e.g., Interior Decoration)**:
-  - Output Bill of Materials (BOM) with mm dimensions, Pantone color codes, material grades, and tolerances.
-  - Render spatial clearance rules ($\ge 800\text{mm}$), MEP (mechanical, electrical, plumbing) coordinate specs, and environmental standards.
-  - Detail physical inspection checklists and load-bearing constraints.
-- **Processes, Operations & Business**:
-  - Output RACI role responsibility matrices, phase gate transition tables, and escalation paths.
-  - Detail SLA timeout parameters, audit logging invariants, and rehearsal checklists.
+A remaining choice may be left to implementation only when it neither changes those commitments nor depends on an unsettled key commitment. Its size or the label "parameter" does not establish safety. Investigate unclear effects using available evidence; do not substitute an agent-selected key design for missing alignment.
 
-**Localization**: Keep this skill file in English. At runtime, render all user-facing Spec headings, labels, table headers, and explanatory prose into the user's conversational language.
+Use bounds only when evidence supports them. An invented interval is no safer than an invented number. Valid implementation freedom need not have a concrete value or numeric range, and readiness does not require eliminating all such freedom.
 
-## 4. Disambiguated Specification Template
+**If a material gap, conflict, or missing evidence prevents establishing readiness, stop before generating or mutating specifications.** Return a concise, localized statement that no specification was generated, with the blocker, its basis, and the decision or evidence needed. Do not produce a formal or placeholder spec, alter an existing one, publish, or assign ready labels. Do not automatically start another interview or workflow.
 
-Render the Specification using the disambiguated standard template below:
+This gate takes precedence over all generation and publication instructions. Missing publication prerequisites likewise stop publication; report them rather than guessing a target. When the gate passes, proceed directly. Any readiness statement must describe the actual result of the check, not prefilled completion percentages or claims that every open choice is settled.
+
+## 3. Compile for the Actual Domain
+
+Use the user's conversational language for headings, labels, and prose. Keep literal protocol identifiers and the document marker unchanged. Choose headings, order, and representations to fit the subject; merge or omit inapplicable sections without omitting necessary commitments.
+
+Cover the following content where it affects the outcome:
+
+- **Problem and outcome:** what needs to change, the promised result, in-scope capabilities, and explicit exclusions.
+- **Contracts and behavior:** the public entities, interfaces, interactions, lifecycle transitions, failure behavior, or physical/process constraints needed to remove material ambiguity. Be exact where collaboration or acceptance depends on it, not merely because a template contains a field.
+- **Change boundaries:** the capabilities, behavior, and contracts allowed to change. Treat expected modules or files as non-exhaustive impact locations, distinguishing inspected locations from predicted ones, not as an automatically authorized physical whitelist.
+- **Invariants and prohibitions:** keep protection requirements in one place. Honor explicit physical restrictions from the user, applicable project governance, or confirmed design, and state their basis. A new file location is not by itself scope expansion; a listed location is not permission to change any behavior. Crossing a confirmed boundary requires renewed alignment.
+- **Decisions and implementation freedom:** preserve confirmed decisions and their available rationale. State meaningful remaining freedom and its supported constraints without disguising unresolved key decisions as tunable parameters.
+- **Acceptance and verification:** specify essential behaviors, important failure cases, and invariant checks, together with the observation points, prerequisites, and reusable tests or inspection methods that can establish the result.
+
+Possible representations include typed interfaces, schema changes, error contracts, and state tables for software; drawings, material specifications, or inspection criteria for physical design; and responsibility or escalation rules for operations. Select only what the requirement needs. Do not fabricate schemas, dimensions, tolerances, or timing values to make the document look complete.
+
+Reference existing authoritative contracts and describe the exact change; do not duplicate whole definitions or replace the new commitments with a bare link. Include decision-relevant public contracts, not private helper code, glue scripts, or a working implementation. Prefer direct domain descriptions over a mandatory long list of Agile user stories.
+
+For verification, prefer suitable existing observation points and relevant prior art. Do not impose a particular framework, command, highest test layer, or single test entry point. Test promised behavior rather than freezing private implementation structure. Missing existing tests do not alone block a spec if its result can be judged; describe necessary new verification capability and its impact without silently adding product interfaces or architectural requirements.
+
+Use scenarios or a compact matrix according to clarity; do not repeat the same cases in both forms. A verification plan is not a passed check. State what evidence has actually been checked and what remains for implementation or acceptance.
+
+For a candidate multi-spec initiative, read [references/multi-spec.md](references/multi-spec.md) before deciding its structure or publishing its units. Splitting documents does not authorize splitting implementation tickets.
+
+## 4. Give Every Specification a Stable Identity
+
+Every formal specification created or updated by this skill, including a master and each sub-specification, must begin with this exact, unindented marker as its first nonblank line:
 
 ```markdown
-# [<System / Feature / Target Name>] Specification
-
-> **Metadata**:
-> - **Origin**: <Link to upstream notes, session context, or initiative map>
-> - **Domain**: <Software / Physical Design / Operations / etc.>
-> - **Modality**: <Brownfield (Existing System Enhancement) | Greenfield (New System)>
-> - **Readiness Radar**: 
->   - [x] P0 Locked Decisions (Human Confirmed): 100%
->   - [x] P1 Open Parameters Converged: 100% (Total: N items, all bounded within safety limits)
->   - [x] Safety Boundaries Verified
->   - [ ] Status: [ READY FOR IMPLEMENTATION & VERIFICATION ]
-
----
-
-## 1. Scope & Surgical Boundary (目标、范围与手术边界)
-
-### 1.1 Scope Boundaries
-- **Core Goal**: The fundamental problem to solve and the promised outcome.
-- **In-Scope**: Explicit capabilities, components, and boundaries delivered in this iteration.
-- **Out-of-Scope**: Explicitly excluded items, future phases, or external system boundaries.
-
-### 1.2 Surgical Scope (Touched Areas)
-- **Touched Areas (Allowed Modifications)**:
-  - Explicit list of packages, modules, database tables, schemas, drawings, or files permitted to change.
-  - *(For Greenfield projects, list primary new packages and modules to be established)*.
-
----
-
-## 2. Core Entities & Schemas (核心数据与实体契约)
-<!-- Define public data contracts, schemas, DDLs, types, or BOMs. Strictly forbid private implementation logic. -->
-
----
-
-## 3. Flows & State Model (业务流转与状态模型)
-<!-- Global state machine transition table or lifecycle sequence matrix -->
-| Current State (From) | Trigger / Action | Guard Condition | Next State (To) | Side Effects & Persistence |
-| :--- | :--- | :--- | :--- | :--- |
-| ... | ... | ... | ... | ... |
-
-- **Failure, Timeout & Rollback Strategies**: Compensation mechanisms and terminal consistency guarantees during outages.
-
----
-
-## 4. Decisions & Open Parameters (核心选型与待定参数)
-
-### 4.1 P0 Locked Choices (Confirmed Decisions)
-- **[Choice-01] <Decision Title>**:
-  - **Rationale**: Why this option was chosen based on trade-offs.
-  - **Discarded Alternatives & Reasons**: Why alternative options were rejected (prevents downstream regressions).
-
-### 4.2 P1 Open Parameters (Inferred Safety Bounds)
-<!-- If all parameters are locked upstream, this section can be marked 'None (All Locked)'. -->
-- **[Param-01] <Parameter Title>**:
-  - **Derivation Basis**: Why this parameter is needed.
-  - **Range Limits**: Safe bounds for adjustment (e.g. `Timeout ∈ [3s, 5s] with exponential backoff`).
-  - **Degree of Freedom**: Where and when this parameter should be finalized (e.g., config table or execution phase).
-
----
-
-## 5. Interfaces & Protocols (接口与交互契约)
-<!-- Public API/RPC signatures, network protocols, event definitions, or spatial assembly clearance tolerances -->
-
----
-
-## 6. System Invariants & Forbidden Paths (全局不变量与行为禁令)
-
-### 6.1 System Invariants (Inviolable Laws)
-1. **[INV-01] <Invariant Name>**: Positive conservation laws, backward compatibility rules, and integrity constraints that must hold under all conditions.
-
-### 6.2 Forbidden Paths (Anti-Patterns & Prohibitions)
-1. **[FORBIDDEN-01] <Prohibition Name>**: Explicitly disallowed implementation shortcuts, silent error swallowing, or architectural violations.
-
----
-
-## 7. Acceptance Criteria & Verifications (验收标准与验证断言)
-<!-- Focus on essential behaviors and critical failure modes; use scenarios or a compact matrix based on clarity. -->
-
-### 7.1 Core Scenarios
-- **[Scene-01] <Critical Path / High-Risk Failure>**:
-  - **Given** <Preconditions & Input State>
-  - **When** <Triggering Action>
-  - **Then** <Observable State Changes, Assertions & Persistence>
-
-### 7.2 Scenario Assertion Matrix
-| Case ID | Given (Preconditions) | When (Trigger) | Then (Verifiable Assertions) |
-| :--- | :--- | :--- | :--- |
-| ... | ... | ... | ... |
-
----
-
-## 8. Implementation & Delivery Notes (实施与交付指引)
-- Implementation prerequisites, key verification focus, and cross-team delivery notes.
+<!-- yjx:spec -->
 ```
 
-## 5. Scale-Adaptive Topology & Contract References (For Mega-Initiatives)
+The marker occupies the entire line, with no trailing text or spaces. An initial UTF-8 BOM, leading blank lines, and LF or CRLF line endings are allowed. A marker quoted in prose, a blockquote, or a code example is not a document declaration.
 
-When handling massive requirements spanning multiple orthogonal domains, heterogeneous lifecycles (e.g., daily store vs. weekly battle vs. multi-week season), or loosely coupled subsystems:
+The marker declares a document type, not readiness, approval, or implementation progress. The rest of the document can use native-language headings and an appropriate structure without fixed numbering or a "Readiness Radar".
 
-### 1. Topology Triggering Criteria
-Trigger multi-spec decomposition ONLY when the initiative involves:
-- Physically isolated deployment units (e.g., distinct microservices or client/server boundaries), OR
-- Decoupled, orthogonal lifecycles and independent state machines that can be developed and verified in parallel.
-*Never mechanically split a single cohesive, tightly coupled state machine into multiple sub-specs merely to reduce file length.*
+For a project using `yjx-gh-kanban`, ensure its marker-aware reader is available before dropping the old identifying headings. The updated reader retains the legacy `to-spec` and `yjx-to-spec` heading paths; old readers are not guaranteed to understand a new flexible layout. Do not bulk-migrate historical specifications. Add the marker when an existing specification is legitimately revised, without gratuitously reformatting its unrelated content.
 
-### 2. Master Topology Spec (`MASTER_TOPOLOGY_SPEC.md` or `spec.md`)
-The Master Spec serves as the **global constitutional blueprint and assembly map**. It contains:
-- **Global Lifecycle Timeline**: End-to-end stage flow and cross-system clock orchestration.
-- **Key Arbitration Points**: Explicit declaration of which subsystem authoritatively determines shared state variables (e.g., Mode resolution) and at what exact lifecycle milestone.
-- **Global Shared Dictionary**: Cross-subsystem shared enums, base error codes, or common protobuf/DTO definitions.
-- **Static DAG Dependency Matrix**: Visualized via Mermaid DAG and a Markdown matrix declaring prerequisite input/output data contracts (`Sub-Spec B consumes immutable output from Sub-Spec A`). **Strictly forbid embedding dynamic project management status (e.g., In-Progress / Done checkboxes) into the static Spec.**
+## 5. Create or Revise at the Formal Target
 
-```mermaid
-graph TD
-    SubA["Sub-01: Upstream Producer (e.g., Signup Roster)"] --> SubB["Sub-02: Core Consumer (e.g., Matchmaking Algorithm)"]
-    SubB --> SubC["Sub-03: Runtime Domain (e.g., Battle Session)"]
-    SubD["Sub-04: Independent Parallel Domain (e.g., Asset Store)"]
-```
+### Revisions
 
-### 3. Cluster / Island Sub-Specs (`specs/<unit-slug>.md`)
-- Dedicated sub-specifications adhering to the 7-part template for each cohesive cluster or independent island.
-- **Contract Cross-Reference Protocol**:
-  - **Local Markdown Tracker (`.scratch/` or `specs/`)**: Use standard Markdown relative links with section anchors to preserve Single Source of Truth (SSOT), e.g., `[BattleMember Entity](01-signup-prepare.md#2-core-entities--schemas)`. Do NOT copy-paste redundant copies of data models.
-  - **Remote Issue Tracker (GitHub / GitLab / Jira)**: Use native issue reference links (e.g., `Blocked by #101`, `See schema in #102`).
+Create a new specification for a new requirement. For an explicitly continuing requirement, update the existing file or Issue in place rather than creating a competing version.
 
-## 6. Issue Tracker & Storage Protocol
+- Read the original and establish the exact update target. If its identity is ambiguous, multiple candidates remain, or the original cannot be read, report the blocker; do not guess an overwrite or create a replacement to bypass it.
+- If implementation has not started, apply the aligned revision without an extra publication approval.
+- If implementation has started and a change affects the goal, scope, external behavior, key constraints, or acceptance basis, establish its impact on existing commitments and completed or ongoing work. Update only with confirmation covering those effects. Reuse sufficient existing authorization rather than asking again.
+- Do not treat unknown implementation status as "not started" to bypass impact checks. Corrections that do not change meaning do not need this material-change gate.
+- Preserve unrelated content and published reference entry points. If compatibility cannot be maintained, leave the affected entry point unchanged and report the limitation rather than silently editing other documents.
+- Record material commitment changes and their basis, not a dynamic execution-progress ledger. Recheck the source before replacement; if it has changed, reconcile against the current version instead of overwriting from a stale copy. Do not claim atomic concurrency protection that the storage tool does not provide.
 
-Consult repo conventions (or `docs/agents/issue-tracker.md`) to determine the storage target:
-1. **Local Markdown Tracker (`.scratch/` ecosystem)**:
-   - For this storage mode only, generate a feature slug with a sortable local date-time prefix: `<YYYYMMDD-HHmm>-<descriptive-slug>`.
-   - Write to `.scratch/<feature-slug>/spec.md` (or `MASTER_TOPOLOGY_SPEC.md` and `specs/<unit>.md` for multi-unit initiatives).
-   - As a contract specification, do NOT assign `Status:` fields that pollute the execution kanban graph.
-2. **Remote Issue Tracker (GitHub / GitLab / etc.)**:
-   - Use a concise natural-language Issue title in the user's conversational language and follow any explicit repository title convention. Add a categorical title prefix only when the repository defines one.
-   - If local docs are maintained, commit the markdown spec and open/update the Spec Issue via CLI.
-   - Strictly adhere to the repo's canonical triage labels (e.g. apply `ready-for-agent` for completed specs). **Never invent custom labels** on remote trackers.
-   - Express multi-unit hierarchy through natural-language titles and native body links (`Parent: #...`, `Blocked by: #...`).
+### Local Tracker
 
-## 7. Forbidden Execution Paths
+Follow the configured local convention. For a new specification in the `.scratch/` convention, use `.scratch/<YYYYMMDD-HHmm>-<descriptive-slug>/spec.md`, with the user's or project's local timezone. Place optional sub-specifications under that feature's `specs/` directory. Preserve an existing specification's location on revision, and do not overwrite an unrelated file on a naming collision.
 
-- **NEVER** use Agile User Stories (`As a... I want...`) as the primary specification vehicle.
-- **NEVER** write private helper implementation logic or internal glue code inside the Spec (only public schemas/interfaces are allowed).
-- **NEVER** invent unconfirmed micro-values without safety range limits. Always wrap unconfirmed items as explicit `[Param-XX]` entries in Section 4.2.
-- **NEVER** mechanically generate dozens of trivial, repetitive scenario descriptions that pad document length without adding verifiable value.
-- **NEVER** omit Touched Areas and System Invariants when operating in an existing codebase.
-- **NEVER** prematurely slice the specification into vertical execution schedules or task tickets inside the document.
-- **NEVER** embed dynamic project management status (e.g., progress checkboxes) into the static Master Topology Spec.
-- **NEVER** copy-paste duplicate schemas across Sub-Specs. Always use native relative Markdown links or tracker references.
-- **NEVER** modify production application source code or execute implementation commands within this skill.
+These files are the formal specification, not temporary upload material. Do not add execution `Status:` fields or other task-progress metadata that would enroll a specification in the implementation kanban.
+
+### Remote Tracker
+
+The remote specification is the formal source. Create or update it directly through the available authorized tracker interface. Use a concise title in the user's language, adding prefixes only where the project requires them. Follow canonical triage labels; do not invent labels.
+
+The presence of local project documentation does not request a second maintained copy or a Git commit. Use direct content input when supported. If upload tooling requires a local file:
+
+- Create it in a task-owned system temporary directory outside the repository, not in business directories, versioned docs, or the local tracker.
+- Never stage or commit upload material, or modify `.gitignore` to accommodate it.
+- After verified publication success, remove only this task's temporary material.
+- On failure or an unknown result, preserve the material for recovery and report its temporary path and actual publication state. Do not promise permanent retention or blindly retry a create that may already have succeeded.
+
+There is no default Git commit step in either storage mode. Honor a separate explicit user or project requirement where applicable; it does not turn upload temporaries into versioned artifacts or implicitly request dual-source maintenance.
+
+### Completion
+
+Before mutation, check the final content against the agreed scope, readiness gate, marker protocol, and reference targets. After writing or publishing, verify the stored content and references and apply only the project's required triage labels for a completed specification. Do not declare success from a local upload file alone.
+
+If publication fails, is partial, or cannot be verified, report completed targets and outstanding work accurately and preserve recoverable temporary material. Do not silently reduce the requested scope, claim the entire specification is published, or launch an implementation workflow.

@@ -183,6 +183,22 @@ test('loadNativeRelations fail-closed when ready candidate missing from snapshot
   );
 });
 
+test('loadNativeRelations does not require execution relations for a declared spec', async () => {
+  const issues = new Map([
+    [20, {
+      number: 20,
+      state: 'OPEN',
+      labels: ['ready-for-agent'],
+      body: '<!-- yjx:spec -->\n# Specification',
+    }],
+  ]);
+  const relations = await loadNativeRelations(issues, 'ready-for-agent', {
+    runGh: async () => [],
+    limit: 200,
+  });
+  assert.equal(relations.size, 0);
+});
+
 test('stubIssueFromRelationRef copies title/state/url', () => {
   const stub = stubIssueFromRelationRef({
     number: 9,
@@ -255,6 +271,32 @@ test('runBoard builds human tree, json, agent, and ready-only outputs via inject
   assert.match(readyOnly, /ready-only/i);
   assert.match(readyOnly, /#11/);
   assert.doesNotMatch(readyOnly, /DEPENDENCY TREE/);
+});
+
+test('runBoard excludes explicit and legacy specs from machine execution candidates', async () => {
+  const runGh = async (args) => {
+    assert.ok(isBoardListCall(args));
+    return [
+      issueJson(20, 'Localized specification', {
+        body: '\uFEFF\r\n<!-- yjx:spec -->\r\n# 规格\r\n## 验收\r\n保留用户权限。',
+      }),
+      issueJson(21, 'Implementation'),
+      issueJson(22, 'Legacy specification', { body: SPEC_BODY }),
+    ];
+  };
+  const options = { limit: 50, readyLabel: 'ready-for-agent', runGh };
+  const payload = JSON.parse(await runBoard({ ...options, mode: 'json' }));
+  assert.deepEqual(payload.ready.map((entry) => entry.number), [21]);
+  assert.equal(payload.next.number, 21);
+  assert.equal(payload.summary.spec, 2);
+
+  const agent = await runBoard({ ...options, mode: 'agent' });
+  assert.match(agent, /next=#21\b/);
+  assert.doesNotMatch(agent, /#(?:20|22)\b/);
+
+  const readyOnly = await runBoard({ ...options, mode: 'ready-only' });
+  assert.match(readyOnly, /#21\b/);
+  assert.doesNotMatch(readyOnly, /#(?:20|22)\b/);
 });
 
 test('main --help exits 0 and prints Usage', async () => {

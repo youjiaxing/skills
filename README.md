@@ -27,7 +27,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 | 原版 (mattpocock/skills) | 本仓库强化版 (yjx-skills) | 解决的核心痛点与关键演进 |
 | :--- | :--- | :--- |
 | `grilling` | **`yjx-grill`** | **解决问卷风暴与盲从陷阱**：动态决策树剪枝，显式呈现场景代价与关键假设；严格分离用户决策与伴随推断；输出单一语义归宿的实现契约，消除模板重复并保留实施关键约束。 |
-| `to-spec` | **`yjx-to-spec`** | **解决 User Story 语义通胀与遗留系统破坏**：废除八股模板，以状态转移表与强类型接口为真源；引入 `Touched Areas`（物理修改白名单）与 `System Invariants`（系统不变量）；内建 ADR-Lite 记录被废弃方案以防反复回退。 |
+| `to-spec` | **`yjx-to-spec`** | **解决过早生成、模板膨胀与遗留系统破坏**：先检查关键承诺是否就绪，再按领域编译并发布规格；保留行为边界、系统不变量、可验证的验收依据及已知决策理由，以现有契约为真源。 |
 | `to-tickets` | **`yjx-to-tickets`** | **解决过度碎片化、魔数硬限与需求孤儿化**：以因果自洽、单会话无损收敛与审查自解释性为切分准则；内建覆盖率自检与不变量伴随注入；AFK 优先并显式分离 `ready-for-human` 门禁。 |
 | `wayfinder` | **`yjx-wayfinder`** | **解决跨 Session 上下文爆炸与虚假发票**：构建轻量决策地图（Map as Index），仅实例化当前无阻塞的 Frontier 票；支持决策划线作废；闭环时自动将碎片化决策合成最终交付物。 |
 | `setup-matt-pocock-skills` (Local) | **`yjx-local-tracker-setup`**<br>**`yjx-local-kanban`** | **规范完成语义与只读可视化**：将完成真源对齐为 `Status: resolved`（`+resolved-v1` 协议）；提供零依赖的人类看板、完整 JSON 依赖图与 Mermaid 拓扑。 |
@@ -62,7 +62,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ### 2. 规范编译与原子切片 (Specification & Decomposition)
 
-- **`yjx-to-spec`**：将讨论共识/对齐产物/规划图编译为高内聚、自包含的规范蓝图（Spec Blueprint）。明确声明系统不变量、修改物理白名单（Touched Areas）与准备度雷达。
+- **`yjx-to-spec`**：检查讨论共识、对齐产物或规划图的就绪程度；关键承诺不完整时停止，通过后直接在项目配置的正式目标创建或修订规格。按领域组织契约、行为边界、不变量与验收依据，允许不改变关键承诺的实现自由；具体规则见 [skill](skills/yjx-to-spec/SKILL.md)。
 - **`yjx-to-tickets`**：将实现计划、规格说明书或会话共识拆解为单会话无损收敛、因果自洽、声明显式阻塞依赖且具备可证伪验收标准的示踪弹任务票据。
 
 ### 3. 手术级精准实施 (Surgical Implementation)

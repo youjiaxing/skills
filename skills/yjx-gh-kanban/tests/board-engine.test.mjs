@@ -68,7 +68,7 @@ function rel(parent = null, blockedBy = []) {
   };
 }
 
-test('SPEC requires exact H2 headings; lookalikes are not specs', () => {
+test('legacy SPEC detection requires exact H2 headings; lookalikes are not specs', () => {
   assert.equal(isSpecIssue({ body: SPEC_BODY }), true);
   assert.equal(
     isSpecIssue({ body: 'Problem Statement / Solution / User Stories are discussed inline.' }),
@@ -105,6 +105,61 @@ test('SPEC requires exact H2 headings; lookalikes are not specs', () => {
     '## 2. Core Entities',
   ].join('\n');
   assert.equal(isSpecIssue({ body: incompleteBody }), false);
+});
+
+test('explicit SPEC declarations allow flexible content and stay out of READY/next', () => {
+  const bodies = [
+    '<!-- yjx:spec -->\n# Feature\n## Outcomes\nA verifiable result.',
+    '<!-- yjx:spec -->\n# 查询规格\n## 验收\n返回已授权的数据。',
+    '<!-- yjx:spec -->\r\n# Especificacion\r\n## Alcance\r\nUn resultado verificable.',
+    '\n \t\n<!-- yjx:spec -->\n# Feature',
+    '\uFEFF<!-- yjx:spec -->\n# Feature',
+    '\uFEFF\r\n \t\r\n<!-- yjx:spec -->\r\n# Feature',
+  ];
+
+  for (const body of bodies) {
+    assert.equal(isSpecIssue(body), true, JSON.stringify(body));
+    const board = classify({
+      1: issue(1, 'spec with a ready label', { body }),
+      7: issue(7, 'implementation ticket'),
+    }, 'ready-for-agent', { 7: rel() });
+
+    assert.deepEqual(board.specs.map((entry) => entry.number), [1]);
+    assert.deepEqual(board.ready.map((entry) => entry.number), [7]);
+    assert.equal(board.next.number, 7);
+  }
+
+  const closed = classify({
+    1: issue(1, 'closed spec', { body: bodies[0], state: 'CLOSED' }),
+  }, 'ready-for-agent', {});
+  assert.equal(closed.summary.closed, 1);
+  assert.equal(closed.summary.spec, 0);
+  assert.equal(closed.next, null);
+});
+
+test('marker examples and malformed declarations remain ordinary tickets', () => {
+  const bodies = [
+    '# Implementation\n<!-- yjx:spec -->',
+    'Use <!-- yjx:spec --> for specifications.',
+    '> <!-- yjx:spec -->',
+    '    <!-- yjx:spec -->',
+    '\t<!-- yjx:spec -->',
+    '```markdown\n<!-- yjx:spec -->\n```',
+    '~~~markdown\n<!-- yjx:spec -->\n~~~',
+    '<!-- yjx:spec --> extra text',
+    '<!-- yjx:SPEC -->',
+    '<!-- yjx:spec -->   ',
+    '<!-- yjx:specification -->',
+  ];
+
+  for (const body of bodies) {
+    assert.equal(isSpecIssue({ body }), false, JSON.stringify(body));
+    const board = classify({
+      7: issue(7, 'implementation ticket with a marker example', { body }),
+    }, 'ready-for-agent', { 7: rel() });
+    assert.equal(board.summary.spec, 0);
+    assert.equal(board.next.number, 7);
+  }
 });
 
 test('wayfinder labels are detected', () => {

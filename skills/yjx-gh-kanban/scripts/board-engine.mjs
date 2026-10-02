@@ -180,6 +180,11 @@ function escapeRegExp(value) {
 export function isSpecIssue(issueOrBody) {
   const body = typeof issueOrBody === 'string' ? issueOrBody : issueOrBody?.body ?? '';
 
+  // Only a document-leading declaration counts; later examples are ordinary content.
+  if (/^\uFEFF?(?:[ \t]*\r?\n)*<!-- yjx:spec -->(?:\r?\n|$)/.test(body)) {
+    return true;
+  }
+
   // 1. 原版 Matt Pocock 兼容通道 (Problem Statement + Solution + User Stories 全合取)
   if (SPEC_HEADINGS.every((heading) => hasH2Heading(body, heading))) {
     return true;

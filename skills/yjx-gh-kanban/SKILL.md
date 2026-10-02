@@ -128,7 +128,8 @@ node <kanban-skill-dir>/scripts/issue-board.mjs --ready-only
 
 - 关系真源：GitHub native parent / native `blockedBy`；**不**解析正文 `## Parent` / `## Blocked by`
 - READY：open + ready 映射标签 + 无 open blocker + 非 SPEC + 非 wayfinder
-- SPEC：具备原版 `## Problem Statement` / `## Solution` / `## User Stories` 或 `yjx-to-spec` 蓝图特征标头（含 `Readiness Radar` + `Scope & Surgical Boundary` / `System Invariants`）
+- SPEC：正文首个非空行精确为 `<!-- yjx:spec -->`（不缩进、不附加文字或尾随空格；允许文件开头的 UTF-8 BOM、前导空白行及 LF/CRLF）。正文、引用、缩进代码或围栏代码中举例出现标记不触发新识别；标记只声明文档类型，不证明就绪或批准。
+- 兼容旧 SPEC：没有有效新标记时，仍识别原版 `## Problem Statement` / `## Solution` / `## User Stories`，或旧 `yjx-to-spec` 的 `Readiness Radar` / `准备度雷达` 与指定范围或不变量标头。先更新看板再启用自由模板，不要求批量迁移旧规格。
 - 无 parent 的 ready 实施票合法；parent 不是 blocker
 - 候选关系缺失或不可靠 → **fail-closed**，不输出可用 `next`
 - 依赖树：视觉主挂载优先 native parent；行尾 ` <- #a, #b` 列出完整 blockedBy；每票至多一次
