@@ -34,9 +34,9 @@ The reader's behavioral checks live in:
 - [Board classification tests](../yjx-gh-kanban/tests/board-engine.test.mjs): explicit and legacy identity, marker examples versus declarations, and exclusion from execution candidates.
 - [CLI tests](../yjx-gh-kanban/tests/issue-board.test.mjs): relationship-loading compatibility and JSON, agent, and ready-only output.
 
-## Behavioral Validation
+## Static Review Examples
 
-Use realistic inputs and judge observable outcomes, not exact prose, headings, or template length. Independent forward-testing should receive the skill and raw case inputs without the expected answer or these evaluation notes.
+Use these examples to review the runtime instructions and available artifacts under the repository [Skill verification policy](../../AGENTS.md#skill-verification), not as inputs to model-driven or simulated-conversation tests. Inspect whether the rules preserve the listed boundaries; exact prose, headings, or template length do not establish quality. Static checks do not prove reliable agent behavior.
 
 | Case | Required behavior |
 | --- | --- |

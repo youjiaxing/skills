@@ -1,0 +1,5 @@
+interface:
+  display_name: "Video Course"
+  short_description: "将视频整理为可独立学习的课程"
+policy:
+  allow_implicit_invocation: false

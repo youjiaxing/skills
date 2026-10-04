@@ -23,11 +23,11 @@ This differs from a general conversation summary. Sufficiency comes before pruni
 - **Ephemeral runtime state:** observations carry time and recheck expectations. Dead handles carry no continuation value.
 - **Operating-system temporary storage:** continuation artifacts stay outside the workspace and identify their temporary lifetime.
 - **Natural body structure:** only the control block is fixed. The preserved contract, diagram, table, or prose keeps the organization that carries its meaning.
-- **Prompt-only operation:** semantic completeness remains a model judgment verified by full readback and scenario review; no transcript format, watcher, or fixed parsing harness is required.
+- **Prompt-only operation:** semantic completeness is assessed by full readback and static document review; no transcript format, watcher, or fixed parsing harness is required.
 
-## Review scenarios
+## Static Review Examples
 
-Use these cases to evaluate changes; they are not runtime headings or a questionnaire.
+Use these examples to inspect the instructions and available continuation artifacts under the repository [Skill verification policy](../../AGENTS.md#skill-verification). They are not inputs for simulated saving/resumption runs, runtime headings, or a questionnaire.
 
 | Situation | Expected result |
 | --- | --- |
@@ -53,11 +53,11 @@ Use these cases to evaluate changes; they are not runtime headings or a question
 
 ## Review method
 
-During skill maintenance, exercise saving and resumption independently: give a saving agent realistic source material containing decisions, corrections, authorization changes, references, evidence, and background work. Give a separate successor only the resulting file and its accessible references, not the original conversation or expected answers. Compare its interpretation and next permitted action with the source. This is maintenance verification, not a subagent requirement or added workflow for ordinary saves.
+During skill maintenance, review the runtime instructions and, when available, continuation artifacts from actual user interactions against their authoritative sources. Inspect whether decisions, corrections, authorization, references, evidence, and background work remain explicit and consistent. Do not generate simulated conversations or run saving/successor agents as behavioral tests.
 
-Verify sufficiency first, then economy:
+Review sufficiency first, then economy:
 
-1. A fresh agent identifies the task, evidence-backed progress, remaining gaps, and action boundaries without reopening closed decisions, inventing authority, or accessing the old session.
+1. The instructions and available artifact preserve the task, evidence-backed progress, remaining gaps, closed decisions, and action boundaries explicitly or through accessible references, without depending on the old session.
 2. Repetition and irrelevant material are removed without losing continuation-critical meaning; sentence-by-sentence irreducibility is not an acceptance condition.
 
-Repository discovery checks can verify skill placement and frontmatter. They cannot prove semantic completeness, closure fidelity, or correct authority selection; review those through the scenarios above.
+Repository discovery checks can verify skill placement and frontmatter. Static review can identify omissions and inconsistencies, but neither establishes reliable agent behavior.

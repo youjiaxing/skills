@@ -18,7 +18,7 @@ Read [MAINTENANCE.md](MAINTENANCE.md) before reviewing or changing this skill; o
 
 When the user explicitly requests collaborative discussion, present an adjustable synthesis and allow feedback even if no question remains. Interpret readiness to conclude by meaning, not a fixed phrase: agreement with a complete stated result can conclude discussion, while agreement with one proposal does not settle remaining work. Do not repeatedly reconfirm the same unchanged result. Discussion completion is not execution authorization and does not remove required review or formal approval.
 
-Allowing feedback is not an additional confirmation gate. When no user-owned decision or required approval remains, state the result and current status, then continue ready work within the agreed scope or conclude; do not leave an unspecified request to validate the result as a waiting point. Unconfirmed material premises remain pending, not implicitly accepted.
+Allowing feedback is not an additional confirmation gate. When no user-owned decision or required approval remains, state the result and current status, then advance remaining alignment work or conclude under section 6; implementation handoff belongs to section 8. Do not leave an unspecified request to validate the result as a waiting point. Unconfirmed material premises remain pending, not implicitly accepted.
 
 ## Presentation Density
 
@@ -52,7 +52,7 @@ Reopen a closed choice only for new evidence, a contradiction in its rejection r
 
 ## 2. Scope and Schedule the Work
 
-Split independent outcomes into cohesive capability slices, and finish one slice before opening the next. Identify shared prerequisites before treating slices as independent. Keep the remaining slices and dependencies visible in the internal record.
+Split independent outcomes into cohesive capability slices, and finish one slice before opening the next. Identify shared prerequisites before treating slices as independent. Track all in-scope recommendations, their decisions, and dependencies in the coverage record under section 4; one recommendation's acceptance closes only the decisions it actually settles.
 
 A question is ready only when its factual and decision prerequisites are settled. An investigation in progress is an unsettled prerequisite: continue on ready branches, but wait on those that depend on its result. A question that remains necessary under every answer is still not ready if another answer changes its premises, feasible options, or recommendation.
 
@@ -75,10 +75,10 @@ When consequential human judgment is required, record `contract required` for th
 
 ## 4. Maintain Coverage and Provenance
 
-Before the first question, after each reply or material evidence update, and before completing a slice, inventory every material choice or assumption that can change observable behavior, implementation obligations, or risk boundaries. Keep a private ledger with:
+Before the first question, after each reply or material evidence update, and before completing a slice, account for every in-scope recommendation and every material choice or assumption that can change observable behavior, implementation obligations, or risk boundaries. Keep a private ledger with:
 
 - **Provenance**: each material claim has exactly one source and its evidence location or corresponding user expression: `需求` (explicit requirement), `事实` (verified state), `决策` (user-confirmed choice), or `推断` (agent proposal or default).
-- **Coverage**: `pending evidence`, `pending human`, `resolved`, or `pruned`, with prerequisites and a reason. For resolved nodes, record whether a requirement, fact, user choice, low-risk inference, or concrete acceptance/review constraint resolves them; for pruned nodes, record the verified evidence or explicit scoped decision that closes the branch.
+- **Coverage**: `pending evidence`, `pending human`, `resolved`, or `pruned`, with prerequisites and a reason. Give each recommendation a disposition: established requirement/evidence, low-risk default, human decision needed, evidence needed, or excluded with a reason. A recommendation with unresolved material choices remains pending. For resolved nodes, record whether a requirement, fact, user choice, low-risk inference, or concrete acceptance/review constraint resolves them; for pruned nodes, record the verified evidence or explicit scoped decision that closes the branch. Apply section 3 before treating a choice as a low-risk default; this inventory does not create one question per recommendation.
 
 Unanswered questions and ongoing investigations have valid pending states. They are not resolved merely because they were asked, listed, or assigned a test. Review or acceptance coverage must establish the boundary, not postpone an unknown choice. Important new evidence invalidates affected resolutions and dependent inferences, returning them to a pending state.
 
@@ -119,13 +119,18 @@ This illustrates layout, not a stock opening question. Open and single-approach 
 
 Use a visual only when it replaces prose by clarifying a control-flow, state, data, or ownership divergence; keep it within eight lines without adjacent repetition.
 
-Interpret replies by meaning; only an unambiguous commitment changes a decision. Acknowledge a selection briefly, update coverage, and show only new or changed information. A partial answer leaves other questions pending. For a custom answer, preserve explicit overrides and constraints, deriving low-risk mechanics without another questionnaire.
+After a decision reply:
+
+1. Identify the decisions the reply actually settles and update only that coverage. Preserve unanswered choices and any required review or approval. For a custom answer, retain explicit overrides and constraints, deriving low-risk mechanics under section 3.
+2. Recompute the ready frontier across the remaining scope. Acknowledge the selection briefly, then ask the next ready question in the current slice or investigate missing evidence. Close the slice under section 6 before activating the next one; if neither investigation nor a user decision can advance the work, report the specific blocker. Use section 8 only when execution is actually directed.
+
+Show only new or changed information and material unresolved boundaries, not the full ledger. Neither the number of questions answered nor accepting one recommendation establishes overall completion.
 
 If a new answer invalidates an earlier branch, discard dependent inferences and reopen only affected choices. Mention a next frontier only when the answer unlocks another material question. If the user asks for clarification, answer only that clarification and wait. If they report confusion, restate the actual change and remaining choice rather than returning to a template.
 
 ## 6. Converge and Deliver Each Slice
 
-Convergence requires every material node to have provenance and resolved/pruned coverage, every consequential branch to be traversed, explicitly closed, or pruned with evidence, and no selected choice or inference to conceal a further human fork. Changed triggers, transitions, authority, failure policies, and guarantees need a supported basis. An empty ready frontier with pending nodes is waiting or blocked, not complete.
+Before declaring a slice complete, check its coverage record: every in-scope recommendation and material choice is resolved or pruned with a supported disposition, no consequential cost or behavior is concealed in a default, and every required review or approval is complete. Changed triggers, transitions, authority, failure policies, and guarantees need a supported basis. An empty ready frontier with pending nodes is waiting or blocked, not complete.
 
 Choose one of two delivery forms:
 
@@ -136,7 +141,7 @@ For either form, synthesize the result around the actual problem and intended ou
 
 If new evidence reveals consequential human judgment, record the obligation and address it. Independent review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
 
-Apply the collaborative-discussion rule before concluding either form. Complete only the current slice, then activate the next remaining slice. End the overall alignment only when all in-scope slices are complete, or the user explicitly stops, pauses, or narrows the scope; record remaining choices and review/approval obligations without marking them complete.
+Apply the collaborative-discussion rule before concluding either form. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. Distinguish alignment completion from implementation status; completing this workflow does not claim that any implementation occurred.
 
 ## 7. Review According to Risk
 
@@ -152,8 +157,14 @@ Distinguish confirming a conclusion, authorizing specified implementation behavi
 
 These distinctions do not require separate turns. An explicit instruction to implement the reviewed result can confirm it, authorize its implementation, and direct execution together. Permission to implement without a direction to start is not an execution instruction. Preserve earlier explicit authorizations according to their actual wording and scope; do not retroactively expand or revoke them, or infer authorization from ambiguous records.
 
+Interpret short replies such as "continue" or "go ahead" from the current activity and the user's actual meaning, not a keyword whitelist. A continuation of discussion advances alignment; it does not itself switch to implementation. Resuming interrupted implementation may rely on its still-valid authorization and execution instruction. A clear contextual instruction to implement needs no prescribed wording or duplicate confirmation; if the intended activity is ambiguous, continue ready alignment work or ask only for the unresolved execution intent.
+
 Material changes to an approved behavior or boundary require renewed alignment, required review, and approval; a conditional approval is an adjustment, not approval of an unrevised contract. Approval does not verify uncertain facts or replace coverage or review.
 
-Hand off only on an explicit execution instruction that still covers the current aligned and authorized scope, including the current reviewed contract where required. An instruction limited to an old plan does not transfer to a materially changed plan; if withdrawn, invalidated, or unclear in scope, obtain a new instruction. A still-valid earlier instruction or one in the approval reply needs no repetition.
+Before handoff, match the actual execution instruction to the current aligned and authorized behaviors, including the reviewed contract where required, and check that unresolved work does not block that scope. An instruction limited to an old plan does not transfer to a materially changed plan; if withdrawn, invalidated, or unclear in scope, obtain a new instruction. A still-valid earlier instruction or one in the approval reply needs no repetition.
 
 A request to execute only an approved subset may be handed off only when it does not depend on unresolved work; retain the remaining alignment items. Calling workflows may require confirmation of their own conclusion, but that does not turn a Direct Result into a Formal Contract or expand implementation authority. Keep sources, reviewed scope, approval, and pending boundaries distinguishable in the handoff.
+
+### Recover from a Boundary Violation
+
+If a missed decision or premature implementation is discovered, first report the actual changes, which were covered by confirmed decisions and execution authorization, which were agent additions, and what remains unresolved. Pause further mutations outside valid authorization; discuss retaining or revising the actual state rather than presenting the follow-up as pre-implementation alignment. Later agreement can authorize future handling, but cannot establish that earlier authorization existed. Preserve the user's work and dependencies; reverting changes requires authorization too.

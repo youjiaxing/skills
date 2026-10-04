@@ -56,9 +56,9 @@ When modifying this skill, ensure none of the following regressions occur:
 - [ ] **Publication Scope**: Are retries distinguishable from historical-ticket edits, with existing identities protected and incomplete results reported?
 - [ ] **Decoupled Framing**: Are hardcoded upstream/downstream slash command mandates avoided?
 
-## Scenario Checks
+## Static Review Examples
 
-Use these as semantic review or forward-testing cases, not wording snapshots. Passing a parser or frontmatter check does not prove slicing quality.
+Use these examples for static semantic review of the instructions and available artifacts under the repository [Skill verification policy](../../AGENTS.md#skill-verification), not as inputs to model-driven or simulated-conversation tests. Passing a parser or frontmatter check does not prove slicing quality or reliable agent behavior.
 
 | Input situation | Expected observable behavior |
 | --- | --- |

@@ -21,6 +21,8 @@ The conversation retrospective exposed a routing failure, not a need to number e
 
 Formal-contract approval confirms the reviewed conclusion, not permission to implement it. This replaces the former "Approved to implement" approval meaning, which left consequential planning decisions without a completion path when the user withheld implementation authority. Keep the existing consequence gate and independent review; confirmation, implementation authorization, and execution intent can share one explicit reply without becoming synonymous. Earlier explicit authorizations retain their actual scope.
 
+The video-course retrospective exposed incomplete coverage and a premature activity switch: one answer settled the default parsing route, but other recommendations were treated as settled and a later continuation was interpreted as permission to edit. The repair accounts for every recommendation without asking about each one, checks coverage at reply/completion/handoff transitions, and interprets continuation in its current activity. It adds no fixed interview length, magic authorization phrase, or repeated approval gate. Recovery discloses the already changed state before further alignment; later agreement does not rewrite earlier authority.
+
 ## Failure Modes and Rationale
 
 - **Over-questioning and silent intent substitution:** use the dual-entry gate, not "ask everything" or "guess anything reversible."
@@ -48,11 +50,14 @@ When changing the skill, verify that:
 
 - autonomous fact discovery, dual-entry questioning, zero-question cases, ready-frontier dependency handling, and both delivery forms remain available;
 - coverage and source/evidence mappings survive partial answers, new evidence, review, approval, and handoff;
+- every in-scope recommendation has a supported disposition, and local acceptance does not close unrelated material choices;
 - observed high stakes are not erased merely by answering a question, and reviewer unavailability or unresolved correctness findings cannot be presented as successful completion;
 - collaborative discussion remains open to feedback, accepts clear closure without a fixed phrase or repeated unchanged confirmations, and preserves separate execution authorization;
 - a request for Q-numbered questions does not manufacture a decision; explanation requests receive an explanation, while genuine questions and required approval requests use the question-first layout;
 - background supplies enough context to decide without fixed fields or lengths, leading assumptions, duplicated option comparisons, or a required link detour; conclusions without pending decisions or approvals do not create an unspecified feedback checkpoint;
 - a reviewed planning-only contract can be confirmed without implementation authority; bare agreement does not start execution, permission without a start instruction remains permission, and an explicit instruction to implement the reviewed result needs no duplicate confirmation;
+- continuation stays within the current activity unless execution is clearly directed, while still-valid authorization supports resuming interrupted implementation;
+- missed decisions or premature implementation are disclosed against the actual changed state, without retroactive authorization or unauthorized rollback;
 - problem discovery permits open questions and user correction without requiring every discussion to restart from first principles;
 - questions precede their unlabelled background quotes, real alternatives have recommendation-first numbered choices and honest costs, and important single-approach questions do not manufacture options;
 - conclusions organize the understood problem and resulting solution by topic, distinguish new proposals naturally, and scale down without empty sections or question-by-question replay;
@@ -60,4 +65,4 @@ When changing the skill, verify that:
 - full implementation-critical model shapes and guarantees survive compression, while empty fields and duplicate summaries do not return;
 - runtime text stays in English and user-facing text is localized; no repository or external mutation occurs during alignment.
 
-Use static checks for packaging, links, and document consistency. Use actual model interactions for behavioral observations, reporting the cases, replies, outcomes, and limitations separately. Neither keyword matching nor a successful skill validator proves model behavior; unrun cases remain unrun.
+Follow the repository [Skill verification policy](../../AGENTS.md#skill-verification). Use static checks for packaging, links, and document consistency; retrospect on actual user interactions when evidence exists. These checks do not prove reliable model behavior.
