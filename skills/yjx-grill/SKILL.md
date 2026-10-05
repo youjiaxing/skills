@@ -24,11 +24,15 @@ disable-model-invocation: true
 
 讨论问题使用第 5 节的 question-first 布局。按实际主题组织解释和结果；多个结果需要分别处理时使用简短主题标题。简短的单主题回复不需要标题。把行为、重要后果和验收放在它们支持的主题附近；内部能力切片术语不是展示用词。
 
+每个讨论问题或问题批次都必须独立可读。默认用户在调用本 skill 前没有细看，甚至没有粗看，Agent 之前输出的长篇内容；因此不能要求用户回看前文来理解当前问题。将当前问题所需的最小背景、已确认约束、尚未解决的判断，以及答案会改变的结果一起带上；只保留与当前判断直接相关的内容，不复述无关历史。
+
+在议题收敛、活动切换、进入等待或整体结束时，简要交代当前状态、实际下一步及行动方，让用户知道 Agent 会继续处理什么，或正在等待用户的什么输入。下一步可以是提问、取证、评审或实施交接，不限于新解锁的问题；阻塞时说明具体原因与解除方式。普通连续问答直接衔接当前议题，不要求每轮状态摘要、固定模板或全部剩余主题清单。
+
 通过准确措辞保留 provenance，不要强制使用按来源组织的格式。自然地陈述已确认内容，在来源重要时简短归因。新提出但未确认的方案和重大假设首次出现时要明确标识；获得同意不会把 Agent 推导变成用户 requirement 或 verified fact。完整的 source/evidence 映射保留在私有台账和 reviewer handoff 中，不要把台账字段直接展示给用户。
 
 Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal”分类。选项及其 trade-offs 放在背景之外。单个结论使用 prose，可比较或可行动的内容使用列表；省略空分类和套话式开场。
 
-发送前检查实际草稿：用户能找到问题、理解它为何重要，并区分已确认内容、新建议和不确定主张。每个语义主张只保留一个主要归宿；只有第二次出现增加了不同边界或独立可观察后果时才重复。内部记录和实施关键内容都必须完整。
+发送前检查实际草稿：用户无需打开或回忆此前的 Agent 输出，就能找到当前问题、理解它为何重要并作答；同时能区分已确认内容、新建议和不确定主张。关键节点按上述规则交代状态和下一步，不能只确认选择便留下不明等待点。每个语义主张只保留一个主要归宿；只有第二次出现增加了不同边界或独立可观察后果时才重复。内部记录和实施关键内容都必须完整。
 
 ## 1. 理解问题并测试前提
 
@@ -96,7 +100,7 @@ Source and approval are independent. Approving a proposal does not turn its atta
 
 When ready questions remain, lead the round with its first question after at most a brief acknowledgment, not a preliminary diagnosis or proposal. Start each question with a stable `Q<N>` heading that states the actual question. Directly beneath it, put the necessary background in a Markdown blockquote, without a "Context" label or equivalent. Place any options and their trade-offs below and outside the quote.
 
-Make the background sufficient to judge the question: include the established situation or constraints, the unresolved judgment, and what the answer changes, only as needed. Distinguish verified facts, assumptions, and suggestions naturally. Explain unfamiliar terms and cite decisive evidence briefly, but keep the question understandable without opening links. Omit investigation history and option comparisons already covered below. Use one paragraph when enough, without mandatory fields, sentence counts, or fixed lengths; the background must not present the recommended choice as an established premise.
+Make the background sufficient to judge the question without relying on the user having read earlier Agent output: include the established situation or constraints, the unresolved judgment, and what the answer changes, only as needed. Distinguish verified facts, assumptions, and suggestions naturally. Explain unfamiliar terms and cite decisive evidence briefly, but keep the question understandable without opening links. Omit investigation history and option comparisons already covered below. Use one paragraph when enough, without mandatory fields, sentence counts, or fixed lengths; the background must not present the recommended choice as an established premise.
 
 根据未解决判断选择回复形式：
 
@@ -126,7 +130,7 @@ This illustrates layout, not a stock opening question. Open and single-approach 
 
 Show only new or changed information and material unresolved boundaries, not the full ledger. Neither the number of questions answered nor accepting one recommendation establishes overall completion.
 
-If a new answer invalidates an earlier branch, discard dependent inferences and reopen only affected choices. Mention a next frontier only when the answer unlocks another material question. If the user asks for clarification, answer only that clarification and wait. If they report confusion, restate the actual change and remaining choice rather than returning to a template.
+If a new answer invalidates an earlier branch, discard dependent inferences and reopen only affected choices. Make the actual next step clear under Presentation Density without manufacturing another question. If the user asks for clarification, answer only that clarification and wait for their response on the clarified point. If they report confusion, restate the actual change and next step or remaining choice rather than returning to a template.
 
 ## 6. 收敛并交付每个切片
 
@@ -141,7 +145,7 @@ For either form, synthesize the result around the actual problem and intended ou
 
 If new evidence reveals consequential human judgment, record the obligation and address it. Independent review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
 
-Apply the collaborative-discussion rule before concluding either form. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. Distinguish alignment completion from implementation status; completing this workflow does not claim that any implementation occurred.
+Apply the collaborative-discussion rule before concluding either form. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. State whether alignment is complete, whether the relevant scope is ready for implementation, and whether existing authorization and execution intent allow handoff under section 8. Completing this workflow does not claim that any implementation occurred.
 
 ## 7. 按风险评审
 

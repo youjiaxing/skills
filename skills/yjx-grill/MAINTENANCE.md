@@ -23,6 +23,8 @@ Formal-contract approval confirms the reviewed conclusion, not permission to imp
 
 The video-course retrospective exposed incomplete coverage and a premature activity switch: one answer settled the default parsing route, but other recommendations were treated as settled and a later continuation was interpreted as permission to edit. The repair accounts for every recommendation without asking about each one, checks coverage at reply/completion/handoff transitions, and interprets continuation in its current activity. It adds no fixed interview length, magic authorization phrase, or repeated approval gate. Recovery discloses the already changed state before further alignment; later agreement does not rewrite earlier authority.
 
+The follow-up retrospective exposed interrupted next-step guidance: a decision acknowledgment ended without advancing or explaining the wait. The user chose clear next steps at key transitions, not a full remaining-topic inventory. Keep the action and its owner visible at convergence, activity changes, waits, and overall closure, including evidence gathering and review rather than only newly unlocked questions. This does not require per-reply status summaries or alter approval and execution authority.
+
 ## Failure Modes and Rationale
 
 - **Over-questioning and silent intent substitution:** use the dual-entry gate, not "ask everything" or "guess anything reversible."
@@ -55,6 +57,10 @@ When changing the skill, verify that:
 - collaborative discussion remains open to feedback, accepts clear closure without a fixed phrase or repeated unchanged confirmations, and preserves separate execution authorization;
 - a request for Q-numbered questions does not manufacture a decision; explanation requests receive an explanation, while genuine questions and required approval requests use the question-first layout;
 - background supplies enough context to decide without fixed fields or lengths, leading assumptions, duplicated option comparisons, or a required link detour; conclusions without pending decisions or approvals do not create an unspecified feedback checkpoint;
+- each discussion question or batch is independently understandable when the user has not read earlier long Agent output, while carrying only the minimum context needed for the current judgment;
+- key transitions identify the actual next action and its owner, or a specific blocker and how to clear it, without per-reply status templates or full remaining-topic inventories;
+- decision acknowledgment advances available alignment work or makes the waiting input clear; clarification replies retain their explanation-only boundary;
+- overall closure distinguishes alignment completion, implementation readiness, and existing execution authority without inventing questions or duplicate approvals;
 - a reviewed planning-only contract can be confirmed without implementation authority; bare agreement does not start execution, permission without a start instruction remains permission, and an explicit instruction to implement the reviewed result needs no duplicate confirmation;
 - continuation stays within the current activity unless execution is clearly directed, while still-valid authorization supports resuming interrupted implementation;
 - missed decisions or premature implementation are disclosed against the actual changed state, without retroactive authorization or unauthorized rollback;
