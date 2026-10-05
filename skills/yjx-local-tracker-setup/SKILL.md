@@ -1,11 +1,11 @@
 ---
 name: yjx-local-tracker-setup
-description: 在 Matt Local Markdown tracker 上写入 resolved-v1 机器配置，并强制对齐约束文档完成真源为 Status: resolved；先预览后确认再写；Closed 仅 legacy。
+description: "在 Matt Local Markdown tracker 上写入 resolved-v1 机器配置，并强制对齐约束文档完成真源为 Status: resolved；先预览后确认再写；Closed 仅 legacy。"
 argument-hint: "[项目根目录]"
 disable-model-invocation: true
 ---
 
-# Local Tracker Setup
+# Local Tracker Setup（本地 Tracker 设置）
 
 为已经由 `setup-matt-pocock-skills` 配置为 **Local Markdown** 的项目：
 

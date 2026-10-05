@@ -1,10 +1,10 @@
 ---
 name: yjx-local-kanban
-description: 只读解析 Matt Local Markdown tracker 的普通 implementation issue 或 Wayfinder child ticket 依赖图，输出人类看板、完整 JSON 图或 Mermaid；对齐 Matt local 默认（Wayfinder 空 Status=开放未领；完成统一 Status: resolved；wontfix 终态解阻；legacy Closed: true 过渡兼容）；用于 make kanban、查看 frontier、核对阻塞或 requiredSkill，不选票、不改状态。
+description: "只读解析 Matt Local Markdown tracker 的普通 implementation issue 或 Wayfinder child ticket 依赖图，输出人类看板、完整 JSON 图或 Mermaid；对齐 Matt local 默认（Wayfinder 空 Status=开放未领；完成统一 Status: resolved；wontfix 终态解阻；legacy Closed: true 过渡兼容）；用于 make kanban、查看 frontier、核对阻塞或 requiredSkill，不选票、不改状态。"
 disable-model-invocation: true
 ---
 
-# Local Kanban
+# Local Kanban（本地看板）
 
 `yjx-local-kanban` 是 Matt Local Markdown tracker 的只读事实提供者。它自动识别普通 implementation issue 与 Wayfinder child ticket，解析 `.scratch/<feature>/issues/*.md`，不修改 issue、不选择下一张 issue，也不替对应流程决定生命周期。
 
@@ -183,7 +183,7 @@ Wayfinder 图使用 `workflow: "wayfinder"`，顶层和每张 ticket 都返回 `
 Status: ready-for-agent
 Closed: false
 
-## Blocked by
+## Blocked by（阻塞依赖）
 
 - `01-foundation.md`
 ```
@@ -266,7 +266,7 @@ Comments 中出现的字段示例不能覆盖头部真源。
 
 配置：`docs/agents/local-tracker.json` 的 `protocol` 应为 `matt-local-markdown+resolved-v1`（仍接受 legacy `+closed-v1` 文件以便加载）；`completionField` 仅用于**读取** legacy `Closed`。
 
-## Mermaid
+## Mermaid 图
 
 ```bash
 node <kanban-skill-dir>/scripts/issue-board.mjs \

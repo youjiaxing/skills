@@ -1,86 +1,86 @@
 ---
 name: yjx-save-context
-description: Save the context needed to resume the current task after compaction or in a fresh session, preserving alignment, progress, and authorization without advancing the work.
-argument-hint: "Optional focus for the next session"
+description: 保存当前任务在压缩或新会话中恢复所需的上下文，保留对齐结果、进度和授权，但不推进工作。
+argument-hint: "可选：下一会话的关注重点"
 disable-model-invocation: true
 ---
 
-# Save Context
+# 保存上下文
 
-Write one standalone continuation file, then return its path and a copyable resume prompt. Saving preserves the current phase and existing authorization; it neither grants nor revokes permission.
+写入一个独立的续接文件，然后返回文件路径和可复制的恢复提示词。保存会保留当前阶段和已有授权，不会授予或撤销权限。
 
-When reviewing or redesigning this skill, read [MAINTENANCE.md](MAINTENANCE.md) first. It is not needed for ordinary execution.
+评审或重新设计本 skill 时，先阅读 [MAINTENANCE.md](MAINTENANCE.md)。普通执行不需要读取它。
 
-## 1. Establish continuation control
+## 1. 建立续接控制
 
-Use the user's conversational language and the task's natural terminology. Use the available conversation and already-known artifacts. Arguments focus the continuation without dropping applicable constraints. Work from existing context; recover a critical gap only through a known, narrowly targeted source.
+使用用户的沟通语言和任务的自然术语。利用已有对话与已知产物；参数只聚焦续接重点，不丢失适用约束。基于现有上下文工作，只有在已知且范围狭窄的来源中恢复关键缺口。
 
-Place one localized control block at the start of the file:
+在文件开头放置一个局部控制块：
 
 ```markdown
 ## <Continuation control>
 
-- **<Current phase>**: <where the task stopped>
-- **<Authorization>**: <permitted actions, applicable prohibitions, and prerequisites>
-- **<Active item>**: <open question or unresolved work; omit when none>
-- **<Next permitted action>**: <the first action allowed after resuming>
+- **<当前阶段>**：<任务停止的位置>
+- **<授权>**：<允许的操作、适用的禁止项和前置条件>
+- **<当前事项>**：<开放问题或未完成工作；没有时省略>
+- **<下一允许操作>**：<恢复后允许执行的第一步>
 ```
 
-Distinguish proposals, user-confirmed decisions, and authorized actions. The control block is the single semantic home for phase, authorization, active work, and the next permitted action; later sections point to it instead of restating it. When carried source text contains old control information that could be mistaken for current state, mark it as historical or explicitly superseded by the control block. Normalize only the continuation's presentation, preserving the substantive agreement and original artifacts.
+区分提案、用户确认的决策和已授权操作。控制块是阶段、授权、当前工作和下一步的唯一语义归宿；后续章节引用它，不要重复表述。若带入的源文本包含可能被误认为当前状态的旧控制信息，标为历史信息，或明确说明已被控制块取代。只规范续接文件的呈现形式，保留实质共识和原始产物。
 
-## 2. Preserve the minimum sufficient continuation
+## 2. 保留最低充分续接信息
 
-Check sufficiency before pruning. Cover the task's goal, scope, constraints, and critical acceptance conditions; distinguish decisions, completed work, verified results, and unknown outcomes, including gaps that affect continuation; preserve the action boundaries in the control block. These are internal coverage checks, satisfied by carried content or triggered references, not required output sections. Record only states supported by existing evidence: execution is not verification, and saving does not call for new task verification.
+裁剪前先检查充分性。覆盖任务目标、范围、约束和关键验收条件；区分决策、已完成工作、已验证结果和未知结果，包括会影响续接的缺口；保留控制块中的操作边界。这些是内部覆盖检查，可以由带入内容或触发的引用满足，不是强制输出章节。只记录已有证据支持的状态：执行不等于验证，保存上下文也不要求重新验证任务。
 
-Select the current authoritative source before writing:
+写入前选择当前权威来源：
 
-1. Use a current, user-confirmed stable artifact when one exists.
-2. Otherwise use the latest consolidated conversation content that later messages have not superseded.
-3. Otherwise reconstruct the active state from confirmed decisions and corrections, and disclose any gap.
+1. 有当前且经用户确认的稳定产物时，优先使用它。
+2. 否则使用未被后续消息取代的最新整合对话内容。
+3. 再否则根据已确认决策和修正重建当前状态，并披露缺口。
 
-Choose one representation: reference a stable independently accessible source without reproducing its contents, or carry conversation-only authoritative content into the file. Then add only later corrections, authorization, unresolved work, and continuation-critical facts absent from that source. Preserve exact wording when an interface, example, state transition, limit, or acceptance condition depends on it. Keep carried content's natural organization after the control block and omit empty sections.
+选择一种表达方式：引用可独立访问的稳定来源而不复制其内容，或把仅存在于对话中的权威内容带入文件。然后只补充该来源没有包含的后续修正、授权、未完成工作和续接关键事实。当接口、示例、状态转换、限制或验收条件依赖精确措辞时，保留原文。控制块之后保留带入内容的自然组织，省略空章节。
 
-For consequential human decisions, retain a compact decision ledger:
+对有后果的人类决策，保留精简决策台账：
 
-- the selected decision;
-- the names of closed alternatives;
-- the decisive reason they were closed;
-- the condition that would justify reopening them, when one exists.
+- 已选决策；
+- 已关闭替代方案的名称；
+- 关闭它们的决定性理由；
+- 若存在，重新打开它们的条件。
 
-Leave full question cards, repeated comparisons, and superseded intermediate reasoning out of the file. A closed alternative remains closed until its reopening condition or material new evidence appears.
+不要把完整问题卡、重复比较和已被取代的中间推理写入文件。除非出现重新打开条件或重大新证据，已关闭替代方案保持关闭。
 
-## 3. Carry only actionable context
+## 3. 只携带可行动上下文
 
-Include evidence when it supports an active decision, constrains unresolved work, determines acceptance, avoids repeating costly investigation, or cannot be recovered from a stable artifact. Give quantitative conclusions the minimum source or counting rule needed for independent review. When a stable artifact owns the evidence, record the relevant conclusion and purpose with its reference.
+在证据支持当前决策、约束未完成工作、决定验收、避免重复昂贵调查，或无法从稳定产物恢复时，才纳入证据。定量结论附上独立评审所需的最少来源或计数规则。若稳定产物拥有证据，则在引用旁记录相关结论和用途。
 
-Give each artifact or skill reference a purpose and a loading trigger, retaining established later-stage dependencies. Require immediate reading only for the current permitted action; listing a skill does not authorize its execution. Declare the workspace root once and use relative paths within it; use absolute paths for external artifacts.
+为每个产物或 skill 引用写明用途和加载触发条件，保留已建立的后续阶段依赖。只有当前允许的操作才要求立即阅读；列出 skill 不等于授权执行。只声明一次 workspace root，在其中使用相对路径；外部产物使用绝对路径。
 
-For critical references, retain any already-known version cue as a lightweight change signal, not a prerequisite or separate verification workflow. On a mismatch, the agent uses known sources to resolve it and correct only continuation references or understanding, not project artifacts or confirmed decisions. Leave unsupported conclusions unknown rather than offloading routine checks to the user.
+对关键引用，保留已知版本线索作为轻量变化信号，而不是前置条件或独立验证流程。发生不一致时，Agent 使用已知来源解决，并只修正续接引用或理解，不修改项目产物或已确认决策。无法支持的结论保持未知，不要把常规检查转交用户。
 
-Record mutable state as a timestamped observation that must be rechecked before action. For live work, preserve its last known status and a usable inspection method. For cancelled or unreachable work with no result, preserve the outcome and its consequence without dead process handles, task IDs, or other unusable identifiers.
+把可变状态记录为带时间戳的观察结果，并要求操作前重新检查。对于进行中的工作，保留最后已知状态和可用检查方法。对于已取消或不可访问且没有结果的工作，保留结果及其影响，不保留失效进程句柄、task ID 或其它不可用标识。
 
-Include a short successor instruction to apply the destination workspace's current rules, recheck mutable state, and report material contradictions before revising user-confirmed decisions.
+加入简短的后继者指令：应用目标 workspace 当前规则，重新检查可变状态，并在修改用户确认的决策前报告重大矛盾。
 
-Conversation-only facts needed for continuation must travel in the file. State any inaccessible or unverified source as a limitation. Redact secrets and unnecessary personal data.
+续接所需的仅对话事实必须随文件携带。无法访问或未验证的来源要作为限制说明。脱敏秘密和不必要的个人数据。
 
-## 4. Save outside the workspace
+## 4. 保存到 workspace 之外
 
-Use the operating system's actual temporary directory. Do not create or select a workspace temporary directory. Write `yjx-context-<YYYYMMDD-HHMMSS>-<short-topic>.md`, using a filesystem-safe topic and a collision-safe suffix when needed. Never overwrite an existing file. If the operating system directory cannot be resolved or written, report the failure without returning a saved path or falling back to the workspace.
+使用操作系统真实的临时目录。不要创建或选择 workspace 内的临时目录。写入 `yjx-context-<YYYYMMDD-HHMMSS>-<short-topic>.md`，主题必须适合文件系统，必要时追加防冲突后缀。绝不覆盖已有文件。若无法解析或写入操作系统临时目录，报告失败，不返回保存路径，也不要退回 workspace。
 
-Identify the original working directory in the file. State that the continuation file is temporary, is not project documentation, and may be removed by the operating system or user. Return its resolved absolute path.
+在文件中标明原始工作目录。说明续接文件是临时文件，不是项目文档，可能被操作系统或用户删除。返回其解析后的绝对路径。
 
-## 5. Read back, prune, and return
+## 5. 回读、裁剪并返回
 
-Read the saved file in full, using bounded chunks when needed. Repair coverage gaps before pruning repetition, and verify:
+完整回读保存的文件，必要时分块读取。先修复覆盖缺口，再裁剪重复内容，并验证：
 
-1. A fresh agent can identify what is settled, closed, open, authorized, and permitted next.
-2. Stable sources are referenced rather than recopied; conversation-only authoritative content appears once, and the control block is the only complete statement of live phase and authorization.
-3. Closed alternatives have enough closure context to prevent routine reopening.
-4. The workspace root is absolute; every reference has a purpose and loading trigger, and every required local reference is independently accessible.
-5. Every included fact or status can affect continuation; mutable observations are dated, quantitative facts are reviewable, and dead identifiers are absent.
-6. The successor instruction covers current workspace rules, mutable-state rechecks, and material contradictions.
-7. The saved file exists at the reported path and works without the old session or transcript.
+1. 新 Agent 能识别哪些已确定、已关闭、开放、已授权，以及下一步允许做什么。
+2. 稳定来源以引用代替复制；仅对话权威内容只出现一次；控制块是当前阶段和授权的唯一完整表述。
+3. 已关闭替代方案拥有足够的关闭背景，避免例行重开。
+4. workspace root 是绝对路径；每个引用都有用途和加载触发条件；每个必需的本地引用都可独立访问。
+5. 每个纳入的事实或状态都可能影响续接；可变观察有日期，定量事实可评审，没有失效标识。
+6. 后继者指令覆盖当前 workspace 规则、可变状态复查和重大矛盾处理。
+7. 保存文件存在于报告路径，并且不依赖旧会话或旧 transcript 即可使用。
 
-Report any remaining gap. Return the saved path, material limitations, and a short copyable prompt naming the file and original working directory. The prompt asks the successor to read the file completely and continue from its control block within the recorded authorization.
+报告剩余缺口。返回保存路径、重大限制，以及一条包含文件名和原始工作目录的简短可复制提示词。提示词要求后继者完整阅读文件，并在记录的授权范围内从控制块继续。
 
-Stop after saving and reporting. Leave compaction, session control, implementation, commits, and successor launch to the user or host.
+保存并报告后停止。压缩、会话控制、实现、commit 和启动后继者均交由用户或宿主处理。

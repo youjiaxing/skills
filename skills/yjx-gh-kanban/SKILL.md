@@ -137,7 +137,7 @@ node <kanban-skill-dir>/scripts/issue-board.mjs --ready-only
 - Wayfinder frontier：open + `wayfinder:{research,prototype,grilling,task}` + 无 open blocker + 无 assignee；关系缺失则排除并 WARNING（不整板失败）
 - `--parent`：只裁人类树与 NOW；机器 `ready`/`next` 不变
 
-## 单测
+## 测试
 
 ```bash
 # 在 skills monorepo 根目录
