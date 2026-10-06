@@ -6,6 +6,7 @@
 
 - `source-tools.mjs`：只做 URL 和视频/分集身份解析，不声称页面已访问。
 - `browser-adapters.mjs`：接收当前浏览器标签，统一检查 YouTube/Bilibili 页面、播放器、访问门禁和字幕控件；YouTube 字幕通过浏览器导出能力取得。
+- `browser-adapters.mjs` 的 `captureBilibiliSubtitle(tab)`：监听当前页面实际请求的 `/x/v2/subtitle/web/view`，读取字幕元数据；若元数据是非空二进制，则激活实际字幕轨道并读取 `aisubtitle.hdslb.com` 的 JSON 正文，最终区分成功文本、空响应和未解析格式。不会把页面描述当作字幕。
 - `normalize-transcript.mjs`：把带 `[mm:ss]` 时间文本转换为统一的 `body` 结构。
 - `validate-evidence.mjs`：校验时间范围、知识段和主张引用，替代临时 Shell/Node 检查。
 
@@ -60,6 +61,10 @@
 ## Bilibili
 
 - 页面检查调用 `browser-adapters.mjs` 的 `inspectBilibiliTab(tab)`；它只确认页面、播放器、章节和字幕控件状态，不把页面描述中的“人工校对”当作字幕文本。
+- 字幕读取调用 `captureBilibiliSubtitle(tab)`；`subtitle_exported` 且返回 JSON `body` 数组才表示获得可用字幕文本，`subtitle_empty_response` 表示字幕接口实际返回空响应，`subtitle_response_unparsed` 表示已获得响应但还需要对应格式解析。
+- 已用真实 Bilibili 视频 `BV1xztt6tEtu` 第 58 集回归：登录和页面身份确认通过，选择“中文”轨道后实际读取 `aisubtitle.hdslb.com` JSON，得到 154 条带 `from/to/content` 的字幕文本。
+- `subtitle_empty_response` 是一次已完成的接口核验结果，不是“适配器还没做完”。记录接口、HTTP 状态、响应字节数和当前分集后，若页面没有实际暴露其他字幕轨道，就结束本次 Bilibili 字幕路线；不盲猜 `preferred_language` 或反复重放同一请求。
+- 只有当页面实际暴露了不同语言或字幕轨道，或响应参数明确给出可选轨道时，才按已观察到的候选逐个复查。候选仍为空时，终态仍是 `subtitle_empty_response`，而不是“字幕存在但工具失败”。
 - 核对最终页面、BV 号、分集 `p`、CID、标题和时长；当前 `p` 是课程身份的一部分。
 - 分开记录人工字幕、自动字幕、配音和原声轨道；“暂无字幕”只表示当前观察，不能直接推出本集不存在字幕。
 - 通过浏览器支持的能力读取播放器实际请求的字幕响应时，核对分集、CID、轨道语言、时间范围和文本。
