@@ -1,3 +1,9 @@
+import {
+  classifyBilibiliSession,
+  nextActionForSessionOutcome,
+  sessionOutcomeForMissingQuality,
+} from './bilibili-session-status.mjs';
+
 function status(value, detail = null) {
   return { status: value, ...(detail ? { detail } : {}) };
 }
@@ -89,23 +95,46 @@ export async function inspectBilibiliTab(tab) {
   const url = await tab.url();
   const title = await tab.title();
   const dom = await tab.playwright.domSnapshot();
-  const video = await tab.playwright.evaluate(() => {
+  const state = await tab.playwright.evaluate(() => {
     const element = document.querySelector('video');
-    return element ? { duration: element.duration, currentTime: element.currentTime, paused: element.paused } : null;
+    // Bilibili keeps multiple copies of the user state. The page-level
+    // __INITIAL_STATE__.user can lag behind login or reflect a server-rendered
+    // anonymous shell. Cross-check the runtime player/store before concluding
+    // that a logged-in Codex browser session is anonymous.
+    return {
+      session_signals: {
+        initialStateUser: window.__INITIAL_STATE__?.user ?? null,
+        playinfoUser: window.__playinfo__?.user ?? null,
+        playerUser: window.player?.getUserInfo?.() ?? null,
+        hasAvatar: Boolean(document.querySelector('.header-avatar-wrap, .bili-avatar, .header-entry-avatar')),
+        hasLoginEntry: Boolean(document.querySelector('.header-login-entry, .go-login-btn, .login-btn')),
+      },
+      video: element ? { duration: element.duration, currentTime: element.currentTime, paused: element.paused } : null,
+    };
   });
-  const access = dom.includes('登录') && !dom.includes('稍后再看')
-    ? status('login_or_verification_required')
-    : status('confirmed');
+  const session = classifyBilibiliSession(state.session_signals);
+  const access = session.state === 'logged_in'
+    ? status('confirmed', { session: session.state, evidence: session.evidence })
+    : session.state === 'logged_out'
+      ? status('login_or_verification_required', { session: session.state, evidence: session.evidence })
+      : status('unverified', { session: session.state, evidence: session.evidence });
+  const sessionOutcome = sessionOutcomeForMissingQuality(session);
   return {
     platform: 'bilibili',
     url,
     title,
     access,
+    session: {
+      state: session.state,
+      evidence: session.evidence,
+      outcome_if_capability_missing: sessionOutcome,
+      next_action: nextActionForSessionOutcome(sessionOutcome),
+    },
     identity: status(title ? 'page_loaded' : 'unverified'),
-    duration_seconds: Number.isFinite(video?.duration) ? video.duration : null,
+    duration_seconds: Number.isFinite(state.video?.duration) ? state.video.duration : null,
     chapters: dom.includes('章节') ? status('visible') : status('unverified'),
     subtitle_ui: /button "[^"]*字幕[^"]*"/.test(dom) ? status('visible') : status('unverified'),
-    player: video,
+    player: state.video,
   };
 }
 
@@ -123,14 +152,34 @@ export async function captureBilibiliSubtitle(
     methods: ['Network.responseReceived'],
     limit: 1000,
   });
-  const responses = page.events.filter((event) => /\/x\/v2\/subtitle\/web\/view(?:\?|$)/i.test(event.params?.response?.url ?? ''));
-  if (responses.length === 0) return { status: 'subtitle_request_not_observed' };
+  let responses = page.events.filter((event) => /\/x\/v2\/subtitle\/web\/view(?:\?|$)/i.test(event.params?.response?.url ?? ''));
+  let trackActivated = false;
+  if (responses.length === 0 && activateTrack) {
+    const afterActivation = await cdp.readEvents({ methods: ['Network.responseReceived'], limit: 1 });
+    trackActivated = await activateBilibiliSubtitleTrack(tab);
+    if (trackActivated) {
+      await tab.playwright.waitForTimeout(1000);
+      page = await cdp.readEvents({
+        afterSequence: afterActivation.cursor,
+        methods: ['Network.responseReceived'],
+        limit: 1000,
+      });
+      responses = page.events.filter((event) => /\/x\/v2\/subtitle\/web\/view(?:\?|$)/i.test(event.params?.response?.url ?? ''));
+    }
+  }
+  if (responses.length === 0) {
+    return {
+      status: 'subtitle_request_not_observed',
+      track_activated: trackActivated,
+    };
+  }
   let response = responses.at(-1);
   let body = await cdp.send('Network.getResponseBody', { requestId: response.params.requestId });
   const classified = classifyBilibiliSubtitleBody(body);
-  if (activateTrack && classified.status === 'subtitle_response_unparsed') {
+  if (activateTrack && !trackActivated && classified.status === 'subtitle_response_unparsed') {
     const afterMetadata = await cdp.readEvents({ methods: ['Network.responseReceived'], limit: 1 });
     if (await activateBilibiliSubtitleTrack(tab)) {
+      trackActivated = true;
       await tab.playwright.waitForTimeout(1000);
       const activated = await cdp.readEvents({
         afterSequence: afterMetadata.cursor,
@@ -148,6 +197,7 @@ export async function captureBilibiliSubtitle(
   const finalClassified = classifyBilibiliSubtitleBody(body);
   return {
     ...finalClassified,
+    track_activated: trackActivated,
     source_url: new URL(response.params.response.url).origin + new URL(response.params.response.url).pathname,
     http_status: response.params.response.status,
   };

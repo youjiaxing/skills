@@ -7,6 +7,7 @@ import {
   captureBilibiliSubtitle,
   classifyBilibiliSubtitleBody,
 } from '../scripts/browser-adapters.mjs';
+import { resolveBilibiliIdentity } from '../scripts/bilibili-browser-frames.mjs';
 
 test('normalizes YouTube watch URLs', () => {
   const result = inspectSourceUrl('https://www.youtube.com/watch?v=MN9dGgmLyso&t=960s');
@@ -115,8 +116,31 @@ test('captures and classifies an observed empty Bilibili subtitle response end t
   assert.deepEqual(result, {
     status: 'subtitle_empty_response',
     bytes: 2,
+    track_activated: false,
     source_url: 'https://api.bilibili.com/x/v2/subtitle/web/view',
     http_status: 200,
   });
   assert.equal(calls.some((call) => call.method === 'Network.getResponseBody'), true);
+});
+
+test('resolves Bilibili CID through the browser page adapter when initial state is incomplete', async () => {
+  const tab = {
+    playwright: {
+      async evaluate() {
+        return {
+          bvid: 'BV1xztt6tEtu',
+          episode: '63',
+          cid: '41464827714',
+          title: '063 执行工单 - 问题_哔哩哔哩_bilibili',
+          duration: 373,
+          url: 'https://www.bilibili.com/video/BV1xztt6tEtu?p=63',
+        };
+      },
+    },
+  };
+
+  const result = await resolveBilibiliIdentity(tab);
+  assert.equal(result.bvid, 'BV1xztt6tEtu');
+  assert.equal(result.episode, '63');
+  assert.equal(result.cid, '41464827714');
 });

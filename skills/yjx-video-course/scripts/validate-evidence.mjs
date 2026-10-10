@@ -45,6 +45,28 @@ export async function validateEvidence(value, rootDir = process.cwd()) {
   }
 
   for (const evidence of value?.raw_evidence ?? []) {
+    if (evidence.type === 'video_frame') {
+      for (const field of [
+        'visual_claim',
+        'knowledge_segment',
+        'information_added',
+        'why_text_evidence_is_insufficient',
+        'keep_or_discard_reason',
+      ]) {
+        if (typeof evidence[field] !== 'string' || evidence[field].trim() === '') {
+          fail(errors, `video_frame ${evidence.evidence_id} requires ${field}`);
+        }
+      }
+      if (typeof evidence.duplicate_of_existing_image !== 'boolean') {
+        fail(errors, `video_frame ${evidence.evidence_id} requires boolean duplicate_of_existing_image`);
+      }
+      if (evidence.duplicate_of_existing_image === true) {
+        const reason = evidence.keep_or_discard_reason.toLowerCase();
+        if (evidence.embedded_file || (!reason.includes('discard') && !reason.includes('丢弃'))) {
+          fail(errors, `duplicate video_frame ${evidence.evidence_id} must be discarded and not embedded`);
+        }
+      }
+    }
     if (!evidence.file) continue;
     if (!await exists(path.join(rootDir, evidence.file))) fail(errors, `missing evidence file: ${evidence.file}`);
   }
