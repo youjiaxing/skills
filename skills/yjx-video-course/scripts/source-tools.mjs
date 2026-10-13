@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be']);
 const BILIBILI_HOSTS = new Set(['bilibili.com', 'www.bilibili.com', 'b23.tv']);
@@ -24,6 +25,30 @@ function firstMatch(value, patterns) {
     if (match) return match[1];
   }
   return null;
+}
+
+export async function resolveRedirect(rawUrl) {
+  const url = parseUrl(rawUrl);
+  // 针对短链接（如 b23.tv, youtu.be, t.co 等）跟随重定向获取真实目标地址
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  if (host === 'b23.tv' || host === 'youtu.be' || host === 't.co') {
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': host === 'b23.tv' ? 'https://www.bilibili.com' : 'https://www.youtube.com'
+        },
+        redirect: 'follow'
+      });
+      if (response.url) {
+        return response.url;
+      }
+    } catch {
+      // 网络受限或不可达时降级使用原始地址
+    }
+  }
+  return url.toString();
 }
 
 export function inspectSourceUrl(raw) {
@@ -63,19 +88,45 @@ export function inspectSourceUrl(raw) {
     result.normalized_url = result.bvid
       ? `https://www.bilibili.com/video/${result.bvid}${result.episode ? `?p=${encodeURIComponent(result.episode)}` : ''}`
       : url.toString();
+    result.anti_leech_headers = {
+      'Referer': 'https://www.bilibili.com',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    };
   }
 
   return result;
 }
 
-function main() {
+export async function resolveAndInspectSourceUrl(raw) {
+  const resolvedUrl = await resolveRedirect(raw);
+  const info = inspectSourceUrl(resolvedUrl);
+  if (resolvedUrl !== String(raw).trim()) {
+    info.redirected_from = String(raw).trim();
+  }
+  return info;
+}
+
+async function main() {
   const urls = process.argv.slice(2);
   if (urls.length === 0) {
     console.error('Usage: source-tools.mjs <video-url> [<video-url> ...]');
     process.exitCode = 2;
     return;
   }
-  console.log(JSON.stringify(urls.map(inspectSourceUrl), null, 2));
+  const results = await Promise.all(urls.map(resolveAndInspectSourceUrl));
+  console.log(JSON.stringify(results, null, 2));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+const isMain = Boolean(
+  process.argv[1] && (
+    pathToFileURL(process.argv[1]).href === import.meta.url ||
+    process.argv[1].endsWith('source-tools.mjs')
+  )
+);
+
+if (isMain) {
+  main().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
+}
