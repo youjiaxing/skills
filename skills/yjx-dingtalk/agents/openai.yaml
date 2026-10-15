@@ -1,0 +1,5 @@
+interface:
+  display_name: "DingTalk Local Reader"
+  short_description: "只读解析本机钉钉缓存"
+policy:
+  allow_implicit_invocation: false

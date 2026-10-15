@@ -32,6 +32,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 | `wayfinder` | **`yjx-wayfinder`** | **解决跨 Session 上下文爆炸与虚假发票**：构建轻量决策地图（Map as Index），仅实例化当前无阻塞的 Frontier 票；支持决策划线作废；闭环时自动将碎片化决策合成最终交付物。 |
 | `setup-matt-pocock-skills` (Local) | **`yjx-local-tracker-setup`**<br>**`yjx-local-kanban`** | **规范完成语义与只读可视化**：将完成真源对齐为 `Status: resolved`（`+resolved-v1` 协议）；提供零依赖的人类看板、完整 JSON 依赖图与 Mermaid 拓扑。 |
 | `implement` | **`yjx-implement`** | **解决五行裸指令、资产绕行、绿灯造假与过度测试**：遵循资产复用阶梯优先复用既有统一封装（如 `pkg/time`）；严禁私自删改断言伪造绿灯；可读性高于可测试性，禁止为 Mock 滥造伪接口；Pre-flight 基线勘测防历史旧账背锅；梯度验证梯杜绝全量测试卡死；严格服从项目治理，兼容多工单追溯。 |
+| *(DingTalk 轨缺失)* | **`yjx-dingtalk`** | **只读解析本机钉钉缓存**：会话查找、按时间范围读取、关键词搜索、消息上下文展开，并尽力复用已有图片 OCR；严格只读共享、不重启客户端、不注入，撤回正文全通道默认隐藏。 |
 | *(GitHub 轨缺失)* | **`yjx-gh-kanban`** | **原生扩展至 GitHub Issues 只读看板**：通过 `gh` CLI 统一解析 GitHub Issues 原生 `parent` 与 `blockedBy` 依赖树，提供终端依赖树与机器 JSON 契约。 |
 
 ---
@@ -86,11 +87,14 @@ npx skills add youjiaxing/skills --skill yjx-grill
 | **人类视图** | LEGEND / 依赖树 / NOW 聚焦区 | 同构版式（符号与排版语义严格对齐） |
 | **机器契约** | 完整 JSON 依赖图 / Mermaid 拓扑 | `--json`（含 `next`/`ready`）/ `--agent` |
 
-### 5. 跨 Agent GUI 验证
+### 5. 本机钉钉只读解析
+
+- **`yjx-dingtalk`**：只在用户明确要求查询钉钉时手动调用。以共享只读方式读取本机客户端已缓存的数据库与 WAL，现场推导 V3 密钥且不落盘；副本默认存于 `~/.yjx-dingtalk/`。不关闭或重启钉钉，不注入、不读进程内存，不改钉钉数据。撤回消息只输出元数据。真实数据验证目前仅覆盖 Windows（钉钉 9.0.1），macOS/Linux 的客户端兼容性仍属验收工作。
+### 6. 跨 Agent GUI 验证
 
 - **`yjx-codex-cu`**：人工调用。把当前 Agent 无法等价完成的真实 GUI 验证交给 Codex CLI 的 Computer Use；实现和缺陷修复仍由当前 Agent 负责。
 
-### 6. 会话后的 Skill 复盘
+### 7. 会话后的 Skill 复盘
 
 - **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据原始会话记录及相关产物，区分 skill 不足、执行偏差与环境限制，仅提出有实质收益的最小优化建议。未压缩时主代理优先、按需协助，已压缩时主子代理配合；默认不修改 skill。
 
