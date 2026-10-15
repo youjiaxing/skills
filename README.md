@@ -92,7 +92,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ### 6. 会话后的 Skill 复盘
 
-- **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据原始会话记录及相关产物，区分 skill 不足、执行偏差与环境限制，仅提出有实质收益的最小优化建议。主会话优先，长历史按需委派取证；默认不修改 skill。
+- **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据原始会话记录及相关产物，区分 skill 不足、执行偏差与环境限制，仅提出有实质收益的最小优化建议。未压缩时主代理优先、按需协助，已压缩时主子代理配合；默认不修改 skill。
 
 ---
 
