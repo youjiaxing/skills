@@ -14,6 +14,44 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import os from 'node:os';
+import { isMainModule } from './is-main.mjs';
+
+function commandExists(command, env = process.env) {
+  const dirs = String(env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  return dirs.some((dir) => {
+    try {
+      execSync(`test -x "${path.join(dir, command)}"`, { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// 检查本机是否具备 macOS Swift Vision OCR 能力。不可用时返回结构化状态，
+// 由 Agent 按技能的降级路线处理，而不是抛出堆栈。
+export function checkOcrAvailability({ platform = process.platform, env = process.env, hasCommand = commandExists } = {}) {
+  if (platform !== 'darwin') {
+    return {
+      status: 'ocr_unavailable',
+      reason: 'platform_not_macos',
+      platform,
+      next_action: 'Hard-subtitle OCR needs macOS Swift Vision. Record subtitle OCR as unavailable on this host and follow the no-browser / non-macOS fallback: local transcription plus targeted visual checks of decoded frames.',
+    };
+  }
+  if (!hasCommand('swiftc', env)) {
+    return {
+      status: 'ocr_unavailable',
+      reason: 'swiftc_not_found',
+      platform,
+      next_action: 'Install Xcode Command Line Tools (xcode-select --install) with user approval, or follow the non-OCR fallback.',
+    };
+  }
+  if (!hasCommand('python3', env)) {
+    return { status: 'ocr_unavailable', reason: 'python3_not_found', platform, next_action: 'python3 with OpenCV (cv2) is required for frame sampling.' };
+  }
+  return { status: 'ocr_available', platform };
+}
 
 function parseArgs(argv) {
   const args = { step: 2, workers: 8, output: null };
@@ -81,6 +119,13 @@ async function main() {
   if (!args.video) {
     console.error('用法: node extract-hard-subtitles.mjs --video <视频路径> [--step 2] [--workers 8] [--output <输出json>]');
     process.exit(1);
+  }
+
+  const availability = checkOcrAvailability();
+  if (availability.status !== 'ocr_available') {
+    console.log(JSON.stringify(availability, null, 2));
+    process.exitCode = 3;
+    return;
   }
 
   const ocrTool = await ensureSwiftOcrTool();
@@ -187,7 +232,9 @@ print(f"成功导出 {len(merged)} 条合并字幕至 {output_json}")
   });
 }
 
-main().catch(err => {
-  console.error('[extract-hard-subtitles 错误]:', err);
-  process.exit(1);
-});
+if (isMainModule(import.meta.url)) {
+  main().catch((err) => {
+    console.error('[extract-hard-subtitles 错误]:', err?.message ?? String(err));
+    process.exit(1);
+  });
+}

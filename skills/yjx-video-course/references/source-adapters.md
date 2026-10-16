@@ -10,9 +10,10 @@
 - `normalize-transcript.mjs`：把带 `[mm:ss]` 时间文本转换为统一的 `body` 结构。
 - `validate-evidence.mjs`：校验时间范围、知识段和主张引用，替代临时 Shell/Node 检查。
 
-浏览器适配器不能绕过登录、反机器人验证或平台权限；它只能把页面状态转成固定字段。遇到 `login_or_verification_required`，按下方访问门禁停止。
+浏览器适配器不能绕过登录、反机器人验证或平台权限；它只能把页面状态转成固定字段。遇到 `login_or_verification_required`，以及一切登录态、画质门禁与“浏览器”定义，统一按主 skill 的“访问门禁与登录态判定”执行，本文件不重复规则。
 
-这里的“浏览器”只指 Codex 内置浏览器：必须通过 Browser 插件暴露的 `node_repl js` 绑定标签。普通外部 Chrome 扩展会话说 `extension` 或 `chrome`，它可能登录了不同账号、不同分区，不能替代内置浏览器做登录态判断。Chrome DevTools MCP、独立 Playwright、外部 HTTP 和离线请求也只能作为诊断，不能作为截图来源或登录态依据。
+- `capture-bilibili-frames.mjs`：匿名下载指定档位并截取解码帧；先探测截帧工具（优先 ffmpeg/ffprobe，其次 OpenCV），都没有时在下载前返回 `frame_tools_missing`（退出码 4）。
+- `extract-hard-subtitles.mjs`：macOS Swift Vision 硬字幕 OCR；非 macOS 或缺少 `swiftc`/`python3` 时输出结构化 `ocr_unavailable`（退出码 3），不抛堆栈。
 
 ## 统一能力记录
 
@@ -49,13 +50,13 @@
 
 软件演示优先请求 1080P 高帧率。只有当 1080P 已确认不可达，才允许退到 720P，且必须同时保留可用帧率并记录回退依据。若 1080P 被登录或权限门槛挡住，立即停止截图并请求用户完成登录，确认后重试 1080P；不得静默降级到 720P 及以下。匿名访问、低画质试验请求和放大插值都不能作为“清晰截图”的证据。
 
-以 Bilibili 为例，画质代码 `80/64/32/16` 分别对应 1080P/720P/480P/360P。匿名播放请求即使返回包含 1080P/720P 的 `accept_quality`，也可能只实际下发 480P/360P 的 DASH 流；必须核对响应中真正可用的 `dash.video` 尺寸、帧率和播放器实际 `videoWidth × videoHeight`，不能只看菜单文案。画质结论必须以浏览器内的登录态为基准；不要用缺少浏览器 Cookie 的外部请求判断用户是否登录。
+以 Bilibili 为例，画质代码 `80/64/32/16` 分别对应 1080P/720P/480P/360P。匿名播放请求即使返回包含 1080P/720P 的 `accept_quality`，也可能只实际下发 480P/360P 的 DASH 流；必须核对响应中真正可用的 `dash.video` 尺寸、帧率和播放器实际 `videoWidth × videoHeight`，不能只看菜单文案。画质结论的登录态依据见主 skill。
 
-**登录态优先：** 页面所在的 Codex 内置浏览器通常已经登录 Bilibili。正式取证必须先通过浏览器标签执行：
+**有浏览器时优先浏览器路径：** 页面所在的内置浏览器通常已经登录 Bilibili。正式取证先通过浏览器标签执行：
 
 ```js
 const { captureBilibiliFramesFromBrowser } = await import(
-  '/Users/<you>/Code/youjiaxing/skills/skills/yjx-video-course/scripts/bilibili-browser-frames.mjs'
+  '<skill 目录>/scripts/bilibili-browser-frames.mjs'
 );
 const result = await captureBilibiliFramesFromBrowser(tab, {
   times: [60, 390, 640],
@@ -64,17 +65,9 @@ const result = await captureBilibiliFramesFromBrowser(tab, {
 });
 ```
 
-该脚本在页面内使用同源 `fetch` 调 `playurl`，因此自然带上浏览器登录态；它不读取或导出 Cookie。返回 `status: captured` 时才继续。浏览器路径的登录态状态码必须分清：
+该脚本在页面内使用同源 `fetch` 调 `playurl`，因此自然带上浏览器登录态；它不读取或导出 Cookie。返回 `status: captured` 时才继续；其他返回码的含义与下一步见主 skill 的“访问门禁与登录态判定”。
 
-| 状态 | 含义 | 下一步 |
-| --- | --- | --- |
-| `quality_unavailable_for_logged_in_user` | 页面已确认登录，但当前账号没有目标画质 | 不要要求重复登录；按顺序尝试下一个允许档位并记录原因 |
-| `login_required_for_quality` | 页面确认未登录，目标画质需要登录 | 请用户在**当前浏览器**完成登录并确认 |
-| `browser_session_quality_unavailable_unverified` | 无法确认页面登录态，或浏览器请求本身失败 | 先复查页面 UI/重试；不要声称用户未登录 |
-
-`quality_request_failed` 或 `quality_not_honored` 是浏览器路径失败，也不能据此宣布“需要登录”。
-
-**匿名诊断（仅在需要排除浏览器登录态时使用）：** 直接命令行检索 `playurl` 不带登录态，因此不能用来决定“是否要登录”。它只用于确认匿名能力/接口行为：
+**匿名路径：** 直接命令行检索 `playurl` 不带登录态，结果属于 `anonymous_request`，不能用来决定“是否要登录”。有浏览器时它只作诊断；没有浏览器时它是下文降级路线的正式取帧路径：
 
 ```bash
 node scripts/capture-bilibili-frames.mjs \
@@ -82,17 +75,31 @@ node scripts/capture-bilibili-frames.mjs \
   --times 60,390,640 --output-dir <集证据目录>
 ```
 
-脚本优先读取 `fnval=4048` 的 DASH 变体，按“目标高度 → 帧率 → 码率”选择实际流，直接下载该视频变体并用 OpenCV 探测宽高与帧率。默认 `--quality 80` 对应 1080P；只有实际变体达到 1920×1080 且帧率不低于 30 才继续。它返回的 `anonymous_quality_unavailable` 只是“匿名请求没有拿到目标档位”的诊断，不是“用户未登录”的证据；是否要请用户登录只能由浏览器路径的 `login_required_for_quality` 决定。
+脚本优先读取 `fnval=4048` 的 DASH 变体，按“目标高度 → 帧率 → 码率”选择实际流，直接下载该视频变体并用 ffprobe（或 OpenCV 回退）探测宽高与帧率。`--quality 64` 在 DASH 无 720P 变体时回退到 progressive MP4，并核对实际返回档位。默认 `--quality 80` 对应 1080P；只有实际变体达到 1920×1080 且帧率不低于 30 才继续。它返回的 `anonymous_quality_unavailable` 只是“匿名请求没有拿到目标档位”的诊断，不是“用户未登录”的证据；是否要请用户登录只能由浏览器路径的 `login_required_for_quality` 决定。
 
 本集实际回归结果：匿名 `playurl` 返回 `accept_quality: [80, 64, 32, 16]`，但 DASH `video` 只有 480P/360P 两个变体；这不是内置浏览器登录态的结论。浏览器路径必须单独跑一次；如果内置浏览器已经登录并仍返回 `quality_unavailable_for_logged_in_user`，才可以记录“当前账号没有 1080P”并按证据回退到 720P。
-
-**误判防护（实际踩过的坑）：** 不要用 `sqlite3` 直接读浏览器 `Cookies` 数据库判断登录态，也不要用 Chrome `--user-data-dir` 加载 Codex 浏览器 profile 后看 `window.__INITIAL_STATE__.user.isLogin`。这条路径会因为 profile 被正在运行的应用占用、Cookie 解密/哈希绑定、分区不一致而读成未登录，即使 Codex 内置浏览器里的同一页面实际已登录。登录态只认当前 Codex 内置浏览器标签内的页面状态和同源请求结果。需要检查时，走 Browser 绑定后的 `tab.playwright.evaluate(...)`，不要另行启动外部 Chrome 访问同一 profile。
 
 证据产物和界面状态分开记录：已经导出的字幕文件属于已取得证据；播放器一次刷新、跳转或渲染异常只属于当前界面观察。遇到临时异常时，先复查同一来源和时间段，或读取已保存产物，再决定是否阻塞；不把一次界面异常改写为“视频没有字幕”。
 
 ## 访问门禁
 
-登录、反机器人验证、年龄确认、地区权限、付费权限或其他必须由用户完成的访问确认属于硬门禁。发现任一请求来源触发门禁时，立即停止本次任务的取证、编译和外部写入；要求用户在当前浏览器完成相应操作并确认。确认前不继续处理同一请求中的其他来源，不切换到转载、搜索摘要或未授权替代来源。用户确认后，从该来源最终页面身份重新核验，再恢复能力记录和取证流程。
+见主 skill 的“访问门禁与登录态判定”。
+
+## 无浏览器 / 非 macOS 降级路线
+
+宿主没有内置浏览器、或不是 macOS 时使用。目标是在不绕过门禁、不降低证据门槛的前提下取得可用证据；每一步记录实际结果。
+
+1. **身份**：`node scripts/source-tools.mjs --resolve-cid <链接>`。它用公开 view 接口解析 CID、分集标题与时长；HTTP 412 时先访问首页取得匿名 `buvid3`/`b_nut` 设备 Cookie 再重试一次。只保留匿名设备标识，不携带、读取或导出任何登录 Cookie。结果记为 `anonymous_request`。
+2. **字幕**：匿名 `player/wbi/v2` 等接口返回空字幕时，记录为“当前未取得（anonymous_request）”，不写“本集没有字幕”。浏览器字幕路线记为“未执行：宿主无浏览器”。
+3. **硬字幕**：运行 `extract-hard-subtitles.mjs`；返回 `ocr_unavailable` 时记录 `reason`，不要硬编替代 OCR 结果。可以对关键时间点的解码帧做针对性视觉核对，作为画面证据记录。
+4. **音频与转写**：用匿名 720P progressive MP4（含音轨）或其他获授权媒体，按 [本地转写与依赖配置](local-transcription.md) 本地转写；允许等价 ASR（见该文件）。
+5. **画面**：`capture-bilibili-frames.mjs --quality 80` 先确认 1080P 是否匿名可达；不可达（`anonymous_quality_unavailable`）且用户没有明确要求 1080P 时，用 `--quality 64` 取 720P，并在能力记录中写明“1080P 匿名不可达，登录态未验证，按 720P 交付”。720P 是最低门槛，低于 720P 不得作为最终课程图。
+6. **记录方式**：
+   - 登录态：`browser_session_unverified`；所有匿名结果：`anonymous_request`。不请求用户登录。
+   - 字幕：`subtitle_text` 记“当前未取得”及原因；`hard_subtitle_ocr` 记 `ocr_unavailable: <reason>`。
+   - 画面：`capture_surface` 记 `video_decoded_frame`，`rendered_player_size` / `device_pixel_ratio` 记 `n/a（无浏览器播放器）`，并记 `frame_backend`。
+   - `delivery.json` 的 `events` 追加 `capability_gap` 事件；能力缺口不阻塞状态推进，只要证据门槛与审核通过即可进入 `draft_audited` 和 `completed`。课程“取证说明”中如实写出未取得的能力和采用的替代路径。
+7. 降级路线仍不能取得核心证据时，按主 skill 的交付边界交付证据不足报告。
 
 ## 通用取证顺序
 
