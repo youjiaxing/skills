@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
+import { isMainModule } from './is-main.mjs';
 
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be']);
 const BILIBILI_HOSTS = new Set(['bilibili.com', 'www.bilibili.com', 'b23.tv']);
@@ -106,25 +106,87 @@ export async function resolveAndInspectSourceUrl(raw) {
   return info;
 }
 
+const BILIBILI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+function anonymousCookieFrom(response) {
+  const raw = typeof response.headers.getSetCookie === 'function'
+    ? response.headers.getSetCookie()
+    : [response.headers.get('set-cookie')].filter(Boolean);
+  // 只保留匿名设备标识（buvid3/b_nut），不携带任何登录 Cookie。
+  return raw
+    .map((line) => String(line).split(';')[0])
+    .filter((pair) => /^(buvid3|buvid4|b_nut)=/.test(pair))
+    .join('; ');
+}
+
+// 用公开 view 接口解析 BV 号与分集对应的 cid、标题和时长。
+// 遇到 HTTP 412（反爬）时，先访问首页取得匿名 buvid 设备 Cookie 再重试一次。
+// 结果属于匿名请求（anonymous_request），只用于身份解析，不能用来判断登录态。
+export async function resolveBilibiliCid(bvid, page = 1, { fetchImpl = fetch } = {}) {
+  const headers = { 'User-Agent': BILIBILI_UA, Referer: 'https://www.bilibili.com/' };
+  const viewUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`;
+  let response = await fetchImpl(viewUrl, { headers });
+  let usedAnonymousCookie = false;
+  if (response.status === 412) {
+    const home = await fetchImpl('https://www.bilibili.com/', { headers });
+    const cookie = anonymousCookieFrom(home);
+    if (cookie) {
+      usedAnonymousCookie = true;
+      response = await fetchImpl(viewUrl, { headers: { ...headers, Cookie: cookie } });
+    }
+  }
+  if (!response.ok) {
+    return { status: 'cid_unresolved', reason: `view API HTTP ${response.status}`, used_anonymous_cookie: usedAnonymousCookie };
+  }
+  const payload = await response.json();
+  if (payload.code !== 0 || !payload.data) {
+    return { status: 'cid_unresolved', reason: `view API code=${payload.code} message=${payload.message}`, used_anonymous_cookie: usedAnonymousCookie };
+  }
+  const pageNumber = Number(page) || 1;
+  const entry = (payload.data.pages ?? []).find((item) => Number(item.page) === pageNumber);
+  if (!entry) {
+    return { status: 'cid_unresolved', reason: `page ${pageNumber} not found`, used_anonymous_cookie: usedAnonymousCookie };
+  }
+  return {
+    status: 'cid_resolved',
+    request_mode: 'anonymous_request',
+    used_anonymous_cookie: usedAnonymousCookie,
+    cid: String(entry.cid),
+    page: pageNumber,
+    part: entry.part,
+    duration_seconds: entry.duration,
+    title: payload.data.title,
+    owner: payload.data.owner?.name ?? null,
+    aid: payload.data.aid,
+  };
+}
+
 async function main() {
-  const urls = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const resolveCid = args.includes('--resolve-cid');
+  const urls = args.filter((arg) => arg !== '--resolve-cid');
   if (urls.length === 0) {
-    console.error('Usage: source-tools.mjs <video-url> [<video-url> ...]');
+    console.error('Usage: source-tools.mjs [--resolve-cid] <video-url> [<video-url> ...]');
     process.exitCode = 2;
     return;
   }
   const results = await Promise.all(urls.map(resolveAndInspectSourceUrl));
+  if (resolveCid) {
+    for (const info of results) {
+      if (info.platform !== 'bilibili' || !info.bvid || info.cid) continue;
+      try {
+        const identity = await resolveBilibiliCid(info.bvid, info.episode ?? 1);
+        info.identity = identity;
+        if (identity.status === 'cid_resolved') info.cid = identity.cid;
+      } catch (error) {
+        info.identity = { status: 'cid_unresolved', reason: error.message };
+      }
+    }
+  }
   console.log(JSON.stringify(results, null, 2));
 }
 
-const isMain = Boolean(
-  process.argv[1] && (
-    pathToFileURL(process.argv[1]).href === import.meta.url ||
-    process.argv[1].endsWith('source-tools.mjs')
-  )
-);
-
-if (isMain) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error(err);
     process.exitCode = 1;
