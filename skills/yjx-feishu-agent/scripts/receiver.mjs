@@ -22,19 +22,34 @@ export function windowsArgument(value) {
 export function taskDefinition({ sid, node, args, cwd }) {
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>yjx-feishu-agent receiver; manual start, no automatic trigger</Description></RegistrationInfo>
+  <RegistrationInfo><Description>yjx-feishu-agent receiver; starts when the current user logs on</Description></RegistrationInfo>
   <Principals><Principal id="CurrentUser"><UserId>${xml(sid)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>${xml(sid)}</UserId></LogonTrigger></Triggers>
   <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings>
   <Actions Context="CurrentUser"><Exec><Command>${xml(node)}</Command><Arguments>${xml(args)}</Arguments><WorkingDirectory>${xml(cwd)}</WorkingDirectory></Exec></Actions>
 </Task>`;
 }
 
+export function legacyTaskDefinition({ sid, node, args, cwd }) {
+  return taskDefinition({ sid, node, args, cwd })
+    .replace('<RegistrationInfo><Description>yjx-feishu-agent receiver; starts when the current user logs on</Description></RegistrationInfo>', '<RegistrationInfo><Description>yjx-feishu-agent receiver; manual start, no automatic trigger</Description></RegistrationInfo>')
+    .replace(`<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>${xml(sid)}</UserId></LogonTrigger></Triggers>`, '');
+}
+
 export function matchesTask(definition, expected) {
+  const triggerActual = definition.match(/<Triggers>[\s\S]*?<\/Triggers>/)?.[0] ?? '';
+  const triggerExpected = expected.match(/<Triggers>[\s\S]*?<\/Triggers>/)?.[0] ?? '';
+  const expectedHasLogon = /<LogonTrigger>/.test(triggerExpected);
+  const actualHasLogon = /<LogonTrigger>/.test(triggerActual);
+  if (expectedHasLogon !== actualHasLogon) return false;
+  if (expectedHasLogon && !/<LogonTrigger>[\s\S]*?(?:<Enabled>true<\/Enabled>[\s\S]*?)?<UserId>[^<]+<\/UserId>[\s\S]*?<\/LogonTrigger>/.test(triggerActual)) return false;
+  definition = definition.replace(/<Triggers>[\s\S]*?<\/Triggers>/, '<Triggers />');
+  expected = expected.replace(/<Triggers>[\s\S]*?<\/Triggers>/, '<Triggers />');
   const fields = ['UserId', 'LogonType', 'RunLevel', 'Command', 'Arguments', 'WorkingDirectory',
     'MultipleInstancesPolicy', 'DisallowStartIfOnBatteries', 'StopIfGoingOnBatteries',
     'AllowHardTerminate', 'AllowStartOnDemand', 'Enabled', 'ExecutionTimeLimit'];
   if ((definition.match(/<Exec>/g) ?? []).length !== 1) return false;
-  if (/<ComHandler[\s/>]/.test(definition) || /<Triggers[\s>]/.test(definition.replace(/<Triggers\s*\/\s*>/g, ''))) return false;
+  if (/<ComHandler[\s/>]/.test(definition)) return false;
   // Windows omits these default-valued elements when exporting registered XML.
   // Other settings (notably battery behavior and PT0S) must remain explicit.
   const defaults = { RunLevel: 'LeastPrivilege', AllowStartOnDemand: 'true', Enabled: 'true' };
@@ -59,7 +74,12 @@ async function startWindows(paths, stateDir) {
     const result = await execute('schtasks.exe', ['/Query', '/TN', paths.taskName, '/XML'], { windowsHide: true, encoding: 'buffer' });
     const buffer = result.stdout;
     const registered = (buffer[0] === 0xff && buffer[1] === 0xfe) || buffer[1] === 0 ? buffer.toString('utf16le') : buffer.toString('utf8');
-    if (!matchesTask(registered, expected)) throw new Error('Registered task differs; refusing to run or replace it');
+    if (!matchesTask(registered, expected)) {
+      const legacy = legacyTaskDefinition({ sid, node: process.execPath, args, cwd: path.dirname(script) });
+      if (!matchesTask(registered, legacy)) throw new Error('Registered task differs; refusing to run or replace it');
+      await writeFile(specFile, Buffer.from(`\ufeff${expected}`, 'utf16le'), { mode: 0o600 });
+      await execute('schtasks.exe', ['/Create', '/TN', paths.taskName, '/XML', specFile, '/F'], { windowsHide: true });
+    }
   } else {
     await writeFile(specFile, Buffer.from(`\ufeff${expected}`, 'utf16le'), { mode: 0o600 });
     // No /F: never silently overwrite a task we have not registered.
@@ -83,7 +103,7 @@ async function startPosix(paths, stateDir) {
 export async function main(argv) {
   const [command, ...rest] = argv;
   if (!command || command === '--help') {
-    process.stdout.write('Usage: node receiver.mjs start|stop|status|recover-lock [--state-dir PATH]\nWindows: current-user on-demand Task Scheduler task; no password, elevation or logon trigger.\nmacOS/Linux: detached Node process. status reports the live connection heartbeat.\nrecover-lock is explicit and only removes a receiver lock whose PID is confirmed absent.\n');
+    process.stdout.write('Usage: node receiver.mjs start|stop|status|recover-lock [--state-dir PATH]\nWindows: current-user Task Scheduler task; starts at user logon, no password or elevation.\nmacOS/Linux: detached Node process. status reports the live connection heartbeat.\nrecover-lock is explicit and only removes a receiver lock whose PID is confirmed absent.\n');
     return;
   }
   if (!['start', 'stop', 'status', 'recover-lock'].includes(command) ||

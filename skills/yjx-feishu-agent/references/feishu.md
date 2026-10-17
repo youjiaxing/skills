@@ -74,7 +74,7 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs stop
 
 支持 `--state-dir PATH`。`start` 会等待心跳显示 `running` 且连接为 `connected` 才报告启动成功，随后仍须实群消息验收。`status` 区分运行、停止、死亡进程遗留锁、无 owner 的不完整锁以及未知状态；不能把一个残留 PID 文件当作接收器正在运行。`stop` 写入带当前实例 token 的停止请求，由接收器优雅关闭长连接、等待已接任务完成，再释放锁并退出；不会按 PID 强杀进程。
 
-Windows 使用原生 `schtasks.exe` 注册当前用户的按需任务：InteractiveToken、LeastPrivilege，不保存登录密码、不提升权限、不添加登录或定时触发器，执行时限设为无限，切换电池不停止。实际接收器由 Windows 任务服务启动，与 Desktop 终端生命周期分开；保持当前用户登录。若系统显示独立 Node 控制台，关闭该窗口会停止接收。退出 Windows 或重启电脑后需再执行 `start`；本版本不安装开机自动启动。若要移除该按需任务，先 `stop`，再在任务计划程序中按运行目录 `task-registration.json` 记录的名称删除本工具任务。
+Windows 使用原生 `schtasks.exe` 注册当前用户的任务：InteractiveToken、LeastPrivilege，当前用户登录时自动触发，不保存登录密码、不提升权限，执行时限设为无限，切换电池不停止。实际接收器由 Windows 任务服务启动，与 Desktop 终端生命周期分开；保持当前用户登录。Windows 重启后，用户登录即可自动恢复接收器；`receiver.mjs status` 可核对连接。`start` 仍可手动立即启动，`stop` 会阻止当前实例并保留登录触发任务。若要移除任务，先 `stop`，再在任务计划程序中按 `task-registration.json` 的名称删除。
 
 macOS/Linux 使用 detached Node 进程，将标准输出记录在运行目录的 `receiver.log`；未做这两个平台的实机验收，也不安装 launchd/systemd。各平台的 `status.json` 保存实时心跳，`connection-events.ndjson` 保存连接状态变化，位于用户目录 `.yjx-feishu-agent-receivers/runtime/<app hash>`。任务参数和日志不保存 App Secret；请求结果仍在原状态目录。
 
@@ -118,7 +118,7 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs recover-lock
 
 本次证明单群、群主白名单、明确 @ 文本、历史上下文延续和飞书回复链路可用。Desktop 持有聊天时的 queue 路径此前有独立本机验收，本次实群验收未覆盖该路径；也不代表 Desktop 宿主工具或其他群映射已验收。电脑休眠、进程退出或网络中断仍会影响接收。
 
-同日用户重启 Desktop 后发现新消息无回复。排查确认旧前台接收器 PID 已不存在，只有死亡进程锁，消息未进入本机日志，鉴权与绑定均正常。随后改用独立启动管理：Windows 当前用户按需任务已注册、实际接收器父进程为 `svchost.exe`，实测启动连通、优雅停止和再次启动均通过。用户实际再次重启 Desktop 后的消息往返仍需单独验收；停机期间的消息不自动补发。
+同日用户重启 Desktop 后发现新消息无回复。排查确认旧前台接收器 PID 已不存在，只有死亡进程锁，消息未进入本机日志，鉴权与绑定均正常。随后改用独立启动管理：Windows 当前用户任务由任务服务承载、实际接收器父进程为 `svchost.exe`，实测启动连通、优雅停止和再次启动均通过；后续已升级为当前用户登录触发，Windows 重启后登录会自动启动。停机期间的消息不自动补发。
 
 2026-10-16 16:53–16:54，用户在未再次重启 Desktop 的情况下询问临时编号。截图显示机器人答出「青石-5831」；16:53:50 入站请求的本机记录同时确认 `route=queue`、Codex `completed`、飞书 `replied`。本次覆盖修复后的 queue 实群往返及原聊天上下文，未覆盖再次重启场景。另有 16:54:30 入站请求 Codex 已完成但投递为 `unconfirmed`，不据此前一成功推断所有投递都成功，不自动重发。
 

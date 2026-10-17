@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, access, unlink } from 'node:fs
 import os from 'node:os';
 import path from 'node:path';
 import { receiverPaths, receiverStatus, recoverReceiverLock } from '../scripts/receiver-runtime.mjs';
-import { taskDefinition, matchesTask, windowsArgument } from '../scripts/receiver.mjs';
+import { taskDefinition, legacyTaskDefinition, matchesTask, windowsArgument } from '../scripts/receiver.mjs';
 
 async function fixture(t) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'yjx-receiver-lifecycle-'));
@@ -54,24 +54,26 @@ test('ownerless lock is incomplete rather than stopped and is never automaticall
   await access(f.paths.lock);
 });
 
-test('scheduled task ownership rejects another action, user, arguments or trigger', () => {
+test('scheduled task ownership includes current-user logon trigger', () => {
   const definition = taskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe',
     args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' });
   assert.equal(matchesTask(definition, definition), true);
+  assert.match(definition, /<LogonTrigger><Enabled>true<\/Enabled><UserId>S-1-5-21-123<\/UserId><\/LogonTrigger>/);
   // Task Scheduler exports omit these schema defaults and unescape quote text.
   const normalized = definition.replace('<RunLevel>LeastPrivilege</RunLevel>', '')
     .replace('<AllowStartOnDemand>true</AllowStartOnDemand>', '')
-    .replace('<Enabled>true</Enabled>', '').replaceAll('&quot;', '"')
-    .replace('<Principals>', '<Triggers /><Principals>');
+    .replaceAll('&quot;', '"')
+    .replace('<UserId>S-1-5-21-123</UserId></LogonTrigger>', '<UserId>YJX\\Administrator</UserId></LogonTrigger>');
   assert.equal(matchesTask(normalized, definition), true);
   for (const change of [
     definition.replace('S-1-5-21-123', 'S-1-5-21-456'),
     definition.replace('<Arguments>', '<Arguments>extra '),
     definition.replace('<Command>', '<Command>other'),
-    definition.replace('<Settings>', '<Triggers><LogonTrigger/></Triggers><Settings>'),
+    definition.replace('<UserId>S-1-5-21-123</UserId>', '<UserId>S-1-5-21-456</UserId>'),
     definition.replace('</Actions>', '<ComHandler/></Actions>'),
     definition.replace('PT0S', 'PT72H'),
     definition.replace('<StopIfGoingOnBatteries>false', '<StopIfGoingOnBatteries>true'),
     definition.replace('<AllowStartOnDemand>true', '<AllowStartOnDemand>false'),
   ]) assert.equal(matchesTask(change, definition), false);
+  assert.equal(matchesTask(legacyTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' }), legacyTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' })), true);
 });
