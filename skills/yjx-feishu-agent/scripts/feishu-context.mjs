@@ -2,7 +2,7 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { createHash } from 'node:crypto';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { bodyText, imageKeys, messageView } from './feishu-content.mjs';
+import { imageKeys, messageView, messageVersion, versionReceipt } from './feishu-content.mjs';
 
 export function safeApiError(error) {
   const code = error.apiCode ?? error.response?.data?.code;
@@ -65,17 +65,17 @@ export async function saveImage(transport, message, key, directory) {
 }
 
 // A bounded background window, not an instruction stream or a complete archive.
-export async function recentContext(item, transport, excluded = new Set()) {
+export async function recentContext(item, transport, excluded = new Set(), {knownVersions={},receipts=[],bootstrapCutoff} = {}) {
   const cutoff = Number(item.source?.create_time);
   if (!Number.isSafeInteger(cutoff) || cutoff <= 0) return { messages:[], note:'当前消息时间缺失，未自动读取近期历史' };
   const messages = [];
   const seen = new Set([...excluded, item.messageId]);
   const cursors = new Set();
   let pageToken;
-  let budget = 12000;
+  let budget = 6000;
   let limited = false;
   try {
-    for (let page=0; page<2 && messages.length<10; page++) {
+    for (let page=0; page<2 && messages.length<5; page++) {
       const data = await transport.list({ chatId:item.binding.chatId, limit:20,
         endTime:String(Math.ceil(cutoff/1000)), pageToken });
       // Verify the entire page before using it; never partially accept another group.
@@ -87,26 +87,33 @@ export async function recentContext(item, transport, excluded = new Set()) {
       for (const message of candidates) {
         if (seen.has(message.message_id)) continue;
         seen.add(message.message_id);
-        const view=messageView(message);
-        const entry={...view,text:view.text.slice(0,2000),truncated:view.text.length>2000};
+        if (knownVersions[message.message_id]?.version===messageVersion(message)) continue;
+        // A fixed first-success baseline prevents backfilling progressively older history.
+        // Known content changes remain detectable even when the API omits update_time.
+        if (bootstrapCutoff && !knownVersions[message.message_id] &&
+          Number(message.create_time)<bootstrapCutoff && !(Number(message.update_time)>=bootstrapCutoff)) continue;
+        const {chatId,sender,...view}=messageView(message);
+        const entry={...view,sender:sender?.id ?? sender?.sender_id?.open_id,
+          text:view.text.slice(0,2000),truncated:view.text.length>2000};
         const size=JSON.stringify(entry).length+1;
         if (size>budget) { limited=true; break; }
         messages.push(entry);budget-=size;
-        if (messages.length===10) break;
+        receipts.push(versionReceipt(message));
+        if (messages.length===5) break;
       }
       if (limited || !data.has_more) break;
       if (!data.page_token || cursors.has(data.page_token)) { limited=true;break; }
       pageToken=data.page_token;cursors.add(pageToken);limited=true;
     }
     return { messages:messages.reverse(), beforeTime:String(cutoff),
-      note:limited || messages.length===10 ? '仅近期窗口，按时间从旧到新排列；更早内容需继续查询' : '近期可见消息，按时间从旧到新排列；话题回复可能需另查' };
+      note:limited || messages.length===5 ? '近期增量窗口，旧到新；更早消息、截断正文及话题回复需按需查询' : '近期新增或修改版本，旧到新；已传达版本省略，不代表群内无其他消息' };
   } catch(error) {
     return { messages:messages.reverse(), beforeTime:String(cutoff), unavailable:safeApiError(error),
       note:'近期历史读取不完整；不能据此判断群内没有其他消息' };
   }
 }
 
-export async function resolveContext(item, { transport, imageDirectory, readCommand }) {
+export async function resolveContext(item, { transport, imageDirectory, readCommand, knownVersions={}, receipts=[], ledgerUnavailable=false, bootstrapCutoff }) {
   const parts = [];
   let parent = item.parentId;
   const seen = new Set([item.messageId]);
@@ -121,17 +128,20 @@ export async function resolveContext(item, { transport, imageDirectory, readComm
     return results;
   }
   const ownImages = await attachments(item.source);
+  receipts.push(versionReceipt(item.source));
   for (let depth = 0; parent && depth < 3 && !seen.has(parent); depth++) {
     seen.add(parent);
     try {
       const message = verifyChat(await transport.get(parent),item.binding.chatId);
       const view=messageView(message);
       parts.push({ ...view, text:view.text.slice(0,4000), truncated:view.text.length>4000, images:await attachments(message) });
+      receipts.push(versionReceipt(message));
       parent = message.parent_id;
     } catch(e) { parts.push({ messageId:parent, unavailable:safeApiError(e) }); parent = null; }
   }
   if (parent) parts.push({ note:'引用链达到上限或遇到循环，未继续读取' });
-  const recent=await recentContext(item,transport,seen);
+  const recent=await recentContext(item,transport,seen,{knownVersions,receipts,bootstrapCutoff});
+  if (ledgerUnavailable) recent.deliveryState='历史去重状态不可用，本次可能重复附带';
   // Remote content is data, never grants execution authority. Do not pretend local paths are model attachments.
   const context = { chatId:item.binding.chatId, messageId:item.messageId, threadId:item.threadId,
     quotedMessages:parts, images:ownImages, recentHistory:recent };

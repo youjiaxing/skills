@@ -86,11 +86,11 @@ test('recent window caps count, text budget, pages and never downloads incidenta
     body:{content:JSON.stringify({text:'x'.repeat(6000)})}})),has_more:true,page_token:'page2'};},
     image:async()=>{throw Error('must not download');}};
   const result=await recentContext(incoming,transport);
-  assert.ok(result.messages.length<=10);assert.ok(JSON.stringify(result.messages).length<=12002);
+  assert.ok(result.messages.length<=5);assert.ok(JSON.stringify(result.messages).length<=6002);
   assert.ok(result.messages.every(m=>m.text.length<=2000&&m.truncated));assert.ok(pages<=2);
 });
 
-test('two-page scan reaches prior card, retains image key without download, and enforces ten messages',async t=>{
+test('two-page scan reaches prior card, retains image key without download, and enforces five messages',async t=>{
   const c=await setup(t);
   const incoming={...item,parentId:undefined,source:{...item.source,create_time:'1700000000999'}};
   let pages=0;
@@ -105,7 +105,7 @@ test('two-page scan reaches prior card, retains image key without download, and 
       ...Array.from({length:15},(_,i)=>({...quoted('om_old_'+i),create_time:String(1700000000990-i)}))],has_more:false};
   };
   const result=await recentContext(incoming,c.transport);
-  assert.equal(pages,2);assert.equal(result.messages.length,10);
+  assert.equal(pages,2);assert.equal(result.messages.length,5);
   assert.deepEqual(result.messages.find(m=>m.messageId==='om_image').imageKeys,['img_recent']);
   pages=0;
   const text=await resolveContext(incoming,c);

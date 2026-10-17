@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 // Incoming event bodies and queried card bodies use different shapes.
 export function decodeBody(message) {
   try { return JSON.parse(message.body?.content ?? message.content); } catch { return null; }
@@ -56,4 +58,31 @@ export function messageView(message) {
     parentId: message.parent_id, rootId: message.root_id, threadId: message.thread_id,
     createTime: message.create_time, sender: message.sender, deleted: Boolean(message.deleted),
     text: bodyText(message).slice(0,12000), imageKeys: imageKeys(message) };
+}
+
+// Compare content before display truncation. Event and query mention shapes differ.
+export function messageVersion(message) {
+  const mentions=(message.mentions ?? []).map(m=>({ ...m,
+    id:typeof m.id==='string' ? m.id : m.id?.open_id }));
+  function canonical(value) {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (!value || typeof value!=='object') return value;
+    if (value.tag==='at') {
+      const id=mentions.find(m=>m.key===value.user_id)?.id ?? value.user_id;
+      return {tag:'at',user_id:id,user_name:id};
+    }
+    return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,canonical(v)]));
+  }
+  const normalized={...message,body:{content:JSON.stringify(canonical(decodeBody(message)))},
+    mentions:mentions.map(m=>({...m,name:m.id}))};
+  let text=bodyText(normalized);
+  if ((message.msg_type ?? message.message_type)==='text') {
+    for (const m of mentions) if (m.key && m.id) text=text.split(m.key).join(`@${m.id}`);
+  }
+  return createHash('sha256').update(JSON.stringify({type:message.msg_type ?? message.message_type,
+    text,images:imageKeys(message).sort(),deleted:Boolean(message.deleted)})).digest('hex');
+}
+
+export function versionReceipt(message) {
+  return {messageId:message.message_id,version:messageVersion(message),observedAt:Date.now()};
 }

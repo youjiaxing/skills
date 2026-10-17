@@ -125,3 +125,39 @@ test('admission rejects bursts before retaining an unbounded event backlog', asy
   assert.equal(results.filter((result) => result.status === 'rejected').length, 8);
   assert.equal(f.calls.length, 32);
 });
+
+test('context is acknowledged only for completed Codex turns, before attempting reply',async t=>{
+  for (const status of ['completed','unconfirmed','failed','blocked']) {
+    const order=[],prepared={text:'enriched'};
+    const f=await fixture(t,{context:async()=>prepared,
+      send:async input=>{assert.equal(input.message,'enriched');order.push('send');return {status,answer:'answer'};},
+      confirmContext:async value=>{assert.equal(value,prepared);order.push('context');},
+      reply:async()=>{order.push('reply');return {message_id:'om_reply'};},
+      confirmReply:async(item,value)=>{assert.equal(value.message_id,'om_reply');order.push('receipt');}});
+    await f.receiver.handle(event());await f.receiver.stop();
+    assert.deepEqual(order,status==='completed'?['send','context','reply','receipt']:['send','reply']);
+  }
+});
+
+test('reply failure or missing answer cannot undo confirmed context; failed reply is not acknowledged',async t=>{
+  for (const answer of ['answer',undefined]) {
+    let confirmed=0,replyConfirmed=0;
+    const f=await fixture(t,{send:async()=>({status:'completed',answer}),
+      confirmContext:async()=>{confirmed++;},confirmReply:async()=>{replyConfirmed++;},
+      reply:async()=>{assert.equal(confirmed,1);throw Error('reply lost');}});
+    await f.receiver.handle(event());await f.receiver.stop();
+    assert.equal(confirmed,1);assert.equal(replyConfirmed,0);
+    assert.equal((await f.receiver.unsettled())[0].status,'unconfirmed');
+  }
+});
+
+test('ledger write errors log metadata but do not prevent a successful reply',async t=>{
+  const logs=[];
+  const f=await fixture(t,{confirmContext:async()=>{throw Error('private state path');},
+    confirmReply:async()=>{throw Error('private state path');},
+    reply:async()=>({message_id:'om_reply'}),log:value=>logs.push(value)});
+  await f.receiver.handle(event());await f.receiver.stop();
+  assert.equal(logs.filter(x=>x.type==='context-warning').length,2);
+  assert.doesNotMatch(JSON.stringify(logs),/private state path/);
+  assert.deepEqual(await f.receiver.unsettled(),[]);
+});

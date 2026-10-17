@@ -60,7 +60,8 @@ export async function writeJournal(file, record) {
 
 // Single receiver owns this directory. ACK waits for admission to be persisted,
 // not for the Codex turn. Interrupted journals are retained for human recovery.
-export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, context = async item => item.text, log = () => {} }) {
+export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, context = async item => item.text,
+  confirmContext = async () => {}, confirmReply = async () => {}, log = () => {} }) {
   const directory = path.join(stateDir, 'feishu', digest(appId), 'messages');
   const queue = [];
   let working = false;
@@ -78,16 +79,25 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
         try {
           record.status = 'processing';
           await writeJournal(file, record);
-          const text = await context(item);
+          const prepared = await context(item);
+          const text = typeof prepared==='string' ? prepared : prepared.text;
           const result = await send({ threadId: binding.threadId, message: text, requestId: record.requestId,
             stateDir, codex: config.codex, cwd: config.cwd, timeoutMs: 180000 });
           record.codexStatus = result.status;
+          if (result.status==='completed') {
+            try { await confirmContext(prepared,item); }
+            catch { log({type:'context-warning',requestId:record.requestId,stage:'confirm'}); }
+          }
           // Never present unconfirmed/blocked turns as successfully completed.
           const answer = resultText(result, record.requestId);
           if (typeof answer !== 'string' || !answer.length) throw new Error('No final answer');
           record.status = 'replying';
           await writeJournal(file, record); // A lost API response must not trigger another reply.
-          await reply(record.messageId, answer, record.requestId);
+          const sent = await reply(record.messageId, answer, record.requestId);
+          if (result.status==='completed' && sent?.message_id) {
+            try { await confirmReply(item,sent); }
+            catch { log({type:'context-warning',requestId:record.requestId,stage:'reply'}); }
+          }
           record.status = 'replied';
           await writeJournal(file, record);
           log({ type: 'request', requestId: record.requestId, status: record.status, codexStatus: result.status });

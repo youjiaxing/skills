@@ -11,7 +11,8 @@ import { defaultStateDir } from './codex.mjs';
 import { lockThread } from './state.mjs';
 import { createReceiver, digest, validateBindings, writeJournal } from './feishu-core.mjs';
 import { receiverPaths, readJson, atomicJson } from './receiver-runtime.mjs';
-import { readTransport, resolveContext } from './feishu-context.mjs';
+import { readTransport } from './feishu-context.mjs';
+import { createContextManager } from './context-ledger.mjs';
 
 const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -166,16 +167,18 @@ export async function main(argv) {
   };
   const ws = new Lark.WSClient({ ...credentials, logger });
   const contextTransport = readTransport(credentials);
+  const contextManager = createContextManager({stateDir,appId:credentials.appId,transport:contextTransport,
+    imageDirectory:path.join(stateDir,'feishu',digest(credentials.appId),'images'),
+    readCommand:`node "${fileURLToPath(new URL('./read-feishu.mjs', import.meta.url))}" --state-dir "${stateDir}"`,
+  });
   const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
-    context: item => resolveContext(item, { transport:contextTransport,
-      imageDirectory:path.join(stateDir,'feishu',digest(credentials.appId),'images'),
-      readCommand:`node "${fileURLToPath(new URL('./read-feishu.mjs', import.meta.url))}" --state-dir "${stateDir}"`,
-    }),
+    context:contextManager.prepare, confirmContext:contextManager.confirm, confirmReply:contextManager.confirmReply,
     async reply(messageId, answer, requestId) {
       // One bounded text response; keep UUID stable for Feishu deduplication.
       const text = answer.length > 6000 ? `${answer.slice(0, 6000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : answer;
-      await api(() => client.im.v1.message.reply({ path: { message_id: messageId },
+      const response = await api(() => client.im.v1.message.reply({ path: { message_id: messageId },
         data: { msg_type: 'text', content: JSON.stringify({ text }), uuid: digest(requestId).slice(0, 32) } }));
+      return {message_id:response.data?.message_id,msg_type:'text',body:{content:JSON.stringify({text})}};
     },
   });
   let stopping = false;
