@@ -24,9 +24,12 @@
 node skills/yjx-feishu-agent/scripts/outbound.mjs send --input /path/to/send.json
 node skills/yjx-feishu-agent/scripts/outbound.mjs update --input /path/to/update.json
 node skills/yjx-feishu-agent/scripts/outbound.mjs status --request-id digest-20261016
+node skills/yjx-feishu-agent/scripts/outbound.mjs preflight --input /path/to/send.json
+node skills/yjx-feishu-agent/scripts/outbound.mjs recheck --request-id digest-20261016
+node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-20261016
 ```
 
-均支持 `--state-dir PATH`，默认复用桥接状态目录与凭证。发送/更新退出码：0 已确认，2 准备受阻或输入错误，3 结果未知。status 的0只表示存档读出，仍检查状态字段。参数/版本错误时 CLI 仅输出通用安全错误，先核对输入和存档，不换编号重发。
+均支持 `--state-dir PATH`，默认复用桥接状态目录与凭证。发送/更新退出码：0 已确认，2 受阻或输入错误，3 结果未知。status 的0只表示存档读出，仍检查状态字段；缺回执返回 missing、submitted:null 和退出码3。参数/版本错误只输出通用安全错误，先核对存档，不换编号重发。
 
 发送 JSON 示例（群 ID 替换为已授权目标）：
 
@@ -52,13 +55,33 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs status --request-id digest-202
 
 另发提醒使用独立 send 编号，可设置 `requiresUpdate` 为更新编号。命令在原卡片锁内确认它为同应用、同群且仍为最新的成功更新，再发送提醒；不能依赖失败或过时更新。重复相同输入返回存档；若原本地图被移动或修改，先用 status 核对，不换编号重发。
 
-状态位于 `outbound-v1/<app hash>/requests`、`messages`，文件名为区分大小写逻辑编号的 SHA-256，避免 Windows 路径别名。保存正文、回执和最后确认版本；不自动迁移旧的一次性脚本记录。请求/目标分别加锁，不抢残留锁。外部提交前记账；成功后先写带 pending 的新快照，再写操作回执，最后清 pending。任一步崩溃保留门禁，人工核对消息及日志再恢复，不自动推断提交成功。
+状态位于 `outbound-v1/<app hash>/requests`、`messages`，文件名为区分大小写逻辑编号的 SHA-256。新请求记录 version:2，保留原始请求、首次提交时间、成功 acknowledgement 或本次失败证明；不自动迁移或改判旧记录。请求/目标分别加锁，不抢残留锁。外部提交前记账；收到成功回执先持久化 acknowledgement，再写带 pending 的目标快照、操作回执，最后清 pending。任一步崩溃保留门禁。
+
+## 投递核查与本地恢复
+
+`recheck` 只读，不上传、不重新发送、不更新远端、不覆盖原账本；旧 `--input` 形式仅读取 requestId，原图丢失也不触发重新准备。返回 `readOnly:true`、`retried:false` 与 outcome，退出码依次为 sent=0、not_submitted=2、unknown=3。有原消息 ID 时最多查询一次该消息，并核对群归属；远端查询只补充可见性信息，不用相似正文反推请求身份，也不把404、空列表或权限失败当成从未发送。
+
+| outcome | 证据与处理 |
+|---|---|
+| sent | 已有成功回执，或 version:2 中持久化的 acknowledgement；不再发送。若目标状态尚未写完，可用 reconcile 修复本地记录 |
+| not_submitted | version:2 对原尝试的明确失败证明：消息写调用之前失败，或已经核定的服务端拒绝（当前仅230099卡片内容拒绝）；修正输入后调用方可在原任务授权内建立关联的新尝试，保留旧记录 |
+| unknown | 缺回执、未知提交、旧 blocked 无新证据、无法关联原请求；保持 pending 和依赖门禁，不生成新编号绕过 |
+
+`preflight` 无凭据检查当前输入，scope 为 current-preflight；它的 submitted:false 只表示这次预检没有发消息，不能证明更早的请求未提交。也不能用“缺账本＋当前预检失败”解除历史门禁。未知业务错误不能统一归为明确拒绝；原卡片更新结果未知时，看到旧内容不能证明更新从未执行。
+
+`reconcile` 不执行远端写入，只对 version:2 且消息类型完整的记录，用已有持久化成功回执修复本地目标和请求状态，按发送相同的锁顺序重核群、消息、版本及 pending；拒绝覆盖后来版本或其他请求的门禁。重复执行可返回 reconciled:false。旧成功记录仍可查询和去重，但不自动迁移恢复；不能用它把未知结果变成成功，不能导入任意消息 ID，证据不足保持待办。
+
+核查按调用方已有执行节奏进行，不新增后台轮询或调度。调用方负责逻辑投递与重试关联，仅阻断该投递及依赖更新/提醒；无关任务继续。相同未决状态提示一次，后续有实质变化才再次提示，可用稳定 attentionKey 去重；记录缺失时以应用与请求 ID 去重。通知沿用已有授权渠道。旧记录可能已被旧版 recheck 覆盖，不能仅凭旧 submitted:false 自动恢复；本次升级不批量修复或重放历史待办。
 
 ## 内容组织
 
 需要分区的汇总优先使用卡片；短信式提醒可用文本。用户已选择其他格式时沿用该选择。正文按任务、行动、期限和适用对象组织；去掉重复叙述与采集技术说明，不删影响执行的限制条件，也不把推断改写成来源事实。业务所需的固定栏目由调用方提供。
 
 图片应对应具体事项，保留原图可查看；本地路径需先上传取得飞书图片标识，不把 QQ 带鉴权参数的链接直接当成长期附件。图片获取遵循来源工作流的授权，本技能不自动扩大下载范围。文字识别失败不等于图片缺失；仅在缺失影响用户行动时提示查看原消息。
+
+消息类型和新卡片组件按 [外部 skills 分工](feishu-cli.md#外部-skills-的复用范围) 读取 `lark-im` 参考；本地示例使用旧式卡片1.0，不能混用2.0结构。卡片 Markdown 不是完整 Markdown：已实测旧版 lark_md 将井号标题原样显示，栏目可用已验收的加粗或标题组件；不能把此限制推广为所有2.0组件均不支持标题。
+
+首次采用或明显调整表格、分栏、折叠等布局时，用代表性内容检查目标客户端（尤其手机）的换行和信息完整性；服务端接受只证明投递成功，不证明展示可读。多列挤成省略号时可改分组列表或合并字段，不固定列数、不统一禁止表格。已验收模板继续复用，无须逐条消息重新审批；未观察客户端时说明展示未验收。
 
 ## SDK 调用入口
 
