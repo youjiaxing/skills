@@ -10,12 +10,12 @@ const message=(id,text='正文')=>({message_id:id,chat_id:'oc_test',msg_type:'te
   create_time:'1700000000000',body:{content:JSON.stringify({text})}});
 const incoming={messageId:'om_current',text:'本次请求',binding:{chatId:'oc_test',threadId:'codex_a'},
   source:{...message('om_current','本次请求'),create_time:'1700000001000'}};
-const recent=text=>JSON.parse(text.split('\n')[3]).recentHistory.messages;
+const recent=text=>JSON.parse(text.split('\n')[3]).recentHistory?.messages ?? [];
 async function fixture(t) {
   const stateDir=await mkdtemp(path.join(os.tmpdir(),'feishu-ledger-'));
   t.after(()=>rm(stateDir,{recursive:true,force:true}));
   let messages=[message('om_push')];
-  const options={stateDir,appId:'cli_test',imageDirectory:path.join(stateDir,'images'),readCommand:'node read-feishu.mjs',
+  const options={stateDir,appId:'cli_test',imageDirectory:path.join(stateDir,'images'),
     transport:{list:async()=>({items:messages}),get:async id=>messages.find(m=>m.message_id===id)}};
   return {options,manager:createContextManager(options),setMessages:value=>{messages=value;}};
 }
@@ -43,7 +43,7 @@ test('explicit quote always expands, while current request and confirmed reply a
   const again=await f.manager.prepare(quoted);
   const expanded=JSON.parse(again.text.split('\n')[3]);
   assert.equal(expanded.quotedMessages[0].text,'正文');
-  assert.equal(expanded.recentHistory.messages.length,0);
+  assert.equal(expanded.recentHistory,undefined);
   const reply=message('om_reply','回复正文');
   await f.manager.confirmReply(incoming,reply);
   f.setMessages([incoming.source,reply,{...message('om_new','新背景'),create_time:'1700000001500'}]);

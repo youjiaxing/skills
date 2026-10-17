@@ -169,7 +169,7 @@ export async function main(argv) {
   const contextTransport = readTransport(credentials);
   const contextManager = createContextManager({stateDir,appId:credentials.appId,transport:contextTransport,
     imageDirectory:path.join(stateDir,'feishu',digest(credentials.appId),'images'),
-    readCommand:`node "${fileURLToPath(new URL('./read-feishu.mjs', import.meta.url))}" --state-dir "${stateDir}"`,
+    contextStateDir:path.resolve(stateDir)===defaultStateDir({}) ? undefined : stateDir,
   });
   const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
     context:contextManager.prepare, confirmContext:contextManager.confirm, confirmReply:contextManager.confirmReply,

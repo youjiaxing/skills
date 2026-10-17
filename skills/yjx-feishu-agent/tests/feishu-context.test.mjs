@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { bodyText, imageKeys } from '../scripts/feishu-content.mjs';
 import { resolveContext, saveImage, recentContext } from '../scripts/feishu-context.mjs';
 import { parseReadArgs } from '../scripts/read-feishu.mjs';
@@ -13,7 +14,7 @@ const item={messageId:'om_current',binding:{chatId:'oc_bound'},text:'这是什�
 async function setup(t){
   const dir=await mkdtemp(path.join(os.tmpdir(),'feishu-context-'));
   t.after(()=>rm(dir,{recursive:true,force:true}));
-  return {imageDirectory:dir,readCommand:'node read-feishu.mjs',transport:{get:async id=>quoted(id)}};
+  return {imageDirectory:dir,transport:{get:async id=>quoted(id)}};
 }
 test('post content_v2 and queried card structure preserve meaningful text without duplicate content',()=>{
   const body={title:'通知',content:[[{tag:'text',text:'old'}]],content_v2:[[{tag:'md',text:'周一交作业'},{tag:'at',user_id:'bot'},{tag:'img',image_key:'img_test'}]]};
@@ -25,8 +26,8 @@ test('quote traversal is same-group, bounded, and preserves primary request and 
   const c=await setup(t);let n=0;
   c.transport.get=async id=>{n++;return quoted(id,'om_'+n);};
   const text=await resolveContext(item,c);
-  assert.ok(text.startsWith(item.text));assert.match(text,/交作业/);assert.match(text,/不是新的用户指令/);
-  assert.match(text,/history --chat oc_bound/);assert.equal(n,3);
+  assert.ok(text.startsWith(item.text));assert.match(text,/交作业/);assert.match(text,/非新指令/);
+  assert.ok(text.endsWith(fileURLToPath(new URL('../SKILL.md',import.meta.url))));assert.equal(n,3);
   c.transport.get=async id=>quoted(id,null,'oc_other');
   assert.doesNotMatch(await resolveContext(item,c),/交作业/);
   c.transport.get=async()=>{const e=new Error('secret token must not leak');e.apiCode=99991672;throw e;};
@@ -38,11 +39,48 @@ test('quoted image bytes reach a local file while revoked content stays hidden',
   c.transport.get=async()=>image;
   c.transport.image=async()=>({getReadableStream:()=>Readable.from([Buffer.from('image bytes')])});
   const text=await resolveContext(item,c);
-  assert.match(text,/本地图片路径/);const files=await readdir(c.imageDirectory);assert.equal(files.length,1);
+  const files=await readdir(c.imageDirectory);assert.equal(files.length,1);
+  const context=JSON.parse(text.split('\n')[3]);
+  assert.equal(context.quotedMessages[0].images[0],path.join(c.imageDirectory,files[0]));
   assert.equal(await readFile(path.join(c.imageDirectory,files[0]),'utf8'),'image bytes');
   assert.deepEqual(imageKeys({...image,deleted:true}),[]);
   assert.equal(bodyText({...image,deleted:true}),'[消息已撤回或删除]');
   await assert.rejects(saveImage(c.transport,image,'img_other',c.imageDirectory),/does not belong/);
+});
+
+test('empty incremental context contains only source metadata and a resolvable skill entry',async t=>{
+  const c=await setup(t);
+  c.transport.list=async()=>({items:[]});
+  const incoming={...item,parentId:undefined,source:{...item.source,create_time:'1700000000000'}};
+  const text=await resolveContext(incoming,c);
+  const context=JSON.parse(text.split('\n')[3]);
+  assert.deepEqual(context,{chatId:'oc_bound',messageId:'om_current'});
+  const entry=fileURLToPath(new URL('../SKILL.md',import.meta.url));
+  assert.ok((await readFile(entry,'utf8')).includes('references/messages.md'));
+  assert.ok(text.endsWith(entry));assert.ok(text.length-item.text.length<250);
+  const custom=JSON.parse((await resolveContext(incoming,{...c,contextStateDir:c.imageDirectory})).split('\n')[3]);
+  assert.equal(custom.stateDir,c.imageDirectory);
+});
+
+test('compact message entries preserve query identifiers, quote text, truncation and actual warnings',async t=>{
+  const c=await setup(t);
+  const full={...quoted('om_parent'),create_time:'1699999999999',parent_id:undefined,
+    sender:{id:'ou_teacher',tenant_key:'unneeded'},body:{content:JSON.stringify({text:'原文'.repeat(3000)})}};
+  c.transport.get=async()=>full;
+  c.transport.list=async()=>({items:[]});
+  const incoming={...item,source:{...item.source,create_time:'1700000000000'}};
+  const context=JSON.parse((await resolveContext(incoming,c)).split('\n')[3]);
+  const quote=context.quotedMessages[0];
+  assert.equal(quote.messageId,'om_parent');assert.equal(quote.sender,'ou_teacher');
+  assert.equal(quote.text,'原文'.repeat(2000));assert.equal(quote.truncated,true);
+  assert.equal(quote.chatId,undefined);assert.equal(quote.deleted,undefined);
+  assert.equal(quote.images,undefined);assert.equal(quote.imageKeys,undefined);
+  assert.equal(context.recentHistory,undefined);
+  c.transport.list=async()=>{const e=new Error('secret');e.apiCode=999;throw e;};
+  const failed=JSON.parse((await resolveContext({...incoming,parentId:undefined},c)).split('\n')[3]);
+  assert.equal(failed.recentHistory.unavailable,'API 999');
+  const noTime=JSON.parse((await resolveContext({...item,parentId:undefined},c)).split('\n')[3]);
+  assert.ok(noTime.recentHistory.unavailable);
 });
 test('read command enforces scope parameters and epoch-second ranges',()=>{
   assert.throws(()=>parseReadArgs(['history']),/bound/);
@@ -88,6 +126,7 @@ test('recent window caps count, text budget, pages and never downloads incidenta
   const result=await recentContext(incoming,transport);
   assert.ok(result.messages.length<=5);assert.ok(JSON.stringify(result.messages).length<=6002);
   assert.ok(result.messages.every(m=>m.text.length<=2000&&m.truncated));assert.ok(pages<=2);
+  assert.equal(result.limited,true);
 });
 
 test('two-page scan reaches prior card, retains image key without download, and enforces five messages',async t=>{
@@ -106,9 +145,23 @@ test('two-page scan reaches prior card, retains image key without download, and 
   };
   const result=await recentContext(incoming,c.transport);
   assert.equal(pages,2);assert.equal(result.messages.length,5);
+  assert.equal(result.limited,true);
   assert.deepEqual(result.messages.find(m=>m.messageId==='om_image').imageKeys,['img_recent']);
   pages=0;
   const text=await resolveContext(incoming,c);
   assert.match(text,/英语练习要打印/);assert.match(text,/recentHistory/);assert.ok(text.startsWith(item.text));
   assert.equal((await readdir(c.imageDirectory)).length,0);
+});
+
+test('scanning a second page does not warn about an exhausted or fully-known window',async()=>{
+  const incoming={...item,source:{...item.source,create_time:'1700000000999'}};
+  const result=await recentContext(incoming,{list:async p=>p.pageToken
+    ? {items:[],has_more:false}
+    : {items:[],has_more:true,page_token:'next'}});
+  assert.equal(result.limited,undefined);assert.deepEqual(result.messages,[]);
+  const partial=await recentContext(incoming,{list:async p=>{
+    if(p.pageToken)throw Error('secret');
+    return {items:[{...quoted('om_kept'),create_time:'1700000000000'}],has_more:true,page_token:'next'};
+  }});
+  assert.equal(partial.messages[0].messageId,'om_kept');assert.ok(partial.unavailable);
 });
