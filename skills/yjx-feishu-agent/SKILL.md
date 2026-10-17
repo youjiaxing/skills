@@ -9,7 +9,7 @@ description: 将飞书群的指定用户 @ 文本路由到本机 Codex 已有聊
 
 准备凭证、诊断飞书访问、绑定群或启动接收时，阅读 [飞书接入](references/feishu.md)。跨平台 Node.js 录入脚本在用户自己的终端隐藏接收 App Secret，将未加密凭证保存到仓库外的用户目录；不要让用户把 Secret 发到聊天中。凭证保存完成不表示飞书收发已通过验收。
 
-日常接收使用 `scripts/receiver.mjs start|status|stop` 管理独立进程；不要把 Desktop 工具终端中的前台 `serve` 当作独立常驻服务。恢复旧锁前确认接收器 owner 已死亡；未知或已经提交的请求保持原编号核查，不自动重放。
+日常接收使用 `scripts/receiver.mjs start|status|stop` 管理独立进程；Windows 登录触发的任务在接收器异常退出后有限次自动重启。不要把 Desktop 工具终端中的前台 `serve` 当作独立常驻服务。恢复旧锁前确认接收器 owner 已死亡；未知或已经提交的请求保持原编号核查，不自动重放。
 
 查看或核查群绑定使用 `scripts/bindings.mjs list|check`。归档、不可用及状态未知的 Codex 目标在提交前阻断，先恢复目标或明确改绑；不自动解归档或创建聊天。重绑流程及验收边界见 [飞书接入](references/feishu.md)。
 

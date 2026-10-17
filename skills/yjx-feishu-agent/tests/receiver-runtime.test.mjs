@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, access, unlink } from 'node:fs
 import os from 'node:os';
 import path from 'node:path';
 import { receiverPaths, receiverStatus, recoverReceiverLock } from '../scripts/receiver-runtime.mjs';
-import { taskDefinition, legacyTaskDefinition, matchesTask, windowsArgument } from '../scripts/receiver.mjs';
+import { taskDefinition, legacyTaskDefinition, previousTaskDefinition, matchesTask, windowsArgument } from '../scripts/receiver.mjs';
 
 async function fixture(t) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'yjx-receiver-lifecycle-'));
@@ -58,6 +58,7 @@ test('scheduled task ownership includes current-user logon trigger', () => {
   const definition = taskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe',
     args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' });
   assert.equal(matchesTask(definition, definition), true);
+  assert.match(definition, /<RestartOnFailure><Interval>PT1M<\/Interval><Count>3<\/Count><\/RestartOnFailure>/);
   assert.match(definition, /<LogonTrigger><Enabled>true<\/Enabled><UserId>S-1-5-21-123<\/UserId><\/LogonTrigger>/);
   // Task Scheduler exports omit these schema defaults and unescape quote text.
   const normalized = definition.replace('<RunLevel>LeastPrivilege</RunLevel>', '')
@@ -76,4 +77,5 @@ test('scheduled task ownership includes current-user logon trigger', () => {
     definition.replace('<AllowStartOnDemand>true', '<AllowStartOnDemand>false'),
   ]) assert.equal(matchesTask(change, definition), false);
   assert.equal(matchesTask(legacyTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' }), legacyTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' })), true);
+  assert.equal(matchesTask(previousTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' }), previousTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' })), true);
 });
