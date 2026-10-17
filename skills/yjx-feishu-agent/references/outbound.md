@@ -14,7 +14,7 @@
 | 编辑后是否再次触发通知 | 未实测；不能依赖编辑承担提醒 |
 | 自动调度、消息源下载 | 不由接收器提供，也不因发送成功而自动开启 |
 
-需要执行时按已授权范围调用官方 SDK/API，或已核对身份的外部 CLI；不编造现有脚本的子命令。SDK 凭证通过 `loadCredentials` 读取，日志只输出必要回执或数值错误码，不输出 Token、Secret 或 SDK 请求配置。CLI 流程见 [外部工具说明](feishu-cli.md)。
+本页需要账本的投递统一从 `outbound.mjs` 执行；独立的一次性消息操作按 [外部工具分工](feishu-cli.md#职责选择) 使用 `lark-im`。SDK 凭证通过 `loadCredentials` 读取，日志只输出必要回执或数值错误码，不输出 Token、Secret 或 SDK 请求配置。
 
 ## 命令与输入
 
@@ -83,16 +83,9 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-
 
 首次采用或明显调整表格、分栏、折叠等布局时，用代表性内容检查目标客户端（尤其手机）的换行和信息完整性；服务端接受只证明投递成功，不证明展示可读。多列挤成省略号时可改分组列表或合并字段，不固定列数、不统一禁止表格。已验收模板继续复用，无须逐条消息重新审批；未观察客户端时说明展示未验收。
 
-## SDK 调用入口
+## 传输适配维护
 
-技能目录固定依赖 `@larksuiteoapi/node-sdk`。先核对当前版本字段及权限：
-
-| 操作 | SDK/API | 关键内容 |
-|---|---|---|
-| 上传本地图片 | `client.im.v1.image.create` / `POST /im/v1/images` | `data.image_type: 'message'`，`data.image` 为文件流；取得 `image_key` |
-| 主动发消息 | `client.im.v1.message.create` / `POST /im/v1/messages` | `params.receive_id_type: 'chat_id'`；data 中指定 receive_id、msg_type、JSON 字符串 content、稳定 uuid |
-| 更新卡片 | `client.im.v1.message.patch` / `PATCH /im/v1/messages/:message_id` | path.message_id 指向原消息；data.content 为完整更新后卡片的 JSON 字符串 |
-| 编辑文本/富文本 | `client.im.v1.message.update` / `PUT /im/v1/messages/:message_id` | path.message_id；data.msg_type 为 text/post，data.content 为对应 JSON 字符串 |
+普通 API 用法与卡片组件复用 `lark-im` 参考；本工具的 SDK 调用实现以 `scripts/outbound.mjs` 为准，使用已锁定的 `@larksuiteoapi/node-sdk`。调整传输实现时保留本页的提交前记账、成功 acknowledgement、版本锁与未知结果语义；已有账本任务继续从 outbound 入口执行。
 
 图片上传实测返回的是顶层 `{ image_key }`，不要把所有 SDK 方法一律按 `{ code, data }` 解析。消息创建实测返回 `code: 0` 和 `data.message_id`。对当前方法的实际结构核对成功，不用“未抛异常”代替回执确认。
 
