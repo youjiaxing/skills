@@ -66,7 +66,7 @@ test('scheduled task ownership includes current-user logon trigger', () => {
   const normalized = definition.replace('<RunLevel>LeastPrivilege</RunLevel>', '')
     .replace('<AllowStartOnDemand>true</AllowStartOnDemand>', '')
     .replaceAll('&quot;', '"')
-    .replace('<UserId>S-1-5-21-123</UserId></LogonTrigger>', '<UserId>YJX\\Administrator</UserId></LogonTrigger>');
+    .replace('<UserId>S-1-5-21-123</UserId></LogonTrigger>', '<UserId>FIXTURE\\TestUser</UserId></LogonTrigger>');
   assert.equal(matchesTask(normalized, definition), true);
   for (const change of [
     definition.replace('S-1-5-21-123', 'S-1-5-21-456'),

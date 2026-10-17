@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { acceptedMessage, createReceiver, validateBindings } from '../scripts/feishu-core.mjs';
 
-const config = { version: 1, bindings: [{ chatId: 'oc_test', users: ['ou_user'], threadId: '01a1427e-fd8e-7c62-99c0-4feb976805fd' }] };
+const config = { version: 1, bindings: [{ chatId: 'oc_test', users: ['ou_user'], threadId: '11111111-1111-4111-8111-111111111111' }] };
 const event = (id = 'om_one') => ({ sender: { sender_type: 'user', sender_id: { open_id: 'ou_user' } },
   message: { message_id: id, chat_id: 'oc_test', chat_type: 'group', message_type: 'text',
     content: JSON.stringify({ text: '@_user_1 hello' }), mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot' } }] } });
