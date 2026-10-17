@@ -88,7 +88,7 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs recover-lock
 
 `feishu.mjs serve` 仍可用于独立终端前台调试，Ctrl+C 或 SIGTERM 优雅停止。若从 Codex Desktop 的工具终端启动，Desktop 退出可能连带停止它；日常使用应走上述管理命令。
 
-接收器仅接受绑定群、白名单用户发出的文本，且必须明确 @ 当前机器人。事件以应用 ID + 飞书 message ID 生成稳定请求编号；接收日志写入并同步文件后才向 SDK 返回，Codex 执行在队列中串行完成。入口和执行队列各有 32 条上限，超限返回失败。接收器仍以文本回复原消息，过长时截断并提示到 Codex 查看；未支持入站卡片、附件、引用内容抓取或主动定时推送。独立主动投递的卡片/图片实测与更新指引见 [投递说明](outbound.md)，不要与接收器能力混淆。
+接收器接受绑定群、白名单用户发出的 text/post，且必须明确 @ 当前机器人。会补入同群引用链的文字/卡片内容与图片路径，另提供按需历史查询，见 [消息上下文](messages.md)。事件以应用 ID + 飞书 message ID 生成稳定请求编号；接收日志写入并同步文件后才向 SDK 返回，Codex 执行在队列中串行完成。入口和执行队列各有 32 条上限，超限返回失败。仍以文本回复原消息，过长时截断并提示到 Codex 查看；不支持普通附件自动解析或主动定时推送。主动卡片/图片投递见 [投递说明](outbound.md)，与接收器能力区分。
 
 进程中断后的日志保留在 `feishu/<app hash>/messages`，重启报告 `unsettled`，不会自动重放。日志不保存原消息全文：`accepted` 且无对应 Codex 请求记录时，正文需从飞书人工找回；`processing`、`replying`、`unconfirmed` 则先查 `agent.mjs status --request-id ... --refresh` 和飞书是否已有回复，不能直接删日志重发。写入文件使用 sync 和原子 rename；目录元数据未做跨平台断电保证。回复 API 返回未知时不自动重发，避免重复回复。实际模型执行权限、Desktop 宿主限制沿用 [Codex 接入说明](codex.md)。
 

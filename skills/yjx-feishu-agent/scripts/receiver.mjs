@@ -42,6 +42,13 @@ export function previousTaskDefinition({ sid, node, args, cwd }) {
 }
 
 export function matchesTask(definition, expected) {
+  // Task Scheduler reorders and indents RestartOnFailure children on export.
+  const restart = text => {
+    const block=text.match(/<RestartOnFailure>([\s\S]*?)<\/RestartOnFailure>/)?.[1];
+    if (block===undefined) return null;
+    return ['Interval','Count'].map(tag=>block.match(new RegExp(`<${tag}>([^<]*)</${tag}>`))?.[1]);
+  };
+  if (JSON.stringify(restart(definition))!==JSON.stringify(restart(expected))) return false;
   const triggerActual = definition.match(/<Triggers>[\s\S]*?<\/Triggers>/)?.[0] ?? '';
   const triggerExpected = expected.match(/<Triggers>[\s\S]*?<\/Triggers>/)?.[0] ?? '';
   const expectedHasLogon = /<LogonTrigger>/.test(triggerExpected);
@@ -52,7 +59,7 @@ export function matchesTask(definition, expected) {
   expected = expected.replace(/<Triggers>[\s\S]*?<\/Triggers>/, '<Triggers />');
   const fields = ['UserId', 'LogonType', 'RunLevel', 'Command', 'Arguments', 'WorkingDirectory',
     'MultipleInstancesPolicy', 'DisallowStartIfOnBatteries', 'StopIfGoingOnBatteries',
-    'AllowHardTerminate', 'AllowStartOnDemand', 'Enabled', 'ExecutionTimeLimit', 'RestartOnFailure'];
+    'AllowHardTerminate', 'AllowStartOnDemand', 'Enabled', 'ExecutionTimeLimit'];
   if ((definition.match(/<Exec>/g) ?? []).length !== 1) return false;
   if (/<ComHandler[\s/>]/.test(definition)) return false;
   // Windows omits these default-valued elements when exporting registered XML.

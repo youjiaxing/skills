@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, rename, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { sendCodex, validateThreadId } from './codex.mjs';
+import { bodyText, decodeBody } from './feishu-content.mjs';
 
 export const digest = (text) => createHash('sha256').update(text).digest('hex');
 
@@ -34,18 +35,19 @@ export function acceptedMessage(data, config, botId) {
   const message = data?.message;
   const sender = data?.sender;
   const binding = config.bindings.find((item) => item.chatId === message?.chat_id);
-  if (!binding || message.chat_type !== 'group' || message.message_type !== 'text' ||
+  if (!binding || message.chat_type !== 'group' || !['text','post'].includes(message.message_type) ||
       sender?.sender_type !== 'user' || !binding.users.includes(sender.sender_id?.open_id) ||
       typeof message.message_id !== 'string' || !message.message_id) return null;
   const mentions = (message.mentions ?? []).filter((mention) => mention.id?.open_id === botId);
   if (!mentions.length) return null;
-  let text;
-  try { text = JSON.parse(message.content).text; } catch { return null; }
+  if (!decodeBody(message)) return null;
+  let text = bodyText(message, botId);
   if (typeof text !== 'string') return null;
   for (const mention of mentions) if (mention.key) text = text.split(mention.key).join('');
   text = text.trim();
   if (!text || text.length > 20000) return null;
-  return { binding, messageId: message.message_id, text };
+  return { binding, messageId: message.message_id, text, parentId:message.parent_id,
+    rootId:message.root_id, threadId:message.thread_id, source:message };
 }
 
 export async function writeJournal(file, record) {
@@ -58,7 +60,7 @@ export async function writeJournal(file, record) {
 
 // Single receiver owns this directory. ACK waits for admission to be persisted,
 // not for the Codex turn. Interrupted journals are retained for human recovery.
-export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, log = () => {} }) {
+export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, context = async item => item.text, log = () => {} }) {
   const directory = path.join(stateDir, 'feishu', digest(appId), 'messages');
   const queue = [];
   let working = false;
@@ -72,10 +74,11 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
     working = true;
     try {
       while (queue.length) {
-        const { record, file, text, binding } = queue.shift();
+        const { record, file, item, binding } = queue.shift();
         try {
           record.status = 'processing';
           await writeJournal(file, record);
+          const text = await context(item);
           const result = await send({ threadId: binding.threadId, message: text, requestId: record.requestId,
             stateDir, codex: config.codex, cwd: config.cwd, timeoutMs: 180000 });
           record.codexStatus = result.status;
@@ -100,16 +103,21 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
   async function admit(data) {
     if (!accepting) throw new Error('Receiver is stopping');
     const item = acceptedMessage(data, config, botId);
-    if (!item) return;
+    if (!item) {
+      // Metadata only: make ignored bound-group formats diagnosable without logging message bodies.
+      if (config.bindings.some(b => b.chatId === data?.message?.chat_id)) log({ type:'ignored', messageId:data.message.message_id, messageType:data.message.message_type });
+      return;
+    }
     const requestId = `fs-${digest(`${appId}:${item.messageId}`)}`;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const file = path.join(directory, `${requestId}.json`);
     try { await readFile(file); return; } catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (queue.length >= 32) throw new Error('Receiver queue is full');
     const record = { version: 1, requestId, messageId: item.messageId, chatId: item.binding.chatId,
-      threadId: item.binding.threadId, status: 'accepted', createdAt: new Date().toISOString() };
+      threadId: item.binding.threadId, parentId:item.parentId, rootId:item.rootId,
+      messageType:item.source.message_type, status: 'accepted', createdAt: new Date().toISOString() };
     await writeJournal(file, record);
-    queue.push({ record, file, text: item.text, binding: item.binding });
+    queue.push({ record, file, item, binding: item.binding });
     if (!working) worker = drain();
   }
 

@@ -34,6 +34,28 @@ test('requires bound group, allowed human, text and mention of this bot', () => 
   assert.throws(() => validateBindings({ version: 1, bindings: [{ ...config.bindings[0], users: [] }] }), /allowlist/);
 });
 
+test('rich-text mention and quoted message are admitted with reference metadata', async t => {
+  const e = event('om_rich');
+  e.message.message_type = 'post';
+  e.message.parent_id = 'om_quote';
+  e.message.content = JSON.stringify({ title: '请查看', content: [[{ tag: 'at', user_id:'ou_bot' }, { tag:'text', text:'这条通知是什么意思？' }]] });
+  const item = acceptedMessage(e, config, 'ou_bot');
+  assert.equal(item?.parentId, 'om_quote');
+  assert.match(item?.text ?? '', /这条通知是什么意思/);
+  const f = await fixture(t, { context: async item => `${item.text}\n引用：周一交作业` });
+  await f.receiver.handle(e);
+  await f.receiver.stop();
+  assert.match(f.calls[0]?.message ?? '', /引用：周一交作业/);
+});
+
+test('post at placeholder for bot is removed and mention-only task is ignored',()=>{
+  const e=event('om_placeholder');e.message.message_type='post';
+  e.message.content=JSON.stringify({content:[[{tag:'at',user_id:'@_user_1'}]]});
+  assert.equal(acceptedMessage(e,config,'ou_bot'),null);
+  e.message.content=JSON.stringify({content:[[{tag:'at',user_id:'@_user_1'},{tag:'text',text:'解释引用'}]]});
+  assert.equal(acceptedMessage(e,config,'ou_bot').text,'解释引用');
+});
+
 test('duplicate concurrent deliveries invoke Codex and reply only once', async (t) => {
   const f = await fixture(t);
   await Promise.all([f.receiver.handle(event()), f.receiver.handle(event())]);
