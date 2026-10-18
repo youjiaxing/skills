@@ -15,6 +15,7 @@ import { readTransport, resolveContext } from './feishu-context.mjs';
 import { createMessageRouter } from './message-routes.mjs';
 import { createProcessingFeedback } from './processing-feedback.mjs';
 import { reactionTransport } from './reaction-transport.mjs';
+import { safeFailure } from './message-diagnostics.mjs';
 
 const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -156,14 +157,16 @@ export async function main(argv) {
   const runtimePaths = receiverPaths(credentials.appId);
   const owner = await readJson(path.join(runtimePaths.lock, 'owner.json'));
   let lastPublishedConnection;
+  let stopReason;
   const publish = async (connection) => {
     const updatedAt = new Date().toISOString();
     await atomicJson(path.join(runtimePaths.runtime, 'status.json'), {
       pid: process.pid, token: owner.token, stateDir, connection, updatedAt,
+      ...(stopReason ? {stopReason} : {}),
     });
     if (connection !== lastPublishedConnection) {
       await appendFile(path.join(runtimePaths.runtime, 'connection-events.ndjson'),
-        `${JSON.stringify({ pid: process.pid, connection, updatedAt })}\n`, { mode: 0o600 });
+        `${JSON.stringify({ pid: process.pid, connection, updatedAt, ...(stopReason ? {stopReason} : {}) })}\n`, { mode: 0o600 });
       lastPublishedConnection = connection;
     }
   };
@@ -188,9 +191,10 @@ export async function main(argv) {
     },
   });
   let stopping = false;
-  const stop = () => { stopping = true; ws.close({ force: true }); };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  const stop = reason => { stopReason=reason;stopping = true; ws.close({ force: true }); };
+  const onInterrupt=()=>stop('sigint'),onTerminate=()=>stop('sigterm');
+  process.once('SIGINT', onInterrupt);
+  process.once('SIGTERM', onTerminate);
   try {
     await publish('starting');
     await feedback.recover();
@@ -208,11 +212,18 @@ export async function main(argv) {
       if (state !== previous) { print({ type: 'connection', state }); previous = state; }
       if (Date.now() - heartbeatAt > 1000) { await publish(state); heartbeatAt = Date.now(); }
       const control = await readJson(path.join(runtimePaths.runtime, 'stop.json'));
-      if (control?.pid === process.pid && control?.token === owner.token) { stop(); break; }
+      if (control?.pid === process.pid && control?.token === owner.token) { stop('control'); break; }
       if (state === 'connected') connected = true;
-      if (state === 'failed' || (!connected && Date.now() > deadline)) throw new Error('Feishu long connection could not be established');
+      if (state === 'failed' || (!connected && Date.now() > deadline)) {
+        stopReason=state==='failed' ? 'connection_failed' : 'startup_timeout';
+        throw new Error('Feishu long connection could not be established');
+      }
       await delay(500);
     }
+  } catch(error) {
+    stopReason ??= 'runtime_failed';
+    print({type:'receiver-failure',reason:stopReason,failure:safeFailure(error,'receiver')});
+    throw error;
   } finally {
     ws.close({ force: true });
     try { await receiver.stop(); await feedback.stop(); }
@@ -220,8 +231,8 @@ export async function main(argv) {
       try { await publish('stopped'); }
       finally {
         await release();
-        process.removeListener('SIGINT', stop);
-        process.removeListener('SIGTERM', stop);
+        process.removeListener('SIGINT', onInterrupt);
+        process.removeListener('SIGTERM', onTerminate);
       }
     }
   }

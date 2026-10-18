@@ -74,7 +74,22 @@ export function createProcessingFeedback({ stateDir, appId, transport, log = () 
       const save = () => writeJournal(file, state);
       await save();
       await converge(state, save);
-    }).catch(error => warning(snapshot.requestId, error));
+      if (!Object.values(state.attempts).some(attempt=>['unknown','delete-unknown'].includes(attempt.status))) {
+        delete state.lastWarning;
+        await save();
+      }
+    }).catch(async error => {
+      warning(snapshot.requestId, error);
+      try {
+        const file=path.join(directory,`${snapshot.requestId}.json`);
+        const state=JSON.parse(await readFile(file,'utf8'));
+        state.lastWarning={code:'MARKER_UNCONFIRMED',at:new Date().toISOString(),
+          ...(Number.isSafeInteger(error?.apiCode) ? {apiCode:error.apiCode} : {}),
+          ...(Number.isSafeInteger(error?.httpStatus) ? {httpStatus:error.httpStatus} : {}),
+        };
+        await writeJournal(file,state);
+      } catch { /* Local diagnostic failure must not affect the request. */ }
+    });
     chains.set(snapshot.requestId, next);
     void next.finally(() => { if (chains.get(snapshot.requestId) === next) chains.delete(snapshot.requestId); });
   }

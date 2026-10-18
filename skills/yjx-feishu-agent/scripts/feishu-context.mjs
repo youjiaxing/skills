@@ -65,10 +65,12 @@ export async function saveImage(transport, message, key, directory) {
 }
 
 function compactMessage(message,limit) {
-  const {chatId,sender,imageKeys,deleted,...view}=messageView(message);
-  return {...view,sender:sender?.id ?? sender?.sender_id?.open_id,
-    text:view.text.slice(0,limit),...(view.text.length>limit ? {truncated:true} : {}),
-    ...(deleted ? {deleted:true} : {}),...(imageKeys.length ? {imageKeys} : {})};
+  const view=messageView(message);
+  return {messageId:view.messageId,type:view.type,createTime:view.createTime,
+    parentId:view.parentId,rootId:view.rootId,threadId:view.threadId,
+    sender:view.sender?.id ?? view.sender?.sender_id?.open_id,
+    text:view.text.slice(0,limit),...(view.textLength>limit ? {truncated:true} : {}),
+    ...(view.deleted ? {deleted:true} : {}),...(view.imageKeys.length ? {imageKeys:view.imageKeys} : {})};
 }
 
 export async function resolveContext(item, { transport, imageDirectory, contextStateDir }) {

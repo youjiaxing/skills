@@ -26,6 +26,7 @@
 
 ```text
 node skills/yjx-feishu-agent/scripts/read-feishu.mjs history --chat oc_GROUP --limit 20
+node skills/yjx-feishu-agent/scripts/read-feishu.mjs history --chat oc_GROUP --limit 20 --concise
 node skills/yjx-feishu-agent/scripts/read-feishu.mjs history --chat oc_GROUP --page-token TOKEN --limit 20
 node skills/yjx-feishu-agent/scripts/read-feishu.mjs history --chat oc_GROUP --start-time EPOCH_SECONDS --end-time EPOCH_SECONDS
 node skills/yjx-feishu-agent/scripts/read-feishu.mjs history --chat oc_GROUP --thread omt_THREAD --limit 20
@@ -36,6 +37,8 @@ node skills/yjx-feishu-agent/scripts/read-feishu.mjs image --chat oc_GROUP --mes
 均支持 `--state-dir PATH`，命令前后都可放该参数；默认复用桥接凭证。群必须已绑定，单条和资源查询必须验证消息属于该群；图片 key 需实际出现在该消息正文中。资源下载返回本地路径。状态目录可能含私密原图，应放仓库外。
 
 history 每次1–50条，默认20条、按创建时间倒序，返回 hasMore/nextPageToken；要读完整范围需继续分页，不能把首屏当全群。时间参数为秒，消息创建时间为毫秒。普通群历史不含全部话题回复，需使用返回的 threadId 另查，话题容器不支持起止时间。查询仅覆盖平台对当前机器人可见的数据，群历史限制、入群时间和保密设置仍可能阻止读取。
+
+history/message 可加 `--concise` 返回精简 JSON，每条正文最多 2000 字符；默认最多 12000 字符。两种输出均保留查询 ID、`textLength/truncated`，API 实际提供时显示 `senderName` 和 `updateTime`，不额外查询通讯录。图片资源标记为 `not_downloaded`，需要时再按消息和 key 下载，不能据键名声称看过附件。history 的 `complete` 仅指当前容器与筛选条件下的分页结束，`completenessScope` 明示范围；`hasMore:true` 却缺 token 时给出 `pagination_incomplete`，不能报告完整。不会自动继续分页或下载全群资源。这些查询字段不自动附入 Codex 入站背景。
 
 ## 权限核对
 

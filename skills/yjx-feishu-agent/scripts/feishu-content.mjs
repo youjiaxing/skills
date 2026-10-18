@@ -52,9 +52,13 @@ export function imageKeys(message) {
   return [...keys];
 }
 
-export function messageView(message) {
+export function messageView(message, {concise=false} = {}) {
+  const text=bodyText(message),limit=concise ? 2000 : 12000,keys=imageKeys(message);
   return { messageId: message.message_id, chatId: message.chat_id, type: message.msg_type ?? message.message_type,
     parentId: message.parent_id, rootId: message.root_id, threadId: message.thread_id,
-    createTime: message.create_time, sender: message.sender, deleted: Boolean(message.deleted),
-    text: bodyText(message).slice(0,12000), imageKeys: imageKeys(message) };
+    createTime: message.create_time, updateTime:message.update_time,
+    ...(concise ? {senderId:message.sender?.id ?? message.sender?.sender_id?.open_id} : {sender:message.sender}),
+    senderName:message.sender?.sender_name ?? message.sender_name ?? message.sender?.name ?? null,
+    deleted: Boolean(message.deleted), text:text.slice(0,limit),textLength:text.length,truncated:text.length>limit,
+    imageKeys:keys, ...(keys.length ? {resources:keys.map(key=>({type:'image',key,status:'not_downloaded'}))} : {}) };
 }

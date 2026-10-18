@@ -6,8 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCredentials } from './feishu-credentials.mjs';
 import { defaultStateDir } from './codex.mjs';
-import { deliver, outboundStatus, prepareContent, recheckOutbound, reconcileOutbound } from './outbound-core.mjs';
+import { deliver, outboundStatus, prepareContent, recheckOutbound, reconcileOutbound, submissionOutcome } from './outbound-core.mjs';
 import { readTransport } from './feishu-context.mjs';
+import { describePush } from './push-contract.mjs';
 
 export const HELP = `Usage:
   node outbound.mjs send --input request.json [--state-dir PATH]
@@ -17,7 +18,7 @@ export const HELP = `Usage:
   node outbound.mjs recheck --request-id ID [--state-dir PATH]
   node outbound.mjs reconcile --request-id ID [--state-dir PATH]
 JSON: requestId, msgType (text/post/interactive), content object.
-sourceThreadId: explicit local Codex chat UUID for quote routing; never inferred.
+sourceThreadId: actual current Codex chat UUID; required for new connected-group writes unless oneWay:true.
 send: chatId; optional requiresUpdate (confirmed update request ID).
 update: targetRequestId (original send ID), expectedRevision, msgType=interactive.
 images: {name: local path}; use "local:name" in img_key/image_key.
@@ -74,8 +75,7 @@ export async function main(argv) {
     try { record = await outboundStatus({ stateDir, appId: credentials.appId, requestId: options.requestId }); }
     catch (error) {
       if (error?.code !== 'ENOENT') throw error;
-      process.stdout.write('{"status":"missing","code":"receipt-missing","submitted":null,"outcome":"unknown"}\n');
-      return 3;
+      record={requestId:options.requestId,status:'missing',code:'receipt-missing',submitted:null,outcome:'unknown'};
     }
   }
   else if (options.operation==='recheck') {
@@ -130,15 +130,25 @@ export async function main(argv) {
       { stateDir, appId: credentials.appId, directory: path.dirname(file), transport });
   }
   // Status includes durable content; never serialize SDK objects.
-  process.stdout.write(`${JSON.stringify(record)}\n`);
+  const evidence = record.status !== 'missing'
+    ? await outboundStatus({stateDir,appId:credentials.appId,requestId:record.requestId}) : record;
+  const described = record.status === 'missing' ? {delivery:'unknown',followUp:{state:'unknown',reason:'receipt_missing'},checkedAt:new Date().toISOString()} : await describePush(evidence,
+    {stateDir,appId:credentials.appId,outcome:submissionOutcome(evidence)});
+  process.stdout.write(`${JSON.stringify({...record,delivery:described.delivery,followUp:described.followUp,checkedAt:described.checkedAt})}\n`);
+  if(record.status==='missing') return 3;
   if (options.operation==='recheck') return record.outcome==='sent' ? 0 : record.outcome==='not_submitted' ? 2 : 3;
   if (options.operation === 'status' || record.status === 'sent') return 0;
   return record.status === 'unconfirmed' ? 3 : 2;
 }
 try {
   if (realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
-    main(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(() => {
-      process.stdout.write('{"status":"error","message":"Check input, credentials, revision and outbound journals; no automatic retry"}\n');
+    main(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {
+      process.stdout.write(`${JSON.stringify({status:'error',
+        delivery:error.code==='SOURCE_REQUIRED' ? 'not_submitted' : 'unknown',
+        followUp:{state:'unknown',reason:'operation_failed'},
+        ...(error.code === 'SOURCE_REQUIRED' ? {code:error.code,submitted:false,
+          message:'Provide the actual current sourceThreadId, or explicitly choose oneWay:true; no message submitted'}
+          : {message:'Check input, credentials, revision and outbound journals; no automatic retry'})})}\n`);
       process.exitCode = 2;
     });
   }

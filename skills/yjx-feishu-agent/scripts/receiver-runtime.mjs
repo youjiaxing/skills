@@ -38,7 +38,8 @@ export async function receiverStatus(appId, { home, alive = processAlive } = {})
       return { state: 'incomplete_lock', lockDirectory: paths.lock, runtimeDirectory: paths.runtime };
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
-      return { state: 'stopped', runtimeDirectory: paths.runtime };
+      return { state: 'stopped', runtimeDirectory: paths.runtime,
+        ...(runtime?.connection==='stopped' ? {stopReason:runtime.stopReason ?? 'unknown',updatedAt:runtime.updatedAt} : {}) };
     }
   }
   const living = alive(owner.pid);

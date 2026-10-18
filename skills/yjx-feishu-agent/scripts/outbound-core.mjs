@@ -4,6 +4,7 @@ import path from 'node:path';
 import { lockThread, validateRequestId } from './state.mjs';
 import { validateThreadId } from './codex.mjs';
 import { withRoutes } from './message-routes.mjs';
+import { requirePushSource } from './push-contract.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v)
@@ -41,6 +42,8 @@ export function outboundPaths(stateDir, appId) {
 }
 
 export async function prepareContent(input, directory = process.cwd()) {
+  if (input.oneWay !== undefined && typeof input.oneWay !== 'boolean') throw new Error('oneWay must be boolean');
+  if (input.oneWay === true && input.sourceThreadId !== undefined) throw new Error('oneWay conflicts with sourceThreadId');
   if (input.sourceThreadId !== undefined) validateThreadId(input.sourceThreadId);
   if (!['text', 'post', 'interactive'].includes(input.msgType)) throw new Error('msgType must be text, post or interactive');
   if (!input.content || typeof input.content !== 'object' || Array.isArray(input.content)) throw new Error('content must be a JSON object');
@@ -222,6 +225,7 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
       const latest = await json(paths.target(dependency.targetRequestId));
       if (latest.pending || latest.lastRequestId !== dependency.requestId) throw new Error('Required update is no longer the confirmed latest revision');
     }
+    await requirePushSource(input,{stateDir,chatId:target?.chatId ?? input.chatId});
     return await withRoutes({stateDir,appId,chatId:target?.chatId ?? input.chatId},async (routing,saveRoutes) => {
       const previousRoute = target ? routing.messages[target.messageId] : undefined;
       if (previousRoute?.pending) throw new Error('Previous message routing unresolved');
@@ -230,6 +234,7 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
       const record = { version: 2, requestId: id, operation: input.operation, fingerprint: prepared.fingerprint,
         chatId: target?.chatId ?? input.chatId, targetRequestId: targetId, status: 'preparing',
         createdAt: new Date().toISOString(), submitted: false, msgType: input.msgType,
+        ...(input.oneWay === true ? {oneWay:true} : {}),
         ...(input.sourceThreadId ? {sourceThreadId:validateThreadId(input.sourceThreadId)} : {}),
         ...(input.operation==='update' ? {expectedRevision:input.expectedRevision} : {}),
         ...(target ? {targetMessageId:target.messageId} : {}),

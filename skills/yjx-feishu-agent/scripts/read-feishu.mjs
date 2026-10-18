@@ -17,6 +17,7 @@ export function parseReadArgs(argv) {
   while (args.length) {
     const arg = args.shift();
     if (arg === '--help' || arg === '-h') return { help:true };
+    if (arg === '--concise') { if(options.concise) throw new Error('Repeated concise option');options.concise=true;continue; }
     if (commands.has(arg) && !options.command) { options.command=arg; continue; }
     const key=keys[arg], value=args.shift();
     if (!key || !value || options[key] !== undefined) throw new Error('Invalid arguments');
@@ -34,10 +35,20 @@ export function parseReadArgs(argv) {
   return options;
 }
 
+export function historyView(data,options) {
+  if(!Array.isArray(data?.items) || typeof data.has_more !== 'boolean') throw new Error('Invalid history response');
+  const hasMore=data.has_more,nextPageToken=data.page_token ?? null;
+  return {chatId:options.chatId,order:'newest_first',
+    items:data.items.map(message=>messageView(verifyChat(message,options.chatId),{concise:options.concise})),
+    hasMore,nextPageToken,complete:!hasMore,completenessScope:'requested_container_and_filters',
+    ...(hasMore && !nextPageToken ? {warning:'pagination_incomplete'} : {}),
+    note:options.threadId ? '当前话题范围' : '单页群历史；完整话题回复需用 thread ID 另查'};
+}
+
 export async function main(argv) {
   const options=parseReadArgs(argv);
   if (options.help) {
-    console.log('Usage: node read-feishu.mjs history|message|image --chat oc_ID [options]\nhistory: --limit 1..50 --page-token TOKEN --start-time SECONDS --end-time SECONDS; or --thread omt_ID\nmessage: --message om_ID\nimage: --message om_ID --image-key img_KEY\nAll commands: --state-dir PATH; reads only explicitly bound groups. No messages sent.'); return;
+    console.log('Usage: node read-feishu.mjs history|message|image --chat oc_ID [options]\nhistory: --limit 1..50 --page-token TOKEN --start-time SECONDS --end-time SECONDS; or --thread omt_ID\nmessage: --message om_ID\nimage: --message om_ID --image-key img_KEY\n--concise: compact JSON, 2000 text characters per message with explicit truncation\nAll commands: --state-dir PATH; reads only explicitly bound groups. No messages sent.'); return;
   }
   const stateDir=path.resolve(options.stateDir ?? defaultStateDir());
   const config=validateBindings(JSON.parse(await readFile(path.join(stateDir,'feishu/bindings.json'),'utf8')));
@@ -45,13 +56,10 @@ export async function main(argv) {
   const credentials=await loadCredentials(stateDir), transport=readTransport(credentials);
   if (options.command === 'history') {
     const data=await transport.list(options);
-    const items=(data.items ?? []).map(m=>messageView(verifyChat(m,options.chatId)));
-    console.log(JSON.stringify({ chatId:options.chatId, order:'newest_first', items,
-      hasMore:Boolean(data.has_more), nextPageToken:data.page_token ?? null,
-      note:options.threadId ? '话题历史' : '单页群历史；完整话题回复需用 thread ID 另查' }));
+    console.log(JSON.stringify(historyView(data,options)));
   } else {
     const message=verifyChat(await transport.get(options.messageId),options.chatId);
-    if (options.command === 'message') console.log(JSON.stringify(messageView(message)));
+    if (options.command === 'message') console.log(JSON.stringify(messageView(message,{concise:options.concise})));
     else console.log(JSON.stringify({ messageId:message.message_id, localPath:await saveImage(transport,message,options.imageKey,
       path.join(stateDir,'feishu',digest(credentials.appId),'images')) }));
   }

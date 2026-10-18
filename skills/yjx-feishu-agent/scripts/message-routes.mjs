@@ -42,14 +42,14 @@ export function createMessageRouter(options) {
     async admit(item, persist) {
       if (item.binding.quoteRouting === false || !item.parentId) {
         return persist(item.binding.threadId ? {threadId:item.binding.threadId,autoUnarchive:false} :
-          {error:'本群尚未设置默认 Codex 会话，请引用一条已登记的推送消息并 @机器人。'});
+          {code:'DEFAULT_UNCONFIGURED',error:'本群尚未设置默认 Codex 会话，请引用一条已登记的推送消息并 @机器人。'});
       }
       return withRoutes({...options,chatId:item.binding.chatId}, async data => {
         // Only the directly quoted message is authoritative. A later owner of
         // its root card must not steal replies belonging to the earlier owner.
         const target = checkRoute(data.messages[item.parentId]);
         return persist(target ? {threadId:target,autoUnarchive:true,quotedMessageId:item.parentId} :
-          {error:'引用消息的来源未登记或投递仍待核查，本次未提交给 Codex；请在本机核对来源。'});
+          {code:'QUOTE_SOURCE_UNAVAILABLE',error:'引用消息的来源未登记或投递仍待核查，本次未提交给 Codex；请在本机核对来源。'});
       });
     },
     async rememberReply(item, message, record) {

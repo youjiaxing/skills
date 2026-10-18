@@ -39,6 +39,15 @@ test('dead receiver recovery leaves Codex journals untouched and refuses live ow
   assert.equal(await readFile(journal, 'utf8'), 'submitted-request-remains');
 });
 
+test('stopped receiver retains last explicit stop reason without claiming an active process',async t=>{
+  const f=await fixture(t);
+  await writeFile(path.join(f.paths.runtime,'status.json'),JSON.stringify({...f.owner,
+    connection:'stopped',stopReason:'control',updatedAt:'2026-10-18T00:00:00.000Z'}));
+  await rm(f.paths.lock,{recursive:true});
+  const status=await receiverStatus('cli_fixture',{home:f.home});
+  assert.equal(status.state,'stopped');assert.equal(status.stopReason,'control');assert.equal(status.pid,undefined);
+});
+
 test('recovery mutex prevents concurrent recovery from touching a replacement lock', async (t) => {
   const f = await fixture(t);
   await mkdir(path.join(f.paths.runtime, 'recover.lock'));

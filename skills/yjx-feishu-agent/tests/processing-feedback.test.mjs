@@ -97,6 +97,20 @@ test('restart uses persisted completion evidence, does not reapply old accepted 
   assert.equal(feedbackOutcome({codexStatus:'blocked',replyMessageId:'om_error'}),'attention');
 });
 
+test('safe marker warning is persisted and cleared after a confirmed terminal transition',async t=>{
+  let denied=true;
+  const f=await fixture(t,{async list() {
+    if(denied) { const e=new Error('secret-error-body');e.apiCode=99991672;throw e; }
+    return [];
+  }});
+  f.feedback.update(record,'accepted');await f.feedback.stop();
+  const warning=(await f.journal()).lastWarning;
+  assert.equal(warning.apiCode,99991672);
+  assert.ok(!JSON.stringify(warning).includes('secret-error'));
+  denied=false;f.feedback.update(record,'completed');await f.feedback.stop();
+  assert.equal((await f.journal()).lastWarning,undefined);
+});
+
 test('restart covers durable admission before first marker write, excluding pre-upgrade tasks',async t => {
   const f = await fixture(t);
   await mkdir(path.join(f.root,'messages'),{recursive:true});
