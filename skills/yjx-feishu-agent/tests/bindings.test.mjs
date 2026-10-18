@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { rebind, setQuoteRouting } from '../scripts/bindings.mjs';
 import { resultText } from '../scripts/feishu-core.mjs';
+import { validateBindings } from '../scripts/feishu-core.mjs';
 import { readTarget } from '../scripts/target.mjs';
 import { RpcError } from '../scripts/app-server.mjs';
 const old = '11111111-1111-4111-8111-111111111111';
@@ -18,6 +19,12 @@ test('quote routing changes only its explicit group and preserves fallback and a
   assert.equal(config.bindings[0].quoteRouting,undefined);
   assert.throws(()=>setQuoteRouting(config,{chatId:'oc_other',enabled:'true'}));
   assert.throws(()=>setQuoteRouting(config,{chatId:'oc_a',enabled:'yes'}));
+});
+test('quote-only authorization needs no default thread, but disabled routing requires one',()=>{
+  const quoteOnly={version:1,bindings:[{chatId:'oc_quote',users:['ou_owner']}]};
+  assert.doesNotThrow(()=>validateBindings(quoteOnly));
+  assert.throws(()=>setQuoteRouting(quoteOnly,{chatId:'oc_quote',enabled:'false'}),/default thread/);
+  assert.throws(()=>validateBindings({version:1,bindings:[{chatId:'oc_quote',users:[]}]}),/allowlist/);
 });
 test('rebind checks old identity and preserves allowlists and unrelated bindings', async () => {
   const options = { chatId: 'oc_a', expectedThread: old, threadId: next };

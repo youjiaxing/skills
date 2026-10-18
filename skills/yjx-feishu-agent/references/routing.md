@@ -1,6 +1,8 @@
 # 公共群的引用路由
 
-同一机器人可接收多个 Codex 会话的推送。仅在明确选择的已绑定群启用 `quoteRouting:true`：白名单用户直接引用消息并 @机器人时，交给该消息登记的来源会话；未引用时仍使用该群原有 `threadId`。普通群保持单会话路径，不提供新建、停止或管理其他会话的远程指令。
+同一机器人可接收多个 Codex 会话的推送。所有已授权接入的群默认支持引用路由，无需逐群开启：白名单用户直接引用消息并 @机器人时，交给该消息登记的来源会话。未引用时沿用该群原有 `threadId`；未指定默认会话的群只提示引用，不擅自选择会话。机器人加入某群不等于该群已获接入授权；群与用户白名单仍须明确配置。
+
+现有 `quoteRouting:true` 保持兼容，省略该字段同样启用；仅显式 `quoteRouting:false` 可停用某群的引用路由并沿用默认会话，停用前必须已有默认会话。不提供新建、停止或管理其他会话的远程指令。
 
 ## 来源与投递
 
@@ -24,14 +26,14 @@
 
 这是接收器内部的限定能力，不新增通用 agent CLI 的自动恢复开关。实际 Desktop 专属工具、会话锁及审批限制沿用 [Codex 接入](codex.md)。
 
-## 启用与回滚
+## 接入与回滚
 
-先核对用户选定的公共群及已有默认目标。以下命令均可附 `--state-dir PATH`；变更前接收器须停止，命令共用应用锁并保存配置前后快照。
+已有授权群升级后自动使用全局规则，默认会话不变。新增群仍须先核对群和允许用户；接收器须停止，bind 共用应用锁。指定 `--thread DEFAULT_UUID` 可设置用户选定的默认会话；省略它只授权该群引用已登记的消息，不选择默认目标。
 
 ```text
 node skills/yjx-feishu-agent/scripts/receiver.mjs stop
-node skills/yjx-feishu-agent/scripts/bindings.mjs quote-routing --chat oc_GROUP --enabled true
+node skills/yjx-feishu-agent/scripts/feishu.mjs bind --chat oc_GROUP --user ou_ALLOWED_USER
 node skills/yjx-feishu-agent/scripts/receiver.mjs start
 ```
 
-停服后用 `--enabled false` 恢复该群单会话规则，保留来源、投递及入站记录。代码升级本身不自动选择或启用公共群；切换前检查当前未决请求。验收包括 A/B 来源、卡片更新换来源、旧回复继承、无引用默认目标、归档恢复、跨群隔离、未知更新阻断和重启去重。协议/状态测试通过不等于已完成实际飞书到 Desktop 的往返验收。
+所有命令支持 `--state-dir PATH`。已绑定群需要明确停用时，停服后运行 `bindings.mjs quote-routing --chat oc_GROUP --enabled false`，命令保存配置前后快照并保留消息来源、投递和入站记录；没有默认会话时拒绝停用。切换前检查当前未决请求，不通过回滚删除账本或重放事件。验收包括不同群的默认引用能力、无默认群的提示、A/B 来源、卡片更新换来源、旧回复继承、归档恢复、跨群隔离、未知更新阻断和重启去重。协议/状态测试通过不等于已完成实际飞书到 Desktop 的往返验收。

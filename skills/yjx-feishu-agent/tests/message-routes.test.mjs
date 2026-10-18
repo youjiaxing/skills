@@ -9,7 +9,7 @@ import {deliver,outboundPaths,reconcileOutbound} from '../scripts/outbound-core.
 import {createReceiver,digest} from '../scripts/feishu-core.mjs';
 import {resolveContext} from '../scripts/feishu-context.mjs';
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
-const binding={chatId:'oc_test',threadId:A,users:['ou_owner'],quoteRouting:true};
+const binding={chatId:'oc_test',threadId:A,users:['ou_owner']};
 const event=(id,parent)=>({sender:{sender_type:'user',sender_id:{open_id:'ou_owner'}},message:{message_id:id,parent_id:parent,
   chat_id:'oc_test',chat_type:'group',message_type:'text',content:JSON.stringify({text:'@bot question'}),mentions:[{key:'@bot',id:{open_id:'ou_bot'}}]}});
 async function setup(t){
@@ -122,4 +122,19 @@ test('context never reads historical pages or touches old incremental journals',
   const result=await resolveContext({text:'request',messageId:'om_current',binding,source:{message_type:'text',content:'{"text":"request"}'}},
     {transport:{list:async()=>assert.fail('must not list'),get:async()=>assert.fail('no quote')},imageDirectory:path.join(c.options.stateDir,'images')});
   assert.doesNotMatch(result,/recentHistory/);assert.equal(await readFile(old,'utf8'),'old state unchanged');
+});
+test('new authorized groups route quotes by default without inventing a fallback chat',async t=>{
+  const c=await setup(t);await deliver(c.initial,c.options);
+  const group={chatId:'oc_test',users:['ou_owner']};
+  const receiver=createReceiver({...c.receiverOptions,config:{version:1,bindings:[group]}});
+  await receiver.handle(event('om_quote_only','om_card'));
+  await receiver.handle(event('om_no_default'));await receiver.stop();
+  assert.equal(c.selected.length,1);assert.equal(c.selected[0].threadId,A);
+  assert.equal(c.selected[0].autoUnarchive,true);
+});
+test('explicit per-group opt-out preserves its original default and never restores quote owners',async t=>{
+  const c=await setup(t);await deliver({...c.initial,sourceThreadId:B},c.options);
+  const receiver=createReceiver({...c.receiverOptions,config:{version:1,bindings:[{...binding,quoteRouting:false}]}});
+  await receiver.handle(event('om_optout','om_card'));await receiver.stop();
+  assert.equal(c.selected[0].threadId,A);assert.equal(c.selected[0].autoUnarchive,false);
 });

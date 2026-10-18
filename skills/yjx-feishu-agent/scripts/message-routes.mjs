@@ -40,8 +40,9 @@ export function checkRoute(route) {
 export function createMessageRouter(options) {
   return {
     async admit(item, persist) {
-      if (!item.binding.quoteRouting || !item.parentId) {
-        return persist({threadId:item.binding.threadId,autoUnarchive:false});
+      if (item.binding.quoteRouting === false || !item.parentId) {
+        return persist(item.binding.threadId ? {threadId:item.binding.threadId,autoUnarchive:false} :
+          {error:'本群尚未设置默认 Codex 会话，请引用一条已登记的推送消息并 @机器人。'});
       }
       return withRoutes({...options,chatId:item.binding.chatId}, async data => {
         // Only the directly quoted message is authoritative. A later owner of

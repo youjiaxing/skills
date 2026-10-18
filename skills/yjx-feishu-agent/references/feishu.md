@@ -56,7 +56,7 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs start
 
 以上命令均支持 `--state-dir PATH`。list 只读本机配置；check 通过原生 App Server 的 `thread/read` 只读核对目标，不续写、不解归档。当前版本按返回 path 的独立目录组件区分 sessions 与 archived_sessions；路径缺失/未知为 unknown，notLoaded 不能证明删除。已核实的 `thread not loaded: UUID` 错误归为 unavailable，原因可能是未加载或数据缺失，不声称永久删除。
 
-发送前核查目标。默认绑定路径的 archived、unavailable、unknown 均阻断；只有已启用 [引用路由](routing.md) 且来源明确的引用请求，可自动解归档精确目标并读回核实后提交。恢复失败、响应未知或状态无法确认均不提交、不改投其他会话。已提交但未知的请求仍按旧编号只读核对；旧入站事件不会自动重放。
+发送前核查目标。默认绑定路径的 archived、unavailable、unknown 均阻断；只有按全局默认规则使用 [引用路由](routing.md) 且来源明确的引用请求，可自动解归档精确目标并读回核实后提交。恢复失败、响应未知或状态无法确认均不提交、不改投其他会话。已提交但未知的请求仍按旧编号只读核对；旧入站事件不会自动重放。
 
 rebind 仅更改已存在群的 threadId，要求旧 UUID 完全匹配、新目标可读且未归档；保留用户白名单、其他群、原请求/投递日志。它与接收器共用应用锁，必须先优雅停止；残留锁需核查而非强行删除。写入前保存 previous/next 到 `feishu/binding-history`，存档是变更意图和恢复依据，不单独证明配置写入成功。重启后新消息才使用新目标；不会迁移上下文、创建会话或重放任务。新增群的 bind 命令也使用同一应用锁，需先停止接收器。手工编辑无法参与锁协调，必须停服并串行维护配置。
 

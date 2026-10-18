@@ -57,7 +57,8 @@ export async function main(argv) {
     if (!selected.length) throw new Error('Group not bound');
     const rows = [];
     for (const binding of selected) rows.push({ ...binding, ...(command === 'check' ? {
-      target: await inspectTarget({ threadId: binding.threadId, codex: config.codex ?? 'codex', cwd: config.cwd ?? process.cwd() }) } : {}) });
+      target: binding.threadId ? await inspectTarget({ threadId: binding.threadId, codex: config.codex ?? 'codex', cwd: config.cwd ?? process.cwd() })
+        : {state:'unconfigured',reason:'quote_only_group'} } : {}) });
     console.log(JSON.stringify({ bindings: rows }));
     return;
   }

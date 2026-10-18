@@ -23,7 +23,8 @@ export function validateBindings(config) {
   for (const binding of config.bindings) {
     if (!/^oc_[\w]+$/.test(binding.chatId) || groups.has(binding.chatId)) throw new Error('Invalid or duplicate group binding');
     groups.add(binding.chatId);
-    validateThreadId(binding.threadId);
+    if (binding.threadId !== undefined) validateThreadId(binding.threadId);
+    else if (binding.quoteRouting === false) throw new Error('A default thread is required when quote routing is disabled');
     if (binding.quoteRouting !== undefined && typeof binding.quoteRouting !== 'boolean') throw new Error('quoteRouting must be boolean');
     if (!Array.isArray(binding.users) || !binding.users.length || binding.users.some((id) => !/^ou_[\w]+$/.test(id))) {
       throw new Error('Each group requires an explicit user allowlist');

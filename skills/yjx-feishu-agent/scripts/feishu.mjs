@@ -75,7 +75,7 @@ async function pages(operation) {
 export async function main(argv) {
   const options = args([...argv]);
   if (options.help) {
-    process.stdout.write('Usage: node feishu.mjs diagnose|discover|bind|serve [--state-dir PATH]\nBind: --chat oc_... --user ou_... --thread UUID [--codex PATH] [--cwd PATH]\nOnly bound groups and users with an explicit @bot text message are forwarded.\n');
+    process.stdout.write('Usage: node feishu.mjs diagnose|discover|bind|serve [--state-dir PATH]\nBind: --chat oc_... --user ou_... [--thread DEFAULT_UUID] [--codex PATH] [--cwd PATH]\nQuote routing is on by default. Omitting --thread authorizes quote-only access without choosing a default chat.\nOnly bound groups and users with an explicit @bot text message are forwarded.\n');
     return;
   }
   const stateDir = path.resolve(options.stateDir ?? defaultStateDir());
