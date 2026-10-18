@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, writeFile } from 'node:fs/promises';
+import { isMainModule } from './is-main.mjs';
 import process from 'node:process';
 
 const TIMESTAMP_RE = /^\[(?<time>\d{1,2}:\d{2}(?::\d{2})?)\]\s*(?<text>.*)$/;
@@ -64,7 +65,7 @@ async function main() {
   else process.stdout.write(rendered);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   main().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;

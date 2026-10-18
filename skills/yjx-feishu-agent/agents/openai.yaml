@@ -1,0 +1,5 @@
+interface:
+  display_name: "Feishu Agent Bridge"
+  short_description: "Bridge allowed Feishu group messages to existing Codex chats"
+policy:
+  allow_implicit_invocation: false

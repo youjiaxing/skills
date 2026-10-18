@@ -16,6 +16,7 @@ const baseManifest = {
     { state: 'external_write', at: '2026-10-09T10:30:00Z' },
     { state: 'readback_verified', at: '2026-10-09T10:40:00Z' },
   ],
+  audit: { method: 'independent_subagent', result: 'pass', at: '2026-10-09T10:20:00Z' },
   notion: {
     requested: true,
     page_id: 'page-57',
@@ -76,8 +77,39 @@ test('does not require Notion fields for a local-only completed course', async (
       { state: 'draft_audited' },
       { state: 'completed' },
     ],
+    audit: {
+      method: 'current_agent_review',
+      reason: 'host has no subagent support',
+      result: 'pass',
+    },
     notion: { requested: false },
   });
 
+  assert.deepEqual(result, { valid: true, errors: [] });
+});
+
+test('requires an audit record at or after draft_audited', async () => {
+  const { audit, ...withoutAudit } = baseManifest;
+  const result = await validateDelivery(withoutAudit);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((error) => /audit is required/.test(error)));
+});
+
+test('rejects an unknown audit method, a failing result, and current_agent_review without reason', async () => {
+  const unknown = await validateDelivery({ ...baseManifest, audit: { method: 'self', result: 'pass' } });
+  assert.ok(unknown.errors.some((error) => /audit.method/.test(error)));
+  const failing = await validateDelivery({ ...baseManifest, audit: { method: 'independent_subagent', result: 'blocked' } });
+  assert.ok(failing.errors.some((error) => /audit.result/.test(error)));
+  const noReason = await validateDelivery({ ...baseManifest, audit: { method: 'current_agent_review', result: 'pass' } });
+  assert.ok(noReason.errors.some((error) => /audit.reason/.test(error)));
+});
+
+test('does not require an audit record before draft_audited', async () => {
+  const result = await validateDelivery({
+    source_id: 's',
+    episode_id: '1',
+    state: 'evidence_ready',
+    state_history: [{ state: 'source_verified' }, { state: 'evidence_ready' }],
+  });
   assert.deepEqual(result, { valid: true, errors: [] });
 });

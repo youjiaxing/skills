@@ -92,9 +92,13 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ### 6. 会话后的 Skill 复盘
 
-- **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据原始会话记录及相关产物，区分 skill 不足、执行偏差与环境限制，仅提出有实质收益的最小优化建议。主会话优先，长历史按需委派取证；默认不修改 skill。
+- **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据原始会话记录及相关产物，区分 skill 不足、执行偏差与环境限制，仅提出有实质收益的最小优化建议。未压缩时主代理优先、按需协助，已压缩时主子代理配合；默认不修改 skill。
 
-### 7. Agent 诊断与新环境预检
+### 7. 飞书 Agent 桥接
+
+- **[`yjx-feishu-agent`](skills/yjx-feishu-agent/SKILL.md)**：提供飞书群与 Codex 已有聊天的双向桥接，支持白名单、多群绑定、独立接收器、归档保护及重新绑定；可主动发送带图卡片、更新原卡片并发送变化提醒。已完成实群验收，Desktop 专属工具兼容性需另行验证。
+
+### 8. Agent 诊断与新环境预检
 
 - **[`yjx-agent-doctor`](skills/yjx-agent-doctor/SKILL.md)**：面向不同 Agent 的故障诊断与新环境预检，首版重点为第三方模型兼容性。默认诊断并给建议，按会话要求修复；通用流程配合按需读取的 Agent 适配和问题案例，核实当前适用性，不按历史配置盲目修复。后续可继续扩展 Agent 和真实案例。
 
