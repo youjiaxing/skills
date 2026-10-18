@@ -102,6 +102,10 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 - **[`yjx-feishu-agent`](skills/yjx-feishu-agent/SKILL.md)**：提供飞书群与 Codex 已有聊天的双向桥接，支持白名单、多群绑定、独立接收器、归档保护及重新绑定；可主动发送带图卡片、更新原卡片并发送变化提醒。已完成实群验收，Desktop 专属工具兼容性需另行验证。
 
+### 8. Agent 诊断与新环境预检
+
+- **[`yjx-agent-doctor`](skills/yjx-agent-doctor/SKILL.md)**：面向不同 Agent 的故障诊断与新环境预检，首版重点为第三方模型兼容性。默认诊断并给建议，按会话要求修复；通用流程配合按需读取的 Agent 适配和问题案例，核实当前适用性，不按历史配置盲目修复。后续可继续扩展 Agent 和真实案例。
+
 ---
 
 ## 个人全局提示词
