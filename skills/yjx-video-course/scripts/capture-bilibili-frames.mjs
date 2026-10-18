@@ -7,7 +7,8 @@
 // are also scaled down to the CSS player size. For software-demo courses, that
 // produces unreadable terminal text. This script asks the Bilibili playurl API
 // for an explicit `qn`, prefers the matching DASH variant, verifies the actual
-// decoded dimensions and frame rate, and extracts exact frames with OpenCV.
+// decoded dimensions and frame rate, and extracts exact frames with ffmpeg/ffprobe
+// (preferred) or OpenCV (fallback). Tool availability is checked before any download.
 //
 // IMPORTANT: this CLI request has no browser cookies. Its quality result is
 // anonymous-only and MUST NOT be used to decide whether the user is logged in.
@@ -20,6 +21,7 @@
 // browser session before deciding whether a sign-in request is appropriate.
 
 import fs from 'node:fs/promises';
+import { isMainModule } from './is-main.mjs';
 import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
@@ -107,6 +109,75 @@ function run(command, args) {
   });
 }
 
+function commandWorks(command, args) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: 'ignore' });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+  });
+}
+
+// 探测可用的截帧工具：优先 ffmpeg + ffprobe，其次 OpenCV(cv2)。
+export async function detectFrameTools({ check = commandWorks } = {}) {
+  const ffmpeg = await check('ffmpeg', ['-version']);
+  const ffprobe = await check('ffprobe', ['-version']);
+  if (ffmpeg && ffprobe) return { status: 'frame_tools_ready', backend: 'ffmpeg' };
+  const opencv = await check('python3', ['-c', 'import cv2']);
+  if (opencv) return { status: 'frame_tools_ready', backend: 'opencv' };
+  return {
+    status: 'frame_tools_missing',
+    blocked: true,
+    checked: { ffmpeg, ffprobe, opencv },
+    reason: 'neither ffmpeg+ffprobe nor python3 with cv2 is available',
+    next_action: 'Install ffmpeg (includes ffprobe) or opencv-python-headless with user approval, then rerun. No media was downloaded.',
+  };
+}
+
+export function parseFfprobeFrameRate(value) {
+  if (!value || value === '0/0') return null;
+  const [num, den] = String(value).split('/').map(Number);
+  if (!Number.isFinite(num)) return null;
+  if (!den) return num;
+  return num / den;
+}
+
+async function probeWithFfprobe(videoPath) {
+  const { stdout } = await run('ffprobe', [
+    '-v', 'error', '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height,avg_frame_rate,r_frame_rate,nb_frames',
+    '-of', 'json', videoPath,
+  ]);
+  const stream = JSON.parse(stdout).streams?.[0] ?? {};
+  return {
+    ok: Boolean(stream.width),
+    width: Number(stream.width ?? 0),
+    height: Number(stream.height ?? 0),
+    fps: parseFfprobeFrameRate(stream.avg_frame_rate) ?? parseFfprobeFrameRate(stream.r_frame_rate),
+    frames: stream.nb_frames ? Number(stream.nb_frames) : null,
+  };
+}
+
+async function captureWithFfmpeg(videoPath, outputDir, times) {
+  const written = [];
+  for (const value of times) {
+    const output = path.join(outputDir, `frame-${String(Math.trunc(value)).padStart(4, '0')}.png`);
+    try {
+      await run('ffmpeg', ['-v', 'error', '-y', '-ss', String(value), '-i', videoPath, '-frames:v', '1', output]);
+      const probe = await probeWithFfprobe(output);
+      written.push({ time: value, ok: true, path: output, width: probe.width, height: probe.height });
+    } catch {
+      written.push({ time: value, ok: false });
+    }
+  }
+  return written;
+}
+
+let FRAME_BACKEND = 'opencv';
+const probeMedia = (videoPath) => (FRAME_BACKEND === 'ffmpeg' ? probeWithFfprobe(videoPath) : probeWithOpenCV(videoPath));
+const captureFrames = (videoPath, outputDir, times) => (FRAME_BACKEND === 'ffmpeg'
+  ? captureWithFfmpeg(videoPath, outputDir, times)
+  : captureWithOpenCV(videoPath, outputDir, times));
+
 async function probeWithOpenCV(videoPath) {
   const script = [
     'import cv2, json, sys',
@@ -185,6 +256,14 @@ async function main() {
     return;
   }
 
+  const tools = await detectFrameTools();
+  if (tools.status !== 'frame_tools_ready') {
+    console.log(JSON.stringify({ bvid, cid, requested_quality: quality, ...tools }, null, 2));
+    process.exitCode = 4;
+    return;
+  }
+  FRAME_BACKEND = tools.backend;
+
   await fs.mkdir(outputDir, { recursive: true });
   const dashPlayurl = await fetchPlayurl({ bvid, cid, quality, fnval: 4048 });
   const dashVariant = selectDashVariant(dashPlayurl, quality);
@@ -193,7 +272,7 @@ async function main() {
     if (!dashUrl) throw new Error('selected DASH variant did not include a media URL');
     const mediaPath = path.join(outputDir, `source-${QUALITY[quality]}-${frameRateNumber(dashVariant.frameRate)}fps.mp4`);
     const downloaded = await download(dashUrl, mediaPath);
-    const probe = await probeWithOpenCV(mediaPath);
+    const probe = await probeMedia(mediaPath);
     const manifest = {
       bvid,
       cid,
@@ -216,6 +295,7 @@ async function main() {
       downloaded_bytes: downloaded.bytes,
       content_type: downloaded.contentType,
       probe,
+      frame_backend: FRAME_BACKEND,
       frame_rate: Number.isFinite(Number(probe.fps)) ? Number(probe.fps) : null,
     };
     if (probe.width < (quality === 80 ? 1920 : 1280) || probe.height < EXPECTED_HEIGHT[quality]) {
@@ -233,7 +313,7 @@ async function main() {
       process.exitCode = 3;
       return;
     }
-    manifest.frames = await captureWithOpenCV(mediaPath, outputDir, times);
+    manifest.frames = await captureFrames(mediaPath, outputDir, times);
     console.log(JSON.stringify(manifest, null, 2));
     return;
   }
@@ -301,7 +381,8 @@ async function main() {
   manifest.media_path = mediaPath;
   manifest.downloaded_bytes = downloaded.bytes;
   manifest.content_type = downloaded.contentType;
-  manifest.probe = await probeWithOpenCV(mediaPath);
+  manifest.frame_backend = FRAME_BACKEND;
+  manifest.probe = await probeMedia(mediaPath);
   const mediaFrameRate = Number(manifest.probe.fps);
   manifest.frame_rate = Number.isFinite(mediaFrameRate) ? mediaFrameRate : null;
   const minimumFrameRate = 30;
@@ -320,11 +401,13 @@ async function main() {
     return;
   }
 
-  manifest.frames = await captureWithOpenCV(mediaPath, outputDir, times);
+  manifest.frames = await captureFrames(mediaPath, outputDir, times);
   console.log(JSON.stringify(manifest, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error.stack ?? String(error));
-  process.exitCode = 1;
-});
+if (isMainModule(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error.stack ?? String(error));
+    process.exitCode = 1;
+  });
+}

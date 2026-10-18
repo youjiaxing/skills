@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { access, readFile } from 'node:fs/promises';
+import { isMainModule } from './is-main.mjs';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -12,6 +13,8 @@ export const DELIVERY_STATES = [
   'readback_verified',
   'completed',
 ];
+
+export const AUDIT_METHODS = new Set(['independent_subagent', 'current_agent_review']);
 
 const STATE_INDEX = new Map(DELIVERY_STATES.map((state, index) => [state, index]));
 
@@ -86,6 +89,26 @@ export async function validateDelivery(manifest, { rootDir = process.cwd() } = {
     if (!await exists(courseFile)) addError(errors, `missing course_file: ${manifest.course_file}`);
   }
 
+  // 进入 draft_audited 及之后，必须记录本次审查方式与结果。
+  // independent_subagent：宿主支持时由独立只读审查子代理执行；
+  // current_agent_review：宿主不支持子代理时，由当前代理完成一次正常审查。
+  if (STATE_INDEX.has(manifest.state)
+    && STATE_INDEX.get(manifest.state) >= STATE_INDEX.get('draft_audited')) {
+    const audit = manifest.audit;
+    if (!audit || typeof audit !== 'object') {
+      addError(errors, 'audit is required at or after draft_audited');
+    } else {
+      if (!AUDIT_METHODS.has(audit.method)) {
+        addError(errors, `audit.method must be one of ${[...AUDIT_METHODS].join(', ')}`);
+      }
+      if (audit.result !== 'pass') addError(errors, 'audit.result must be "pass" at or after draft_audited');
+      if (audit.method === 'current_agent_review'
+        && (typeof audit.reason !== 'string' || !audit.reason.trim())) {
+        addError(errors, 'audit.reason is required for current_agent_review');
+      }
+    }
+  }
+
   const notion = manifest.notion;
   if (notion?.requested === true) {
     const currentIndex = STATE_INDEX.get(manifest.state);
@@ -126,7 +149,7 @@ async function main() {
   if (!result.valid) process.exitCode = 1;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   main().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;

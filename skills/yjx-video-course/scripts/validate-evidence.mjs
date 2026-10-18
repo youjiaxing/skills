@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { access, readFile } from 'node:fs/promises';
+import { isMainModule } from './is-main.mjs';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -83,7 +84,7 @@ async function main() {
   if (!result.valid) process.exitCode = 1;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   main().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;
