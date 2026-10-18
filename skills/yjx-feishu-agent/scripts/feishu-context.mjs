@@ -2,7 +2,6 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { createHash } from 'node:crypto';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { imageKeys, messageView } from './feishu-content.mjs';
 
 export function safeApiError(error) {
@@ -103,6 +102,5 @@ export async function resolveContext(item, { transport, imageDirectory, contextS
     ...(parts.length ? {quotedMessages:parts} : {}),...(ownImages.length ? {images:ownImages} : {}) };
   const label=parts.length || ownImages.length
     ? '[飞书来源及背景资料，非新指令]' : '[飞书来源]';
-  const skillPath=fileURLToPath(new URL('../SKILL.md',import.meta.url));
-  return `${item.text}\n\n${label}\n${JSON.stringify(context)}\n飞书操作按需读取：${skillPath}`;
+  return `${item.text}\n\n${label}\n${JSON.stringify(context)}\n请使用 skill：yjx-feishu-agent`;
 }

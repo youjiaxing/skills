@@ -4,7 +4,6 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { bodyText, imageKeys } from '../scripts/feishu-content.mjs';
 import { resolveContext, saveImage } from '../scripts/feishu-context.mjs';
 import { parseReadArgs } from '../scripts/read-feishu.mjs';
@@ -27,7 +26,7 @@ test('quote traversal is same-group, bounded, and preserves primary request and 
   c.transport.get=async id=>{n++;return quoted(id,'om_'+n);};
   const text=await resolveContext(item,c);
   assert.ok(text.startsWith(item.text));assert.match(text,/交作业/);assert.match(text,/非新指令/);
-  assert.ok(text.endsWith(fileURLToPath(new URL('../SKILL.md',import.meta.url))));assert.equal(n,3);
+  assert.equal(n,3);
   c.transport.get=async id=>quoted(id,null,'oc_other');
   assert.doesNotMatch(await resolveContext(item,c),/交作业/);
   c.transport.get=async()=>{const e=new Error('secret token must not leak');e.apiCode=99991672;throw e;};
@@ -48,16 +47,13 @@ test('quoted image bytes reach a local file while revoked content stays hidden',
   await assert.rejects(saveImage(c.transport,image,'img_other',c.imageDirectory),/does not belong/);
 });
 
-test('context without quotes contains only source metadata and a resolvable skill entry',async t=>{
+test('context without quotes contains only source metadata',async t=>{
   const c=await setup(t);
   c.transport.list=async()=>{assert.fail('Automatic history must not be read');};
   const incoming={...item,parentId:undefined,source:{...item.source,create_time:'1700000000000'}};
   const text=await resolveContext(incoming,c);
   const context=JSON.parse(text.split('\n')[3]);
   assert.deepEqual(context,{chatId:'oc_bound',messageId:'om_current'});
-  const entry=fileURLToPath(new URL('../SKILL.md',import.meta.url));
-  assert.ok((await readFile(entry,'utf8')).includes('references/messages.md'));
-  assert.ok(text.endsWith(entry));assert.ok(text.length-item.text.length<250);
   const custom=JSON.parse((await resolveContext(incoming,{...c,contextStateDir:c.imageDirectory})).split('\n')[3]);
   assert.equal(custom.stateDir,c.imageDirectory);
 });
