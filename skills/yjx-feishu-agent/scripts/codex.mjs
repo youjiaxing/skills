@@ -63,6 +63,7 @@ async function findTurn(client, record, deadline) {
 
 function applyPersistedTurn(record, turn) {
   if (!turn) return;
+  const knownTurnId=record.turnId;
   record.turnId = turn.id;
   const texts = finalTexts(turn);
   if (record.unsupportedInteractions?.length) {
@@ -70,6 +71,15 @@ function applyPersistedTurn(record, turn) {
     record.answers = texts;
     record.answer = texts.length ? texts.join('\n\n') : null;
     return; // A later assistant response does not supply the rejected host capability.
+  }
+  // Our interrupt acknowledgement alone is not terminal proof. Require a
+  // matching persisted turn with an explicit completion timestamp as well.
+  if (record.route==='app-server' && record.interruptRequested===true && knownTurnId===turn.id &&
+    turn.status==='interrupted' && Number.isSafeInteger(turn.completedAt) && turn.completedAt>0) {
+    record.status='interrupted';
+    record.answer=null;record.answers=[];
+    record.terminalConfirmedAt=new Date().toISOString();
+    return;
   }
   // An independent reader can transiently see interrupted + completedAt=null.
   if (turn.status === 'completed' && turn.completedAt != null && texts.length) {
@@ -186,7 +196,7 @@ export async function sendCodex(input, overrides = {}) {
   const createdAt = new Date().toISOString();
   const reserved = await reserveRecord(options.stateDir, {
     version: 1, agent: 'codex', requestId, threadId, inputHash: hash,
-    marker: `[yjx-feishu-agent:${randomUUID()}]`, createdAt, status: 'waiting',
+    marker: `[yjx-feishu-agent:${randomUUID()}]`, createdAt, status: 'waiting',timeoutMs:options.timeoutMs,
     submitted: false, route: null, turnId: null, answer: null, answers: [], error: null,
   });
   const record = reserved.record;
@@ -208,6 +218,7 @@ export async function sendCodex(input, overrides = {}) {
     await execute(client, record, input.message, options, deadline, dependencies);
   } catch (error) {
     record.status = record.submitted ? 'unconfirmed' : 'blocked';
+    if (performance.now()>=deadline) record.waitTimedOut=true;
     record.error = { code: record.submitted ? 'COMPLETION_UNCONFIRMED' : 'NOT_SUBMITTED', message: error.message };
     if (client?.unsupportedRequests.length) {
       record.status = 'blocked';

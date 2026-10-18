@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { acceptedMessage, createReceiver, validateBindings } from '../scripts/feishu-core.mjs';
+import { acceptedMessage, createReceiver, validateBindings, resultText } from '../scripts/feishu-core.mjs';
 
 const config = { version: 1, bindings: [{ chatId: 'oc_test', users: ['ou_user'], threadId: '11111111-1111-4111-8111-111111111111' }] };
 const event = (id = 'om_one') => ({ sender: { sender_type: 'user', sender_id: { open_id: 'ou_user' } },
@@ -105,6 +105,26 @@ test('unconfirmed Codex results are reported without a successful answer claim',
   await f.receiver.stop();
   assert.match(f.replies[0][1], /unconfirmed/);
   assert.doesNotMatch(f.replies[0][1], /late partial/);
+});
+
+test('bridge research requests use a longer bounded configurable Codex budget',async t=>{
+  const defaults=await fixture(t);
+  await defaults.receiver.handle(event());await defaults.receiver.stop();
+  assert.equal(defaults.calls[0].timeoutMs,900000);
+  const configured=await fixture(t,{config:{...config,codexTimeoutMs:600000}});
+  await configured.receiver.handle(event());await configured.receiver.stop();
+  assert.equal(configured.calls[0].timeoutMs,600000);
+  for(const value of [0,59999,3600001,NaN,'900000']) {
+    assert.throws(()=>validateBindings({...config,codexTimeoutMs:value}),/codexTimeoutMs/);
+  }
+});
+
+test('wait timeout explains interruption request or ongoing queue without claiming a final answer',()=>{
+  const common={status:'unconfirmed',submitted:true,waitTimedOut:true,timeoutMs:900000,answer:'partial'};
+  const owned=resultText({...common,interruptRequested:true},'request');
+  assert.match(owned,/15 分钟/);assert.match(owned,/已请求中断/);assert.doesNotMatch(owned,/partial/);
+  const queued=resultText({...common,route:'queue'},'request');
+  assert.match(queued,/可能仍在/);assert.doesNotMatch(queued,/已请求中断/);
 });
 
 test('rejected group messages leave no request or reply', async (t) => {

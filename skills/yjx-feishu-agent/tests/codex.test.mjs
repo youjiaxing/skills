@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendCodex, requestStatus, finalTexts } from '../scripts/codex.mjs';
 import { AppServer } from '../scripts/app-server.mjs';
-import { lockThread, validateRequestId } from '../scripts/state.mjs';
+import { lockThread, validateRequestId, claimThreadRequest } from '../scripts/state.mjs';
 import { parseArgs } from '../scripts/agent.mjs';
 
 const THREAD = '12345678-1234-1234-1234-123456789abc';
@@ -178,9 +178,43 @@ test('external timeout interrupts only its own turn, without resending', async (
   const record = await sendCodex({ ...c.input, timeoutMs: 5000 }, c.dependencies);
   assert.equal(record.status, 'unconfirmed');
   assert.equal(record.interruptRequested, true);
+  assert.equal(record.waitTimedOut,true);
+  assert.equal(record.timeoutMs,5000);
   const calls = (await readFile(path.join(c.directory, 'calls.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(calls.filter((call) => call.method === 'turn/start').length, 1);
   assert.equal(calls.filter((call) => call.method === 'turn/interrupt').length, 1);
+  const saved=path.join(c.directory,'turn.json');
+  const interrupted={id:record.turnId,status:'interrupted',completedAt:null,
+    items:[{type:'agentMessage',phase:'commentary',text:'unfinished progress'}]};
+  await writeFile(saved,JSON.stringify(interrupted));
+  assert.equal((await requestStatus({...c.input,refresh:true},c.dependencies)).status,'unconfirmed');
+  await assert.rejects(claimThreadRequest(c.input.stateDir,{threadId:THREAD,requestId:'next'}),/unresolved/);
+  const requestFile=path.join(c.input.stateDir,'requests',record.requestId,'record.json');
+  for(const changes of [
+    {route:'queue'}, {interruptRequested:false}, {turnId:'other-turn'},
+  ]) {
+    await writeFile(requestFile,JSON.stringify({...record,...changes}));
+    await writeFile(saved,JSON.stringify({...interrupted,completedAt:123}));
+    assert.equal((await requestStatus({...c.input,refresh:true},c.dependencies)).status,'unconfirmed');
+  }
+  for(const completedAt of [null,0,'123',-1]) {
+    await writeFile(requestFile,JSON.stringify(record));
+    await writeFile(saved,JSON.stringify({...interrupted,completedAt}));
+    assert.equal((await requestStatus({...c.input,refresh:true},c.dependencies)).status,'unconfirmed');
+  }
+  await writeFile(requestFile,JSON.stringify({...record,unsupportedInteractions:['item/tool/call']}));
+  await writeFile(saved,JSON.stringify({...interrupted,completedAt:123}));
+  assert.equal((await requestStatus({...c.input,refresh:true},c.dependencies)).status,'blocked');
+  await writeFile(requestFile,JSON.stringify(record));
+  await writeFile(saved,JSON.stringify({...interrupted,completedAt:123}));
+  const confirmed=await requestStatus({...c.input,refresh:true},c.dependencies);
+  assert.equal(confirmed.status,'interrupted');assert.equal(confirmed.answer,null);assert.deepEqual(confirmed.answers,[]);
+  await claimThreadRequest(c.input.stateDir,{threadId:THREAD,requestId:'next'});
+  const repeated=await sendCodex(c.input,c.dependencies);
+  assert.equal(repeated.status,'interrupted');assert.equal(repeated.deduplicated,true);
+  const laterCalls=(await readFile(path.join(c.directory,'calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(laterCalls.filter(call=>call.method==='turn/start').length,1);
+  assert.equal(laterCalls.filter(call=>call.method==='turn/interrupt').length,1);
 });
 
 test('unsupported host requests cannot produce a successful result', async (t) => {
