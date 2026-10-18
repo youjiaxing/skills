@@ -13,6 +13,8 @@ import { createReceiver, digest, validateBindings, writeJournal } from './feishu
 import { receiverPaths, readJson, atomicJson } from './receiver-runtime.mjs';
 import { readTransport, resolveContext } from './feishu-context.mjs';
 import { createMessageRouter } from './message-routes.mjs';
+import { createProcessingFeedback } from './processing-feedback.mjs';
+import { reactionTransport } from './reaction-transport.mjs';
 
 const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -172,7 +174,10 @@ export async function main(argv) {
     contextStateDir:path.resolve(stateDir)===defaultStateDir({}) ? undefined : stateDir,
   };
   const router = createMessageRouter({stateDir,appId:credentials.appId});
+  const feedback = createProcessingFeedback({stateDir, appId:credentials.appId,
+    transport:reactionTransport(credentials), log:print});
   const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
+    feedback,
     context:item => resolveContext(item,contextOptions), admitRoute:router.admit, confirmReply:router.rememberReply,
     async reply(messageId, answer, requestId) {
       // One bounded text response; keep UUID stable for Feishu deduplication.
@@ -188,6 +193,7 @@ export async function main(argv) {
   process.once('SIGTERM', stop);
   try {
     await publish('starting');
+    await feedback.recover();
     const unsettled = await receiver.unsettled();
     if (unsettled.length) print({ type: 'unsettled', requests: unsettled });
     await ws.start({ eventDispatcher: new Lark.EventDispatcher({ logger }).register({
@@ -209,7 +215,7 @@ export async function main(argv) {
     }
   } finally {
     ws.close({ force: true });
-    try { await receiver.stop(); }
+    try { await receiver.stop(); await feedback.stop(); }
     finally {
       try { await publish('stopped'); }
       finally {

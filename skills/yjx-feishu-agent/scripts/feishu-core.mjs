@@ -64,7 +64,7 @@ export async function writeJournal(file, record) {
 // not for the Codex turn. Interrupted journals are retained for human recovery.
 export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, context = async item => item.text,
   admitRoute = async (item,persist) => persist({threadId:item.binding.threadId,autoUnarchive:false}),
-  confirmReply = async () => {}, log = () => {} }) {
+  confirmReply = async () => {}, feedback = { update() {} }, log = () => {} }) {
   const directory = path.join(stateDir, 'feishu', digest(appId), 'messages');
   const queue = [];
   let working = false;
@@ -79,6 +79,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
     try {
       while (queue.length) {
         const { record, file, item, binding } = queue.shift();
+        let durableAnswerReceipt = false;
         try {
           record.status = 'processing';
           await writeJournal(file, record);
@@ -91,11 +92,13 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
           const answer = record.routeError ?? resultText(result, record.requestId);
           if (typeof answer !== 'string' || !answer.length) throw new Error('No final answer');
           record.status = 'replying';
+          record.replyAttempted = true;
           await writeJournal(file, record); // A lost API response must not trigger another reply.
           const sent = await reply(record.messageId, answer, record.requestId);
           if (sent?.message_id) {
             record.replyMessageId = sent.message_id;
             await writeJournal(file,record);
+            durableAnswerReceipt = true;
           }
           if (!record.routeError && sent?.message_id) {
             await confirmReply(item,sent,record);
@@ -105,8 +108,24 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
           log({ type: 'request', requestId: record.requestId, status: record.status, codexStatus: result.status });
         } catch {
           record.status = 'unconfirmed';
-          try { await writeJournal(file, record); } catch { /* Keep the last durable state. */ }
+          try {
+            await writeJournal(file, record);
+            durableAnswerReceipt ||= Boolean(record.replyMessageId);
+          } catch { /* Keep the last durable state. */ }
+          if (!record.replyAttempted) {
+            // Persist intent first. Never send a second message after an uncertain reply.
+            record.replyAttempted = true;
+            record.failureReplyAttempted = true;
+            try {
+              await writeJournal(file, record);
+              const sent = await reply(record.messageId,
+                `本次请求处理异常，请在本机检查，暂勿重复提交。请求：${record.requestId}`, record.requestId);
+              if (sent?.message_id) { record.failureReplyMessageId = sent.message_id; await writeJournal(file, record); }
+            } catch { /* An unknown receipt remains unknown; no retries. */ }
+          }
           log({ type: 'request', requestId: record.requestId, status: 'unconfirmed' });
+        } finally {
+          feedback.update(record, record.codexStatus === 'completed' && durableAnswerReceipt ? 'completed' : 'attention');
         }
       }
     } finally { working = false; }
@@ -126,6 +145,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
     try { await readFile(file); return; } catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (queue.length >= 32) throw new Error('Receiver queue is full');
     const record = { version: 1, requestId, messageId: item.messageId, chatId: item.binding.chatId,
+      ...(feedback.enabled ? { feedbackVersion:1 } : {}),
       threadId: item.binding.threadId, parentId:item.parentId, rootId:item.rootId,
       messageType:item.source.message_type, status: 'accepted', createdAt: new Date().toISOString() };
     await admitRoute(item, async route => {
@@ -135,6 +155,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       if (route.quotedMessageId) record.quotedMessageId = route.quotedMessageId;
       await writeJournal(file, record);
     });
+    feedback.update(record, 'accepted');
     queue.push({ record, file, item, binding: item.binding });
     if (!working) worker = drain();
   }
