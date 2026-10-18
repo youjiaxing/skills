@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createMessageRouter,withRoutes,routeFile} from '../scripts/message-routes.mjs';
 import {deliver,outboundPaths,reconcileOutbound} from '../scripts/outbound-core.mjs';
-import {createReceiver,digest} from '../scripts/feishu-core.mjs';
+import {createReceiver,digest,validateBindings} from '../scripts/feishu-core.mjs';
 import {resolveContext} from '../scripts/feishu-context.mjs';
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
 const binding={chatId:'oc_test',threadId:A,users:['ou_owner']};
@@ -67,28 +67,48 @@ test('unknown update blocks new quotes while already admitted requests keep thei
   assert.equal(route.messages.om_card.pending,'change');
   await assert.rejects(reconcileOutbound({...c.options,requestId:'change'}),/No durable/);
 });
-test('missing source, cross-group/application quote, and route corruption never fall back to the default target',async t=>{
-  const c=await setup(t);await deliver({...c.initial,chatId:'oc_other'},c.options);
+test('missing and cross-group sources fall back without reading another group or application route',async t=>{
+  const c=await setup(t);await deliver({...c.initial,requestId:'cross-omit',chatId:'oc_other'},c.options);
   let receiver=createReceiver(c.receiverOptions);
-  await receiver.handle(event('om_cross','om_card'));await receiver.stop();assert.equal(c.selected.length,0);
-  await deliver({...c.initial,requestId:'local'},c.options);
+  await receiver.handle(event('om_cross','om_card'));await receiver.stop();
+  assert.equal(c.selected.length,1);assert.equal(c.selected[0].threadId,A);
   const otherRouter=createMessageRouter({...c.options,appId:'cli_other'});
-  await otherRouter.admit({binding,parentId:'om_card'},route=>assert.ok(route.error));
-  receiver=createReceiver(c.receiverOptions);const denied=event('om_denied','om_card');denied.sender.sender_id.open_id='ou_not_allowed';
-  await receiver.handle(denied);await receiver.stop();assert.equal(c.selected.length,0);
+  await otherRouter.admit({binding,parentId:'om_card'},route=>{assert.equal(route.threadId,A);assert.equal(route.routeMode,'binding-fallback')});
+  await deliver({...c.initial,requestId:'local-send'},c.options);
+  await deliver({...c.update,targetRequestId:'local-send'},c.options);
+  await c.router.admit({binding,parentId:'om_card'},route=>{assert.equal(route.threadId,B);assert.equal(route.routeMode,'quoted')});
+  const pending=JSON.parse(await readFile(routeFile(c.options.stateDir,'cli_test','oc_test'),'utf8'));
+  pending.messages.om_card.pending='change';await writeFile(routeFile(c.options.stateDir,'cli_test','oc_test'),JSON.stringify(pending));
+  await c.router.admit({binding,parentId:'om_card'},route=>{assert.match(route.error,/待核查|更新|损坏/);assert.equal(route.routeMode,'blocked')});
   await writeFile(routeFile(c.options.stateDir,'cli_test','oc_test'),'broken');
   await assert.rejects(createReceiver(c.receiverOptions).handle(event('om_corrupt','om_card')));
-  assert.equal(c.selected.length,0);
 });
-test('legacy sends remain usable but have no inferred owner; missing source on later update invalidates old ownership',async t=>{
-  const c=await setup(t);const legacy={...c.initial};delete legacy.sourceThreadId;
-  await deliver(legacy,c.options);
-  await c.router.admit({binding,parentId:'om_card'},route=>assert.ok(route.error));
-  await deliver(c.update,c.options);
-  await c.router.admit({binding,parentId:'om_card'},route=>assert.equal(route.threadId,B));
-  const next={...c.update,requestId:'next',expectedRevision:2};delete next.sourceThreadId;
-  await deliver(next,c.options);
-  await c.router.admit({binding,parentId:'om_card'},route=>assert.ok(route.error));
+test('legacy source null falls back but missing fields and invalid UUIDs block',async t=>{
+  const c=await setup(t);
+  await withRoutes({...c.options,chatId:'oc_test'},async(data,save)=>{
+    data.messages.om_legacy={sourceThreadId:null,requestId:'old',kind:'outbound',pending:null};await save();
+  });
+  await c.router.admit({binding,parentId:'om_legacy'},route=>{assert.equal(route.threadId,A);assert.equal(route.routeMode,'binding-fallback')});
+  for(const [id,entry] of [['om_missing_field',{requestId:'x',kind:'outbound'}],['om_invalid',{sourceThreadId:'invalid'}]]) {
+    await withRoutes({...c.options,chatId:'oc_test'},async(data,save)=>{data.messages[id]=entry;await save()});
+    await c.router.admit({binding,parentId:id},route=>{assert.match(route.error,/待核查|损坏/);assert.equal(route.routeMode,'blocked')});
+  }
+});
+test('pending takes priority over null and fallback replies keep their selected owner',async t=>{
+  const c=await setup(t);
+  await withRoutes({...c.options,chatId:'oc_test'},async(data,save)=>{
+    data.messages.om_pending={sourceThreadId:null,requestId:'update',kind:'outbound',pending:'update'};await save();
+  });
+  await c.router.admit({binding,parentId:'om_pending'},route=>{assert.equal(route.routeMode,'blocked');assert.ok(route.error)});
+  await deliver({...c.initial,requestId:'owned'},c.options);
+  await withRoutes({...c.options,chatId:'oc_test'},async(data,save)=>{
+    data.messages.om_null={sourceThreadId:null,requestId:'old',kind:'outbound',pending:null};await save();
+  });
+  let receiver=createReceiver(c.receiverOptions);await receiver.handle(event('om_fallback','om_null'));await receiver.stop();
+  assert.equal(c.selected.at(-1).threadId,A);
+  const journal=JSON.parse(await readFile(path.join(c.options.stateDir,'feishu',digest('cli_test'),'messages',`fs-${digest('cli_test:om_fallback')}.json`),'utf8'));
+  assert.equal(journal.routeMode,'binding-fallback');assert.equal(journal.replyMessageId,'om_fallback_reply');
+  await c.router.admit({binding,parentId:'om_fallback_reply'},route=>{assert.equal(route.threadId,A);assert.equal(route.routeMode,'quoted')});
 });
 test('definitive provider rejection restores the prior route instead of transferring ownership',async t=>{
   const c=await setup(t);await deliver(c.initial,c.options);
@@ -123,14 +143,15 @@ test('context never reads historical pages or touches old incremental journals',
     {transport:{list:async()=>assert.fail('must not list'),get:async()=>assert.fail('no quote')},imageDirectory:path.join(c.options.stateDir,'images')});
   assert.doesNotMatch(result,/recentHistory/);assert.equal(await readFile(old,'utf8'),'old state unchanged');
 });
-test('new authorized groups route quotes by default without inventing a fallback chat',async t=>{
+test('missing source without a default blocks and quote-disabled without a default stays configurable',async t=>{
   const c=await setup(t);await deliver(c.initial,c.options);
   const group={chatId:'oc_test',users:['ou_owner']};
   const receiver=createReceiver({...c.receiverOptions,config:{version:1,bindings:[group]}});
-  await receiver.handle(event('om_quote_only','om_card'));
-  await receiver.handle(event('om_no_default'));await receiver.stop();
+  await receiver.handle(event('om_quote_missing'));
+  await receiver.handle(event('om_quote_known','om_card'));await receiver.stop();
   assert.equal(c.selected.length,1);assert.equal(c.selected[0].threadId,A);
   assert.equal(c.selected[0].autoUnarchive,true);
+  validateBindings({version:1,bindings:[{chatId:'oc_no_default',users:['ou_owner'],quoteRouting:false}]});
 });
 test('explicit per-group opt-out preserves its original default and never restores quote owners',async t=>{
   const c=await setup(t);await deliver({...c.initial,sourceThreadId:B},c.options);

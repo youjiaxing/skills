@@ -21,18 +21,25 @@ test('post content_v2 and queried card structure preserve meaningful text withou
   const card={title:'摘要',elements:[[{tag:'text',text:'阅读练习'},{tag:'text',text:'周日完成'}]]};
   assert.match(bodyText({msg_type:'interactive',body:{content:JSON.stringify(card)}}),/阅读练习\n周日完成/);
 });
-test('quote traversal is same-group, bounded, and preserves primary request and read capability',async t=>{
+test('quote traversal is bounded, preserves cross-group source metadata and read capability',async t=>{
   const c=await setup(t);let n=0;
   c.transport.get=async id=>{n++;return quoted(id,'om_'+n);};
   const text=await resolveContext(item,c);
   assert.ok(text.startsWith(item.text));assert.match(text,/交作业/);assert.match(text,/非新指令/);
   assert.equal(n,3);
   c.transport.get=async id=>quoted(id,null,'oc_other');
-  assert.doesNotMatch(await resolveContext(item,c),/交作业/);
+  const cross=await resolveContext(item,c);assert.match(cross,/交作业/);
+  assert.equal(JSON.parse(cross.split('\n')[3]).quotedMessages[0].sourceChatId,'oc_other');
   c.transport.get=async()=>{const e=new Error('secret token must not leak');e.apiCode=99991672;throw e;};
-  const blocked=await resolveContext(item,c);assert.match(blocked,/API 99991672/);assert.doesNotMatch(blocked,/secret token/);
+  const blocked=await resolveContext(item,c);assert.match(blocked,/API 99991672/);
+  assert.match(blocked,/read-feishu\.mjs message --chat <来源群ID>/);assert.doesNotMatch(blocked,/secret token/);
 });
 test('quoted image bytes reach a local file while revoked content stays hidden',async t=>{
+  const failed=await setup(t);
+  failed.transport.get=async parent=>({...quoted(parent),msg_type:'image',body:{content:JSON.stringify({image_key:'img_test'})}});
+  failed.transport.image=async()=>{const e=new Error('denied');e.apiCode=99991672;throw e;};
+  const fallback=await resolveContext(item,failed);
+  assert.match(fallback,/补读目标/);assert.match(fallback,/img_test/);assert.match(fallback,/read-feishu\.mjs image/);
   const c=await setup(t);
   const image={...quoted('om_parent'),msg_type:'image',body:{content:JSON.stringify({image_key:'img_test'})}};
   c.transport.get=async()=>image;
@@ -69,7 +76,7 @@ test('compact message entries preserve query identifiers, quote text, truncation
   const quote=context.quotedMessages[0];
   assert.equal(quote.messageId,'om_parent');assert.equal(quote.sender,'ou_teacher');
   assert.equal(quote.text,'原文'.repeat(2000));assert.equal(quote.truncated,true);
-  assert.equal(quote.chatId,undefined);assert.equal(quote.deleted,undefined);
+  assert.equal(quote.sourceChatId,'oc_bound');assert.equal(quote.deleted,undefined);
   assert.equal(quote.images,undefined);assert.equal(quote.imageKeys,undefined);
   assert.equal(context.recentHistory,undefined);
 

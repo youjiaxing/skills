@@ -39,7 +39,6 @@ export function validateBindings(config) {
     if (!/^oc_[\w]+$/.test(binding.chatId) || groups.has(binding.chatId)) throw new Error('Invalid or duplicate group binding');
     groups.add(binding.chatId);
     if (binding.threadId !== undefined) validateThreadId(binding.threadId);
-    else if (binding.quoteRouting === false) throw new Error('A default thread is required when quote routing is disabled');
     if (binding.quoteRouting !== undefined && typeof binding.quoteRouting !== 'boolean') throw new Error('quoteRouting must be boolean');
     if (!Array.isArray(binding.users) || !binding.users.length || binding.users.some((id) => !/^ou_[\w]+$/.test(id))) {
       throw new Error('Each group requires an explicit user allowlist');
@@ -72,6 +71,13 @@ export function messageDecision(data, config, botId) {
 
 export function acceptedMessage(data,config,botId) { return messageDecision(data,config,botId).item ?? null; }
 
+export function withPrefix(text,prefix) {
+  const value=String(text ?? '');
+  const match=value.match(/^(\s*<!--[ \t]*feishu:(?:text|post|card)[ \t]*-->\s*)/i);
+  return match ? match[1]+prefix+'\n\n'+value.slice(match[1].length)
+    : prefix+'\n\n'+value;
+}
+
 export async function writeJournal(file, record) {
   const temporary = `${file}.tmp`;
   const handle = await open(temporary, 'w', 0o600);
@@ -101,6 +107,8 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       await writeJournal(file, record);
       stage = 'context'; record.stage = stage;
       await writeJournal(file,record);
+      const routeNotice=record.routeMode==='binding-fallback'
+        ? '引用消息的来源未登记，本次已回退到本群绑定的 Codex 会话处理。' : null;
       const prepared = record.routeError ? null : await context(item);
       const text = typeof prepared==='string' ? prepared : prepared?.text;
       stage = 'codex'; record.stage = stage;
@@ -115,8 +123,9 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       if (['TARGET_ARCHIVED','TARGET_UNAVAILABLE','TARGET_UNKNOWN','HOST_INTERACTION_REQUIRED',
         'COMPLETION_UNCONFIRMED','NOT_SUBMITTED','TURN_FAILED','TURN_INTERRUPTED'].includes(result.error?.code)) record.codexCode=result.error.code;
       // Never present unconfirmed/blocked turns as successfully completed.
-      const answer = record.routeError ?? resultText(result, record.requestId);
-      if (typeof answer !== 'string' || !answer.length) throw new Error('No final answer');
+      const baseAnswer = record.routeError ?? resultText(result, record.requestId);
+      if (typeof baseAnswer !== 'string' || !baseAnswer.length) throw new Error('No final answer');
+      const answer=routeNotice ? withPrefix(baseAnswer,routeNotice) : baseAnswer;
       record.status = 'replying';
       stage = 'reply'; record.stage = stage;
       const rendered = prepareReply(answer);
@@ -206,6 +215,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       record.autoUnarchive = route.autoUnarchive === true;
       if (route.error) record.routeError = route.error;
       if (route.code) record.routeCode = route.code;
+      if (route.routeMode) record.routeMode = route.routeMode;
       if (route.quotedMessageId) record.quotedMessageId = route.quotedMessageId;
       await writeJournal(file, record);
     });

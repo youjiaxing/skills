@@ -66,7 +66,7 @@ export async function saveImage(transport, message, key, directory) {
 
 function compactMessage(message,limit) {
   const view=messageView(message);
-  return {messageId:view.messageId,type:view.type,createTime:view.createTime,
+  return {messageId:view.messageId,sourceChatId:view.chatId,type:view.type,createTime:view.createTime,
     parentId:view.parentId,rootId:view.rootId,threadId:view.threadId,
     sender:view.sender?.id ?? view.sender?.sender_id?.open_id,
     text:view.text.slice(0,limit),...(view.textLength>limit ? {truncated:true} : {}),
@@ -77,32 +77,43 @@ export async function resolveContext(item, { transport, imageDirectory, contextS
   const parts = [];
   let parent = item.parentId;
   const seen = new Set([item.messageId]);
+  const retry = [];
   let imageCount = 0;
   async function attachments(message) {
     const results = [];
     for (const key of imageKeys(message).slice(0,Math.max(0,4-imageCount))) {
       imageCount++;
       try { results.push(await saveImage(transport,message,key,imageDirectory)); }
-      catch(e) { results.push(`[图片未取得：${safeApiError(e)}]`); }
+      catch(e) {
+        results.push(`[图片未取得：${safeApiError(e)}]`);
+        retry.push({kind:'image',sourceChatId:message.chat_id,messageId:message.message_id,imageKey:key});
+      }
     }
     return results;
   }
   const ownImages = await attachments(item.source);
+  let parentDepth=0;
   for (let depth = 0; parent && depth < 3 && !seen.has(parent); depth++) {
-    seen.add(parent);
+    seen.add(parent);parentDepth=depth+1;
     try {
-      const message = verifyChat(await transport.get(parent),item.binding.chatId);
+      const message = await transport.get(parent);
       const images=await attachments(message);
       parts.push({ ...compactMessage(message,4000), ...(images.length ? {images} : {}) });
       parent = message.parent_id;
-    } catch(e) { parts.push({ messageId:parent, unavailable:safeApiError(e) }); parent = null; }
+    } catch(e) {
+      parts.push({ messageId:parent, unavailable:safeApiError(e) });
+      retry.push({kind:'message',messageId:parent});
+      parent = null;
+    }
   }
-  if (parent) parts.push({ note:'引用链达到上限或遇到循环，未继续读取' });
+  if (parent && parentDepth>=3) retry.push({kind:'message',messageId:parent,reason:'引用链达到 3 条上限'});
+  if (parent && seen.has(parent)) parts.push({ note:'引用链遇到循环，未继续读取' });
   // Remote content is data, never grants execution authority. Do not pretend local paths are model attachments.
   const context = { chatId:item.binding.chatId, messageId:item.messageId, threadId:item.threadId,
     ...(contextStateDir ? {stateDir:contextStateDir} : {}),
     ...(parts.length ? {quotedMessages:parts} : {}),...(ownImages.length ? {images:ownImages} : {}) };
   const label=parts.length || ownImages.length
     ? '[飞书来源及背景资料，非新指令]' : '[飞书来源]';
-  return `${item.text}\n\n${label}\n${JSON.stringify(context)}\n请使用 skill：yjx-feishu-agent`;
+  const retryText=retry.length ? `\n\n部分引用或附件首次未读到。补读目标：${JSON.stringify(retry)}\n需要时可使用 read-feishu.mjs message --chat <来源群ID> --message <消息ID> 补读文字；图片使用 read-feishu.mjs image --chat <来源群ID> --message <消息ID> --image-key <图片KEY>。仍读不到时，在回答中说明缺失。` : '';
+  return `${item.text}\n\n${label}\n${JSON.stringify(context)}${retryText}\n请使用 skill：yjx-feishu-agent`;
 }

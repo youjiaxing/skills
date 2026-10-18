@@ -12,11 +12,11 @@
 
 多来源公共群可按直接引用选择 Codex 会话，见 [引用路由](routing.md)；引用展开只提供背景，不负责猜测或改变路由。
 
-引用通过 parent_id 逐层获取，最多3条，同群校验，保留原文为引用资料；带资料的入站仍有“非新指令”短标记。话题场景的 parent_id/root_id 可能均指话题根，不代表最近一条发言。链达到上限、读取失败或权限不足时显示缺失，不猜原文。
+引用通过 parent_id 逐层获取，最多 3 条，允许读取其他群的明确引用内容并保留真实 `sourceChatId` 作为资料；带资料的入站仍有“非新指令”短标记。话题场景的 parent_id/root_id 可能均指话题根，不代表最近一条发言。链达到上限、读取失败或权限不足时显示缺失，不猜原文。
 
 引用中的 text/post/interactive 展开可读文字，单条引用文本最多4000字符并标记截断。当前富文本或引用里的图片通过消息资源接口下载到状态目录 `feishu/<app hash>/images`，一条请求最多4张、单张10MB；不遍历下载整个群的资源。已撤回/删除消息只返回状态，不展示正文或下载其图片。
 
-路径会放入 Codex 请求作为图片查看工具的输入，不等于 App Server/queue 已收到多模态附件。Agent 需要实际用可用工具查看，与问题相关但无法查看时说明限制，不能声称看过。外部 Codex 缺少宿主工具时仍受 [Codex 限制](codex.md)约束。
+首次读取文字或图片失败时，入站上下文会提示 Agent 使用 `read-feishu.mjs message` / `image --chat SOURCE_CHAT` 按来源群、消息 ID 和图片 key 补读；能读多少用多少，仍无法读取时在回答中说明限制。路径会放入 Codex 请求作为图片查看工具的输入，不等于 App Server/queue 已收到多模态附件。Agent 需要实际用可用工具查看，不能仅凭路径声称看过。外部 Codex 缺少宿主工具时仍受 [Codex 限制](codex.md)约束。
 
 ## 查询命令
 
@@ -34,7 +34,7 @@ node skills/yjx-feishu-agent/scripts/read-feishu.mjs message --chat oc_GROUP --m
 node skills/yjx-feishu-agent/scripts/read-feishu.mjs image --chat oc_GROUP --message om_MESSAGE --image-key img_KEY
 ```
 
-均支持 `--state-dir PATH`，命令前后都可放该参数；默认复用桥接凭证。群必须已绑定，单条和资源查询必须验证消息属于该群；图片 key 需实际出现在该消息正文中。资源下载返回本地路径。状态目录可能含私密原图，应放仓库外。
+均支持 `--state-dir PATH`，命令前后都可放该参数；默认复用桥接凭证。history 要求群已绑定；message/image 可读取明确引用的来源群，但仍验证查询返回的消息确实属于传入的 `--chat`。图片 key 需实际出现在该消息正文中。资源下载返回本地路径。状态目录可能含私密原图，应放仓库外。
 
 history 每次1–50条，默认20条、按创建时间倒序，返回 hasMore/nextPageToken；要读完整范围需继续分页，不能把首屏当全群。时间参数为秒，消息创建时间为毫秒。普通群历史不含全部话题回复，需使用返回的 threadId 另查，话题容器不支持起止时间。查询仅覆盖平台对当前机器人可见的数据，群历史限制、入群时间和保密设置仍可能阻止读取。
 

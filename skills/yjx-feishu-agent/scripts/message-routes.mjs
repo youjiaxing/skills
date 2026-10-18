@@ -32,24 +32,39 @@ export async function withRoutes({stateDir, appId, chatId}, action) {
   } finally { await release(); }
 }
 
+export function routeState(route) {
+  if (!route) return {state:'missing'};
+  if (typeof route !== 'object' || Array.isArray(route)) return {state:'invalid'};
+  if (route.pending) return {state:'pending'};
+  if (!Object.hasOwn(route, 'sourceThreadId') || route.sourceThreadId === '') return {state:'invalid'};
+  if (route.sourceThreadId === null) return {state:'unregistered'};
+  try { return {state:'quoted',threadId:validateThreadId(route.sourceThreadId)}; }
+  catch { return {state:'invalid'}; }
+}
+
 export function checkRoute(route) {
-  if (!route || route.pending || !route.sourceThreadId) return null;
-  try { return validateThreadId(route.sourceThreadId); } catch { return null; }
+  const result=routeState(route);
+  return result.state==='quoted' ? result.threadId : null;
 }
 
 export function createMessageRouter(options) {
   return {
     async admit(item, persist) {
-      if (item.binding.quoteRouting === false || !item.parentId) {
-        return persist(item.binding.threadId ? {threadId:item.binding.threadId,autoUnarchive:false} :
-          {code:'DEFAULT_UNCONFIGURED',error:'本群尚未设置默认 Codex 会话，请引用一条已登记的推送消息并 @机器人。'});
-      }
+      const useDefault=routeMode => item.binding.threadId
+        ? {threadId:item.binding.threadId,autoUnarchive:false,routeMode}
+        : {code:'DEFAULT_UNCONFIGURED',routeMode:'blocked',
+          error:'本群尚未设置默认 Codex 会话，请引用一条已登记的推送消息并 @机器人。'};
+      if (item.binding.quoteRouting === false) return persist(useDefault('quote-disabled'));
+      if (!item.parentId) return persist(useDefault('default'));
       return withRoutes({...options,chatId:item.binding.chatId}, async data => {
         // Only the directly quoted message is authoritative. A later owner of
         // its root card must not steal replies belonging to the earlier owner.
-        const target = checkRoute(data.messages[item.parentId]);
-        return persist(target ? {threadId:target,autoUnarchive:true,quotedMessageId:item.parentId} :
-          {code:'QUOTE_SOURCE_UNAVAILABLE',error:'引用消息的来源未登记或投递仍待核查，本次未提交给 Codex；请在本机核对来源。'});
+        const route=routeState(data.messages[item.parentId]);
+        if (route.state==='quoted') return persist({threadId:route.threadId,autoUnarchive:true,
+          quotedMessageId:item.parentId,routeMode:'quoted'});
+        if (['missing','unregistered'].includes(route.state)) return persist(useDefault('binding-fallback'));
+        return persist({code:'QUOTE_SOURCE_UNAVAILABLE',routeMode:'blocked',
+          error:'引用消息的来源记录仍在更新或已损坏，本次未提交给 Codex；请在本机核查来源。'});
       });
     },
     async rememberReply(item, message, record) {

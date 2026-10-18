@@ -1,6 +1,6 @@
 # 消息诊断与并发
 
-按用户提供的飞书消息 ID 查询本地证据：
+按用户提供的飞书消息 ID 查询本地证据。对外汇报使用 [状态表述](status.md) 的证据边界：
 
 ```text
 node skills/yjx-feishu-agent/scripts/diagnose-message.mjs --message om_MESSAGE

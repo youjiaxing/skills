@@ -48,17 +48,18 @@ export function historyView(data,options) {
 export async function main(argv) {
   const options=parseReadArgs(argv);
   if (options.help) {
-    console.log('Usage: node read-feishu.mjs history|message|image --chat oc_ID [options]\nhistory: --limit 1..50 --page-token TOKEN --start-time SECONDS --end-time SECONDS; or --thread omt_ID\nmessage: --message om_ID\nimage: --message om_ID --image-key img_KEY\n--concise: compact JSON, 2000 text characters per message with explicit truncation\nAll commands: --state-dir PATH; reads only explicitly bound groups. No messages sent.'); return;
+    console.log('Usage: node read-feishu.mjs history|message|image --chat oc_ID [options]\nhistory: --limit 1..50 --page-token TOKEN --start-time SECONDS --end-time SECONDS; or --thread omt_ID\nmessage: --message om_ID\nimage: --message om_ID --image-key img_KEY\n--concise: compact JSON, 2000 text characters per message with explicit truncation\nAll commands: --state-dir PATH; history requires a bound group, message/image verify the explicit source group. No messages sent.'); return;
   }
   const stateDir=path.resolve(options.stateDir ?? defaultStateDir());
   const config=validateBindings(JSON.parse(await readFile(path.join(stateDir,'feishu/bindings.json'),'utf8')));
-  if (!config.bindings.some(b=>b.chatId===options.chatId)) throw new Error('Group is not bound');
   const credentials=await loadCredentials(stateDir), transport=readTransport(credentials);
   if (options.command === 'history') {
+    if (!config.bindings.some(b=>b.chatId===options.chatId)) throw new Error('Group is not bound');
     const data=await transport.list(options);
     console.log(JSON.stringify(historyView(data,options)));
   } else {
-    const message=verifyChat(await transport.get(options.messageId),options.chatId);
+    const message=await transport.get(options.messageId);
+    if (message.chat_id!==options.chatId) throw new Error('Message belongs to a different or unknown group');
     if (options.command === 'message') console.log(JSON.stringify(messageView(message,{concise:options.concise})));
     else console.log(JSON.stringify({ messageId:message.message_id, localPath:await saveImage(transport,message,options.imageKey,
       path.join(stateDir,'feishu',digest(credentials.appId),'images')) }));

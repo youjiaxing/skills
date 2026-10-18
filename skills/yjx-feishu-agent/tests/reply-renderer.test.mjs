@@ -2,11 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeReplyMarkdown, renderReply } from '../scripts/reply-renderer.mjs';
 
-test('ordinary answers become post content and supported formatting survives', () => {
-  const rendered = renderReply('# 结论\n\n**重点**：已完成\n\n- 一项\n- 二项');
+test('normalization preserves code spans and comparison operators', () => {
+  const normalized = normalizeReplyMarkdown('请使用 `List<T>`，条件 `x < y && y > z`。');
+  assert.match(normalized, /List<T>/);
+  assert.match(normalized, /x < y && y > z/);
+});
+
+test('simple tables retain every cell when converted to bullets', () => {
+  const normalized = normalizeReplyMarkdown('| 项 | 值 |\n| --- | --- |\n| A | B |');
+  assert.match(normalized, /项：A/);
+  assert.match(normalized, /值：B/);
+});
+
+test('long post replies are UTF-8 bounded and explain truncation', () => {
+  const rendered = renderReply('中'.repeat(10000));
+  const text = rendered.content.zh_cn.content[0][0].text;
+  assert.ok(Buffer.byteLength(text, 'utf8') <= 12000);
+  assert.match(text, /完整内容请在 Codex 查看/);
+});
+
+test('ordinary answers use the outbound post protocol shape', () => {
+  const rendered = renderReply('普通回复');
   assert.equal(rendered.msgType, 'post');
-  assert.match(rendered.content.zh_cn.content_v2[0][0].content, /\*\*结论\*\*/);
-  assert.match(rendered.content.zh_cn.content_v2[0][0].content, /\*\*重点\*\*/);
+  assert.equal(rendered.content.zh_cn.content[0][0].tag, 'md');
+  assert.equal(typeof rendered.content.zh_cn.content[0][0].text, 'string');
 });
 
 test('code and logs can explicitly remain literal text', () => {
@@ -30,12 +49,6 @@ test('structured content is promoted by content shape without a length threshold
   assert.equal(rendered.msgType,'interactive');
 });
 
-test('unsupported headings and excess spacing are normalized for post fallback', () => {
-  const text = normalizeReplyMarkdown('### 标题\n\n\n正文\n\n|项|值|\n|-|-|\n|A|B|');
-  assert.match(text, /\*\*标题\*\*/);
-  assert.doesNotMatch(text, /###/);
-  assert.doesNotMatch(text, /\n{3,}/);
-});
 
 test('oversized or empty card safely falls back to post', () => {
   const rendered = renderReply(`<!-- feishu:card -->\n${'段落 '.repeat(12000)}`);

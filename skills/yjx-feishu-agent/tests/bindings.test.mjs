@@ -20,10 +20,10 @@ test('quote routing changes only its explicit group and preserves fallback and a
   assert.throws(()=>setQuoteRouting(config,{chatId:'oc_other',enabled:'true'}));
   assert.throws(()=>setQuoteRouting(config,{chatId:'oc_a',enabled:'yes'}));
 });
-test('quote-only authorization needs no default thread, but disabled routing requires one',()=>{
+test('quote-only and quote-disabled authorization can be saved without a default thread',()=>{
   const quoteOnly={version:1,bindings:[{chatId:'oc_quote',users:['ou_owner']}]};
   assert.doesNotThrow(()=>validateBindings(quoteOnly));
-  assert.throws(()=>setQuoteRouting(quoteOnly,{chatId:'oc_quote',enabled:'false'}),/default thread/);
+  assert.doesNotThrow(()=>setQuoteRouting(quoteOnly,{chatId:'oc_quote',enabled:'false'}));
   assert.throws(()=>validateBindings({version:1,bindings:[{chatId:'oc_quote',users:[]}]}),/allowlist/);
 });
 test('rebind checks old identity and preserves allowlists and unrelated bindings', async () => {

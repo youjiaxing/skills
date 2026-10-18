@@ -1,14 +1,36 @@
 const DIRECTIVE = /^\s*<!--[ \t]*feishu:(text|post|card)[ \t]*-->\s*/i;
 
+function truncateUtf8(text, maxBytes, suffix = '\n\n（回答过长，完整内容请在 Codex 查看。）') {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  const limit = Math.max(0, maxBytes - suffixBytes);
+  let end = Math.min(text.length, limit);
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > limit) end -= 1;
+  return `${text.slice(0, end)}${suffix}`;
+}
+
 export function normalizeReplyMarkdown(input) {
   let text = String(input ?? '').replaceAll('\r\n','\n').trim();
-  // Feishu markdown supports the useful subset below. Turn raw HTML into text
-  // while retaining links; never send unsupported HTML as if it were Markdown.
-  text = text.replace(/<((?!https?:\/\/)[^>]+)>/gi, (_, tag) => tag.startsWith('br') ? '\n' : '');
+  // Keep code and inline comparisons literal while normalizing the supported subset.
+  const protectedParts = [];
+  text = text.replace(/```[\s\S]*?```|`[^`\n]+`/g, value => {
+    const key = `\u0000FEISHU_CODE_${protectedParts.length}\u0000`;
+    protectedParts.push(value);
+    return key;
+  });
+  // Strip only recognizable HTML tags. A bare < or > remains ordinary text.
+  text = text.replace(/<\/?(?:br|p|div|span|strong|em|b|i|u)(?:\s[^>]*)?>/gi, match =>
+    /^<br\b/i.test(match) ? '\n' : '');
   text = text.replace(/^\s*#{1,6}\s+(.+)$/gm, '**$1**');
-  text = text.replace(/^(\|.+\|\s*\n)(?:\|?\s*:?-+:?\s*\|)+\s*\n((?:\|.+\|\s*\n?)+)/gm,
-    (_, header, rows) => `${header.split('|').filter(Boolean).map(x=>x.trim()).map(x=>`- ${x}`).join('\n')}\n${rows}`);
+  // Convert simple tables into labeled bullets without dropping cell values.
+  text = text.replace(/((?:^\|[^\n]+\|[ \t]*\n?)+)/gm, block => {
+    const rows = block.trim().split('\n').map(row => row.split('|').slice(1, -1).map(cell => cell.trim()));
+    if (rows.length < 2 || !rows[1].every(cell => /^:?-{1,}:?$/.test(cell))) return block;
+    const headers = rows[0];
+    return rows.slice(2).map(row => `- ${row.map((cell, i) => headers[i] ? `${headers[i]}：${cell}` : cell).join('；')}`).join('\n') + '\n';
+  });
   text = text.replace(/\n{3,}/g, '\n\n');
+  text = text.replace(/\u0000FEISHU_CODE_(\d+)\u0000/g, (_, index) => protectedParts[Number(index)]);
   return text;
 }
 
@@ -45,11 +67,11 @@ export function renderReply(answer) {
   const requested = match?.[1]?.toLowerCase() ?? null;
   const text = normalizeReplyMarkdown(match ? original.slice(match[0].length) : original);
   const mode = requested ?? classify(text);
-  const bounded = text.length > 12000 ? `${text.slice(0, 12000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : text;
-  if (mode === 'text') return { msgType: 'text', content: { text: (match ? original.slice(match[0].length) : original).trim().slice(0, 12000) }, mode };
+  const bounded = truncateUtf8(text, 12000);
+  if (mode === 'text') return { msgType: 'text', content: { text: truncateUtf8((match ? original.slice(match[0].length) : original).trim(), 12000) }, mode };
   if (mode === 'card') {
     const card = cardContent(text);
     if (card && Buffer.byteLength(JSON.stringify(card), 'utf8') <= 30000) return { msgType: 'interactive', content: card, mode };
   }
-  return { msgType: 'post', content: { zh_cn: { content_v2: [[{ tag: 'md', content: bounded }]] } }, mode: 'post' };
+  return { msgType: 'post', content: { zh_cn: { content: [[{ tag: 'md', text: bounded }]] } }, mode: 'post' };
 }

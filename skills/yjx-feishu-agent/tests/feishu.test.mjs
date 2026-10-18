@@ -158,3 +158,16 @@ test('admission rejects bursts before retaining an unbounded event backlog', asy
   assert.equal(results.filter((result) => result.status === 'rejected').length, 8);
   assert.equal(f.calls.length, 32);
 });
+
+test('binding fallback adds a fixed notice only to that route',async t=>{
+  const f=await fixture(t,{admitRoute:async(item,persist)=>persist({threadId:config.bindings[0].threadId,autoUnarchive:false,routeMode:item.parentId?'binding-fallback':'default'}),
+    send:async()=>({status:'completed',answer:'answer'})});
+  const e=event('om_fallback');e.message.parent_id='om_unregistered';
+  await f.receiver.handle(e);await f.receiver.handle(event('om_default'));await f.receiver.stop();
+  assert.match(f.replies[0][1],/来源未登记.*回退/);
+  assert.doesNotMatch(f.replies[1][1],/回退/);
+});
+
+test('quote-disabled groups can start without a default and block per message',()=>{
+  validateBindings({version:1,bindings:[{chatId:'oc_disabled',users:['ou_user'],quoteRouting:false}]});
+});
