@@ -17,6 +17,7 @@ export const HELP = `Usage:
   node outbound.mjs recheck --request-id ID [--state-dir PATH]
   node outbound.mjs reconcile --request-id ID [--state-dir PATH]
 JSON: requestId, msgType (text/post/interactive), content object.
+sourceThreadId: explicit local Codex chat UUID for quote routing; never inferred.
 send: chatId; optional requiresUpdate (confirmed update request ID).
 update: targetRequestId (original send ID), expectedRevision, msgType=interactive.
 images: {name: local path}; use "local:name" in img_key/image_key.

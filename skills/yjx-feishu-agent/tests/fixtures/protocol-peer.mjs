@@ -8,6 +8,7 @@ const mode = process.env.PEER_MODE;
 const threadId = process.env.PEER_THREAD;
 let turn;
 let polls = 0;
+let restored = false;
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const respond = (id, result) => send({ id, result });
 const log = (method) => appendFileSync(path.join(directory, 'calls.jsonl'), `${JSON.stringify({ method, at: Date.now() })}\n`);
@@ -31,7 +32,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   } else if (method === 'thread/read') {
     if (mode === 'target-unavailable') send({ id, error: { code: -32600, message: `thread not loaded: ${threadId}` } });
-    else respond(id, { thread: { id: threadId, path: mode === 'target-unknown' ? null : `/codex/${mode === 'target-archived' ? 'archived_sessions' : 'sessions'}/test.jsonl` } });
+    else respond(id, { thread: { id: threadId, path: mode === 'target-unknown' ? null : `/codex/${(mode === 'target-archived' || mode.startsWith('restore-') && !restored) ? 'archived_sessions' : 'sessions'}/test.jsonl` } });
+  } else if (method === 'thread/unarchive') {
+    if (mode === 'restore-error') send({id,error:{code:-32600,message:'Restore unavailable'}});
+    else {restored = mode !== 'restore-still-archived'; respond(id,{thread:{id:mode === 'restore-wrong-id' ? 'wrong' : threadId}});}
   } else if (method === 'thread/resume') {
     if (mode.startsWith('queue')) send({ id, error: { code: -32600, message: 'thread already has an active writer' } });
     else if (mode === 'denied') send({ id, error: { code: -32600, message: 'Access denied' } });

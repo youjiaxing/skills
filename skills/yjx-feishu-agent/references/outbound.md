@@ -51,6 +51,8 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-
 
 图片路径相对输入 JSON 解析；单图非空且不超过10MB。摘要和上传使用同一份字节。已有飞书图片标识可直接填入，不必再上传；无图则省略 images。首发与更新自动显式设置 `config.update_multi:true`，拒绝独享卡片。文本用 `msgType:text`、`content:{"text":"提醒正文"}`；富文本按官方 post 结构提供。
 
+需要引用回到发送会话时，在 send/update 输入显式提供 `sourceThreadId`（当前已授权的本机 Codex 聊天 UUID），见 [引用路由](routing.md)。调用方从实际会话标识取得它，不从群默认绑定或最近聊天猜测；该字段参与请求指纹，并在消息写调用前保存。未提供时仍可正常投递，但不会猜测来源；更新已登记卡片时缺少来源会令新版本不可路由。来源在本地成功记账后生效，结果未知时暂停新引用；恢复只补原请求的元数据，不换编号重发。
+
 更新 JSON：使用新的 requestId、`targetRequestId` 为最初发送编号、`expectedRevision` 为最后确认版本，提供 `msgType:interactive` 及完整 content/images，省略 chatId。初始版本1，确认更新后加1。只操作本工具当前应用下已记账的原卡片；不导入任意消息 ID。旧版本和前次结果未知的更新拒绝。
 
 另发提醒使用独立 send 编号，可设置 `requiresUpdate` 为更新编号。命令在原卡片锁内确认它为同应用、同群且仍为最新的成功更新，再发送提醒；不能依赖失败或过时更新。重复相同输入返回存档；若原本地图被移动或修改，先用 status 核对，不换编号重发。

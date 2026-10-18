@@ -13,6 +13,30 @@ import { parseArgs } from '../scripts/agent.mjs';
 const THREAD = '12345678-1234-1234-1234-123456789abc';
 const fixture = fileURLToPath(new URL('./fixtures/protocol-peer.mjs', import.meta.url));
 
+test('explicit quote target restores its exact archived thread before one submission', async t => {
+  const c=await context(t,'restore-ok');
+  const result=await sendCodex({...c.input,autoUnarchive:true},c.dependencies);
+  assert.equal(result.status,'completed');assert.equal(result.restoreStatus,'restored');
+  const calls=(await readFile(path.join(c.directory,'calls.jsonl'),'utf8')).trim().split('\n').map(x=>JSON.parse(x).method);
+  assert.ok(calls.indexOf('thread/unarchive')<calls.indexOf('thread/resume'));
+  assert.equal(calls.filter(x=>x==='thread/read').length,2);
+  assert.equal(calls.filter(x=>x==='turn/start').length,1);
+  await sendCodex({...c.input,autoUnarchive:true},c.dependencies);
+  assert.equal(c.counts().clients,1);
+});
+
+test('uncertain or mismatched restoration never starts a turn or queues and is not replayed',async t=>{
+  for (const mode of ['restore-error','restore-wrong-id','restore-still-archived']) {
+    const c=await context(t,mode);
+    const result=await sendCodex({...c.input,autoUnarchive:true},c.dependencies);
+    assert.equal(result.submitted,false);assert.equal(result.status,'blocked');
+    assert.equal(c.counts().queueCalls,0);
+    const calls=await readFile(path.join(c.directory,'calls.jsonl'),'utf8');
+    assert.doesNotMatch(calls,/turn\/start|thread\/resume/);
+    assert.equal((await sendCodex({...c.input,autoUnarchive:true},c.dependencies)).deduplicated,true);
+  }
+});
+
 test('completed persisted turns accept only terminal unphased text as fallback', () => {
   const terminal = { type: 'agentMessage', phase: null, text: 'persisted-result' };
   const turn = { status: 'completed', completedAt: 123, items: [terminal] };

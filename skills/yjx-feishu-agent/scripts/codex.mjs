@@ -102,6 +102,18 @@ async function observeQueued(client, record, options, deadline) {
 
 async function execute(client, record, message, options, deadline, dependencies) {
   record.target = await readTarget(client, record.threadId, deadline);
+  if (record.target.state === 'archived' && options.autoUnarchive === true) {
+    // The durable request is already reserved and the exact thread is locked.
+    // A lost restore response never becomes permission to submit or replay.
+    record.restoreStatus = 'restoring';
+    await saveRecord(options.stateDir,record);
+    const restored = await client.call('thread/unarchive', {threadId:record.threadId}, deadline);
+    if (restored.thread?.id !== record.threadId) throw new Error('Unarchive returned a different thread');
+    record.target = await readTarget(client,record.threadId,deadline);
+    if (record.target.state !== 'readable') throw new Error('Restored target is not confirmed active');
+    record.restoreStatus = 'restored';
+    await saveRecord(options.stateDir,record);
+  }
   if (record.target.state !== 'readable') {
     record.status = 'blocked';
     record.error = { code: `TARGET_${record.target.state.toUpperCase()}`, message: 'Target is not confirmed active; no message submitted' };

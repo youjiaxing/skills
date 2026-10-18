@@ -24,14 +24,23 @@ export async function rebind(config, { chatId, expectedThread, threadId }, check
   return validateBindings(next);
 }
 
+export function setQuoteRouting(config, {chatId,enabled}) {
+  validateBindings(config);
+  if (!['true','false'].includes(enabled)) throw new Error('enabled must be true or false');
+  const next=structuredClone(config),binding=next.bindings.find(b=>b.chatId===chatId);
+  if (!binding) throw new Error('Group not bound');
+  binding.quoteRouting=enabled==='true';
+  return validateBindings(next);
+}
+
 export async function main(argv) {
   const [command, ...args] = argv;
   if (!command || command === '--help') {
-    console.log('Usage: node bindings.mjs list|check [--chat oc_ID] [--state-dir PATH]\nRebind (receiver must be stopped): rebind --chat oc_ID --expected-thread OLD_UUID --thread NEW_UUID [--state-dir PATH]\nNever creates/unarchives chats or replays requests.');
+    console.log('Usage: node bindings.mjs list|check [--chat oc_ID] [--state-dir PATH]\nRebind (receiver must be stopped): rebind --chat oc_ID --expected-thread OLD_UUID --thread NEW_UUID [--state-dir PATH]\nQuote routing (receiver must be stopped): quote-routing --chat oc_ID --enabled true|false [--state-dir PATH]\nNever creates/unarchives chats or replays requests.');
     return;
   }
-  if (!['list','check','rebind'].includes(command)) throw new Error('Unknown command');
-  const keys = { '--chat': 'chatId', '--expected-thread': 'expectedThread', '--thread': 'threadId', '--state-dir': 'stateDir' };
+  if (!['list','check','rebind','quote-routing'].includes(command)) throw new Error('Unknown command');
+  const keys = { '--chat': 'chatId', '--expected-thread': 'expectedThread', '--thread': 'threadId', '--state-dir': 'stateDir', '--enabled':'enabled' };
   const options = {};
   while (args.length) {
     const key = keys[args.shift()], value = args.shift();
@@ -39,9 +48,10 @@ export async function main(argv) {
     options[key] = value;
   }
   if (command !== 'rebind' && (options.expectedThread || options.threadId)) throw new Error('Unexpected mutation arguments');
+  if (command !== 'quote-routing' && options.enabled) throw new Error('Unexpected quote-routing arguments');
   const stateDir = path.resolve(options.stateDir ?? defaultStateDir());
   const file = path.join(stateDir, 'feishu', 'bindings.json');
-  if (command !== 'rebind') {
+  if (['list','check'].includes(command)) {
     const config = validateBindings(JSON.parse(await readFile(file, 'utf8')));
     const selected = config.bindings.filter(b => !options.chatId || b.chatId === options.chatId);
     if (!selected.length) throw new Error('Group not bound');
@@ -56,7 +66,7 @@ export async function main(argv) {
   if (!release) throw new Error('Stop receiver and inspect leftover lock first');
   try {
     const config = JSON.parse(await readFile(file, 'utf8'));
-    const next = await rebind(config, options, inspectTarget);
+    const next = command==='rebind' ? await rebind(config, options, inspectTarget) : setQuoteRouting(config,options);
     const history = path.join(stateDir, 'feishu', 'binding-history');
     await mkdir(history, { recursive: true, mode: 0o700 });
     const backup = path.join(history, `${Date.now()}-${randomUUID()}.json`);
@@ -64,7 +74,8 @@ export async function main(argv) {
     try { await handle.writeFile(JSON.stringify({ previous: config, next, createdAt: new Date().toISOString() })); await handle.sync(); }
     finally { await handle.close(); }
     await writeJournal(file, next);
-    console.log(JSON.stringify({ status: 'rebound', chatId: options.chatId, threadId: options.threadId, history: backup, restartRequired: true }));
+    console.log(JSON.stringify({ status: command==='rebind' ? 'rebound' : 'configured', chatId: options.chatId,
+      ...(command==='rebind' ? {threadId:options.threadId} : {quoteRouting:options.enabled==='true'}),history: backup, restartRequired: true }));
   } finally { await release(); }
 }
 try {

@@ -24,6 +24,7 @@ export function validateBindings(config) {
     if (!/^oc_[\w]+$/.test(binding.chatId) || groups.has(binding.chatId)) throw new Error('Invalid or duplicate group binding');
     groups.add(binding.chatId);
     validateThreadId(binding.threadId);
+    if (binding.quoteRouting !== undefined && typeof binding.quoteRouting !== 'boolean') throw new Error('quoteRouting must be boolean');
     if (!Array.isArray(binding.users) || !binding.users.length || binding.users.some((id) => !/^ou_[\w]+$/.test(id))) {
       throw new Error('Each group requires an explicit user allowlist');
     }
@@ -61,7 +62,8 @@ export async function writeJournal(file, record) {
 // Single receiver owns this directory. ACK waits for admission to be persisted,
 // not for the Codex turn. Interrupted journals are retained for human recovery.
 export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, context = async item => item.text,
-  confirmContext = async () => {}, confirmReply = async () => {}, log = () => {} }) {
+  admitRoute = async (item,persist) => persist({threadId:item.binding.threadId,autoUnarchive:false}),
+  confirmReply = async () => {}, log = () => {} }) {
   const directory = path.join(stateDir, 'feishu', digest(appId), 'messages');
   const queue = [];
   let working = false;
@@ -79,24 +81,23 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
         try {
           record.status = 'processing';
           await writeJournal(file, record);
-          const prepared = await context(item);
-          const text = typeof prepared==='string' ? prepared : prepared.text;
-          const result = await send({ threadId: binding.threadId, message: text, requestId: record.requestId,
-            stateDir, codex: config.codex, cwd: config.cwd, timeoutMs: 180000 });
+          const prepared = record.routeError ? null : await context(item);
+          const text = typeof prepared==='string' ? prepared : prepared?.text;
+          const result = record.routeError ? {status:'blocked'} : await send({ threadId: record.threadId, message: text, requestId: record.requestId,
+            autoUnarchive:record.autoUnarchive, stateDir, codex: config.codex, cwd: config.cwd, timeoutMs: 180000 });
           record.codexStatus = result.status;
-          if (result.status==='completed') {
-            try { await confirmContext(prepared,item); }
-            catch { log({type:'context-warning',requestId:record.requestId,stage:'confirm'}); }
-          }
           // Never present unconfirmed/blocked turns as successfully completed.
-          const answer = resultText(result, record.requestId);
+          const answer = record.routeError ?? resultText(result, record.requestId);
           if (typeof answer !== 'string' || !answer.length) throw new Error('No final answer');
           record.status = 'replying';
           await writeJournal(file, record); // A lost API response must not trigger another reply.
           const sent = await reply(record.messageId, answer, record.requestId);
-          if (result.status==='completed' && sent?.message_id) {
-            try { await confirmReply(item,sent); }
-            catch { log({type:'context-warning',requestId:record.requestId,stage:'reply'}); }
+          if (sent?.message_id) {
+            record.replyMessageId = sent.message_id;
+            await writeJournal(file,record);
+          }
+          if (!record.routeError && sent?.message_id) {
+            await confirmReply(item,sent,record);
           }
           record.status = 'replied';
           await writeJournal(file, record);
@@ -126,7 +127,13 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
     const record = { version: 1, requestId, messageId: item.messageId, chatId: item.binding.chatId,
       threadId: item.binding.threadId, parentId:item.parentId, rootId:item.rootId,
       messageType:item.source.message_type, status: 'accepted', createdAt: new Date().toISOString() };
-    await writeJournal(file, record);
+    await admitRoute(item, async route => {
+      record.threadId = route.threadId ?? null;
+      record.autoUnarchive = route.autoUnarchive === true;
+      if (route.error) record.routeError = route.error;
+      if (route.quotedMessageId) record.quotedMessageId = route.quotedMessageId;
+      await writeJournal(file, record);
+    });
     queue.push({ record, file, item, binding: item.binding });
     if (!working) worker = drain();
   }

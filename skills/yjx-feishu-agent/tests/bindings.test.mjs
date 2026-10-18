@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rebind } from '../scripts/bindings.mjs';
+import { rebind, setQuoteRouting } from '../scripts/bindings.mjs';
 import { resultText } from '../scripts/feishu-core.mjs';
 import { readTarget } from '../scripts/target.mjs';
 import { RpcError } from '../scripts/app-server.mjs';
@@ -10,6 +10,15 @@ const config = { version: 1, cwd: '/workspace', bindings: [
   { chatId: 'oc_a', users: ['ou_owner'], threadId: old },
   { chatId: 'oc_b', users: ['ou_second'], threadId: next },
 ] };
+
+test('quote routing changes only its explicit group and preserves fallback and allowlist',()=>{
+  const changed=setQuoteRouting(config,{chatId:'oc_a',enabled:'true'});
+  assert.deepEqual(changed.bindings[0],{...config.bindings[0],quoteRouting:true});
+  assert.deepEqual(changed.bindings[1],config.bindings[1]);
+  assert.equal(config.bindings[0].quoteRouting,undefined);
+  assert.throws(()=>setQuoteRouting(config,{chatId:'oc_other',enabled:'true'}));
+  assert.throws(()=>setQuoteRouting(config,{chatId:'oc_a',enabled:'yes'}));
+});
 test('rebind checks old identity and preserves allowlists and unrelated bindings', async () => {
   const options = { chatId: 'oc_a', expectedThread: old, threadId: next };
   const result = await rebind(config, options, async () => ({ state: 'readable' }));

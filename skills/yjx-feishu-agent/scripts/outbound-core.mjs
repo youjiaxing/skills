@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { lockThread, validateRequestId } from './state.mjs';
+import { validateThreadId } from './codex.mjs';
+import { withRoutes } from './message-routes.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v)
@@ -39,6 +41,7 @@ export function outboundPaths(stateDir, appId) {
 }
 
 export async function prepareContent(input, directory = process.cwd()) {
+  if (input.sourceThreadId !== undefined) validateThreadId(input.sourceThreadId);
   if (!['text', 'post', 'interactive'].includes(input.msgType)) throw new Error('msgType must be text, post or interactive');
   if (!input.content || typeof input.content !== 'object' || Array.isArray(input.content)) throw new Error('content must be a JSON object');
   const content = JSON.parse(JSON.stringify(input.content));
@@ -137,28 +140,39 @@ export async function reconcileOutbound({stateDir,appId,requestId}) {
     if (!releaseTarget) throw new Error('Target locked; inspect owner before recovery');
     let target;
     try { target = await json(paths.target(targetId)); } catch(e) { if(e.code!=='ENOENT')throw e; }
-    const revision = record.revision ?? (record.operation==='send' ? 1 : record.expectedRevision+1);
-    if (!Number.isSafeInteger(revision) || revision<1) throw new Error('Unknown revision');
-    const next = {chatId:record.chatId,messageId,msgType:record.msgType,revision,
-      content:record.content,lastRequestId:requestId,pending:null};
-    if (target) {
-      const same = target.lastRequestId===requestId && target.revision===revision &&
-        target.messageId===messageId && target.chatId===record.chatId &&
-        canonical(target.content)===canonical(record.content);
-      const predecessor = record.operation==='update' && target.revision===revision-1 &&
-        target.messageId===messageId && target.chatId===record.chatId;
-      if ((!same && !predecessor) || (target.pending && target.pending!==requestId)) {
-        throw new Error('Target changed; preserve current revision and pending gate');
+    return await withRoutes({stateDir,appId,chatId:record.chatId},async (routing,saveRoutes) => {
+      const revision = record.revision ?? (record.operation==='send' ? 1 : record.expectedRevision+1);
+      if (!Number.isSafeInteger(revision) || revision<1) throw new Error('Unknown revision');
+      const next = {chatId:record.chatId,messageId,msgType:record.msgType,revision,
+        content:record.content,lastRequestId:requestId,pending:null,
+        ...(record.sourceThreadId ? {sourceThreadId:record.sourceThreadId} : {})};
+      const previousRoute = routing.messages[messageId];
+      if (previousRoute?.pending && previousRoute.pending !== requestId) throw new Error('Another routing update is unresolved');
+      const routeReady = previousRoute?.requestId===requestId && !previousRoute.pending &&
+        previousRoute.sourceThreadId===(record.sourceThreadId ?? null);
+      if (target) {
+        const same = target.lastRequestId===requestId && target.revision===revision &&
+          target.messageId===messageId && target.chatId===record.chatId &&
+          canonical(target.content)===canonical(record.content);
+        const predecessor = record.operation==='update' && target.revision===revision-1 &&
+          target.messageId===messageId && target.chatId===record.chatId;
+        if ((!same && !predecessor) || (target.pending && target.pending!==requestId)) {
+          throw new Error('Target changed; preserve current revision and pending gate');
+        }
+        if (same && !target.pending && record.status==='sent' && (!record.sourceThreadId && !previousRoute || routeReady)) {
+          return {requestId,status:'sent',messageId,revision,reconciled:false,retried:false};
+        }
+      } else if (record.operation!=='send') throw new Error('Update target missing');
+      await save(paths.target(targetId),{...next,pending:requestId});
+      await save(paths.request(requestId),{...record,status:'sent',messageId,revision,
+        reconciledAt:new Date().toISOString()});
+      await save(paths.target(targetId),next);
+      if (record.sourceThreadId || previousRoute) {
+        routing.messages[messageId]={sourceThreadId:record.sourceThreadId ?? null,requestId,kind:'outbound',pending:null};
+        await saveRoutes();
       }
-      if (same && !target.pending && record.status==='sent') {
-        return {requestId,status:'sent',messageId,revision,reconciled:false,retried:false};
-      }
-    } else if (record.operation!=='send') throw new Error('Update target missing');
-    await save(paths.target(targetId),{...next,pending:requestId});
-    await save(paths.request(requestId),{...record,status:'sent',messageId,revision,
-      reconciledAt:new Date().toISOString()});
-    await save(paths.target(targetId),next);
-    return {requestId,status:'sent',messageId,revision,reconciled:true,retried:false};
+      return {requestId,status:'sent',messageId,revision,reconciled:true,retried:false};
+    });
   } finally { if(releaseTarget)await releaseTarget();await release(); }
 }
 
@@ -208,64 +222,88 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
       const latest = await json(paths.target(dependency.targetRequestId));
       if (latest.pending || latest.lastRequestId !== dependency.requestId) throw new Error('Required update is no longer the confirmed latest revision');
     }
-    const imageDigests = Object.fromEntries(Object.entries(prepared.images)
-      .map(([name, image]) => [name, image.digest]));
-    const record = { version: 2, requestId: id, operation: input.operation, fingerprint: prepared.fingerprint,
-      chatId: target?.chatId ?? input.chatId, targetRequestId: targetId, status: 'preparing',
-      createdAt: new Date().toISOString(), submitted: false, msgType: input.msgType,
-      ...(input.operation==='update' ? {expectedRevision:input.expectedRevision} : {}),
-      ...(target ? {targetMessageId:target.messageId} : {}),
-      content: prepared.content, imageDigests, images: Object.fromEntries(Object.entries(input.images ?? {})
-        .map(([name, file]) => [name, path.relative(directory, path.resolve(directory, file))])) };
-    await save(paths.request(id), record);
-    if (target) { target.pending = id; await save(paths.target(targetId), target); }
-    try {
-      const keys = {};
-      for (const [name, image] of Object.entries(prepared.images)) keys[name] = await transport.upload(image.bytes);
-      const content = replaceImages(prepared.content, keys);
-      if (input.msgType === 'interactive' && Buffer.byteLength(JSON.stringify(content), 'utf8') > 30000) {
-        throw new Error('Card content exceeds 30 KB');
+    return await withRoutes({stateDir,appId,chatId:target?.chatId ?? input.chatId},async (routing,saveRoutes) => {
+      const previousRoute = target ? routing.messages[target.messageId] : undefined;
+      if (previousRoute?.pending) throw new Error('Previous message routing unresolved');
+      const imageDigests = Object.fromEntries(Object.entries(prepared.images)
+        .map(([name, image]) => [name, image.digest]));
+      const record = { version: 2, requestId: id, operation: input.operation, fingerprint: prepared.fingerprint,
+        chatId: target?.chatId ?? input.chatId, targetRequestId: targetId, status: 'preparing',
+        createdAt: new Date().toISOString(), submitted: false, msgType: input.msgType,
+        ...(input.sourceThreadId ? {sourceThreadId:validateThreadId(input.sourceThreadId)} : {}),
+        ...(input.operation==='update' ? {expectedRevision:input.expectedRevision} : {}),
+        ...(target ? {targetMessageId:target.messageId} : {}),
+        content: prepared.content, imageDigests, images: Object.fromEntries(Object.entries(input.images ?? {})
+          .map(([name, file]) => [name, path.relative(directory, path.resolve(directory, file))])) };
+      await save(paths.request(id), record);
+      if (target) { target.pending = id; await save(paths.target(targetId), target); }
+      if (target && (record.sourceThreadId || previousRoute)) {
+        routing.messages[target.messageId]={...previousRoute,pending:id};
+        await saveRoutes();
       }
-      record.content = content;
-      record.status = 'submitting'; record.submitted = true;
-      record.firstSubmittedAt = new Date().toISOString();
-      await save(paths.request(id), record);
-      const uuid = hash(`${appId}:${id}`).slice(0,32);
-      const messageId = target ? await transport.update(target.messageId, content) :
-        await transport.send(record.chatId, input.msgType, content, uuid);
-      record.acknowledgement = {messageId:target?.messageId ?? messageId,receivedAt:new Date().toISOString()};
-      await save(paths.request(id),record);
-      const next = { chatId: record.chatId, messageId: target?.messageId ?? messageId, msgType: input.msgType,
-        revision: (target?.revision ?? 0) + 1, content, lastRequestId: id, pending: null };
-      // Leave an unresolved gate if either journal write fails after an external effect.
-      await save(paths.target(targetId), { ...next, pending: id });
-      record.status = 'sent'; record.messageId = next.messageId; record.revision = next.revision;
-      record.confirmedAt = new Date().toISOString();
-      await save(paths.request(id), record);
-      await save(paths.target(targetId), next);
-    } catch (error) {
-      // Only a verified invalid-card rejection proves this message call had no effect.
-      // Unknown business errors, HTTP failures and local commit failures stay unresolved.
-      const apiCode = Number.isSafeInteger(error?.apiCode) ? error.apiCode
-        : Number.isSafeInteger(error?.response?.data?.code) ? error.response.data.code : null;
-      const messageCalled = record.submitted;
-      const rejected = !record.acknowledgement && messageCalled && apiCode === 230099;
-      record.status = messageCalled && !rejected ? 'unconfirmed' : 'blocked';
-      record.submitted = record.status === 'unconfirmed';
-      if (record.status==='blocked') record.failureProof = {
-        kind:rejected ? 'provider-rejected' : 'message-not-called',
-        ...(rejected ? {apiCode} : {}),recordedAt:new Date().toISOString()};
-      record.error = { code: apiCode, rejected,
-        stage: messageCalled ? 'submit' : 'prepare',
-        message: record.status === 'unconfirmed'
-          ? 'Delivery unknown; inspect message and journal, do not resend'
-          : rejected ? 'Provider rejected the request; no message submitted'
-          : 'Preparation failed; no message submitted' };
-      await save(paths.request(id), record);
-      // No message side effect; allow a corrected new operation.
-      if (target && !record.submitted) { target.pending = null; await save(paths.target(targetId), target); }
-    }
-    return record;
+      try {
+        const keys = {};
+        for (const [name, image] of Object.entries(prepared.images)) keys[name] = await transport.upload(image.bytes);
+        const content = replaceImages(prepared.content, keys);
+        if (input.msgType === 'interactive' && Buffer.byteLength(JSON.stringify(content), 'utf8') > 30000) {
+          throw new Error('Card content exceeds 30 KB');
+        }
+        record.content = content;
+        record.status = 'submitting'; record.submitted = true;
+        record.firstSubmittedAt = new Date().toISOString();
+        await save(paths.request(id), record);
+        const uuid = hash(`${appId}:${id}`).slice(0,32);
+        const messageId = target ? await transport.update(target.messageId, content) :
+          await transport.send(record.chatId, input.msgType, content, uuid);
+        record.acknowledgement = {messageId:target?.messageId ?? messageId,receivedAt:new Date().toISOString()};
+        await save(paths.request(id),record);
+        if (record.sourceThreadId || previousRoute) {
+          routing.messages[record.acknowledgement.messageId]={sourceThreadId:record.sourceThreadId ?? null,
+            requestId:id,kind:'outbound',pending:id};
+          await saveRoutes();
+        }
+        const next = { chatId: record.chatId, messageId: target?.messageId ?? messageId, msgType: input.msgType,
+          revision: (target?.revision ?? 0) + 1, content, lastRequestId: id, pending: null,
+          ...(record.sourceThreadId ? {sourceThreadId:record.sourceThreadId} : {}) };
+        // Leave an unresolved gate if either journal write fails after an external effect.
+        await save(paths.target(targetId), { ...next, pending: id });
+        record.status = 'sent'; record.messageId = next.messageId; record.revision = next.revision;
+        record.confirmedAt = new Date().toISOString();
+        await save(paths.request(id), record);
+        await save(paths.target(targetId), next);
+        if (record.sourceThreadId || previousRoute) {
+          routing.messages[next.messageId].pending=null;
+          await saveRoutes();
+        }
+      } catch (error) {
+        // Only a verified invalid-card rejection proves this message call had no effect.
+        // Unknown business errors, HTTP failures and local commit failures stay unresolved.
+        const apiCode = Number.isSafeInteger(error?.apiCode) ? error.apiCode
+          : Number.isSafeInteger(error?.response?.data?.code) ? error.response.data.code : null;
+        const messageCalled = record.submitted;
+        const rejected = !record.acknowledgement && messageCalled && apiCode === 230099;
+        record.status = messageCalled && !rejected ? 'unconfirmed' : 'blocked';
+        record.submitted = record.status === 'unconfirmed';
+        if (record.status==='blocked') record.failureProof = {
+          kind:rejected ? 'provider-rejected' : 'message-not-called',
+          ...(rejected ? {apiCode} : {}),recordedAt:new Date().toISOString()};
+        record.error = { code: apiCode, rejected,
+          stage: messageCalled ? 'submit' : 'prepare',
+          message: record.status === 'unconfirmed'
+            ? 'Delivery unknown; inspect message and journal, do not resend'
+            : rejected ? 'Provider rejected the request; no message submitted'
+            : 'Preparation failed; no message submitted' };
+        await save(paths.request(id), record);
+        // No message side effect; allow a corrected new operation.
+        if (target && !record.submitted) { target.pending = null; await save(paths.target(targetId), target); }
+        if (target && !record.submitted && (record.sourceThreadId || previousRoute)) {
+          if (previousRoute) routing.messages[target.messageId]=previousRoute;
+          else delete routing.messages[target.messageId];
+          await saveRoutes();
+        }
+      }
+      return record;
+    });
   } finally {
     if (releaseDependency) await releaseDependency();
     if (releaseTarget) await releaseTarget();

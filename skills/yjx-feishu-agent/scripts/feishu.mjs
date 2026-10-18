@@ -11,8 +11,8 @@ import { defaultStateDir } from './codex.mjs';
 import { lockThread } from './state.mjs';
 import { createReceiver, digest, validateBindings, writeJournal } from './feishu-core.mjs';
 import { receiverPaths, readJson, atomicJson } from './receiver-runtime.mjs';
-import { readTransport } from './feishu-context.mjs';
-import { createContextManager } from './context-ledger.mjs';
+import { readTransport, resolveContext } from './feishu-context.mjs';
+import { createMessageRouter } from './message-routes.mjs';
 
 const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -167,12 +167,13 @@ export async function main(argv) {
   };
   const ws = new Lark.WSClient({ ...credentials, logger });
   const contextTransport = readTransport(credentials);
-  const contextManager = createContextManager({stateDir,appId:credentials.appId,transport:contextTransport,
+  const contextOptions = {transport:contextTransport,
     imageDirectory:path.join(stateDir,'feishu',digest(credentials.appId),'images'),
     contextStateDir:path.resolve(stateDir)===defaultStateDir({}) ? undefined : stateDir,
-  });
+  };
+  const router = createMessageRouter({stateDir,appId:credentials.appId});
   const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
-    context:contextManager.prepare, confirmContext:contextManager.confirm, confirmReply:contextManager.confirmReply,
+    context:item => resolveContext(item,contextOptions), admitRoute:router.admit, confirmReply:router.rememberReply,
     async reply(messageId, answer, requestId) {
       // One bounded text response; keep UUID stable for Feishu deduplication.
       const text = answer.length > 6000 ? `${answer.slice(0, 6000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : answer;
