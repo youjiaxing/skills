@@ -84,7 +84,8 @@ export async function writeJournal(file, record) {
 // not for the Codex turn. Interrupted journals are retained for human recovery.
 export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, context = async item => item.text,
   admitRoute = async (item,persist) => persist({threadId:item.binding.threadId,autoUnarchive:false}),
-  confirmReply = async () => {}, feedback = { update() {} }, log = () => {} }) {
+  confirmReply = async () => {}, prepareReply = answer => ({msgType:'text',content:{text:answer},mode:'text'}),
+  feedback = { update() {} }, log = () => {} }) {
   const directory = path.join(stateDir, 'feishu', digest(appId), 'messages');
   const queue = [];
   const active = new Map();
@@ -118,9 +119,13 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       if (typeof answer !== 'string' || !answer.length) throw new Error('No final answer');
       record.status = 'replying';
       stage = 'reply'; record.stage = stage;
+      const rendered = prepareReply(answer);
+      record.replyType = rendered.msgType;
+      record.replyMode = rendered.mode;
+      record.replyPayloadDigest = digest(JSON.stringify(rendered.content));
       record.replyAttempted = true;
       await writeJournal(file, record); // A lost API response must not trigger another reply.
-      const sent = await reply(record.messageId, answer, record.requestId);
+      const sent = await reply(record.messageId, answer, record.requestId, rendered);
       if (sent?.message_id) {
         record.replyMessageId = sent.message_id;
         await writeJournal(file,record);
@@ -148,8 +153,10 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
         record.failureReplyAttempted = true;
         try {
           await writeJournal(file, record);
-          const sent = await reply(record.messageId,
-            `本次请求处理异常，请在本机检查，暂勿重复提交。请求：${record.requestId}`, record.requestId);
+              const failureText=`本次请求处理异常，请在本机检查，暂勿重复提交。请求：${record.requestId}`;
+              const rendered=prepareReply(failureText);
+              record.failureReplyType=rendered.msgType;
+              const sent = await reply(record.messageId,failureText,record.requestId,rendered);
           if (sent?.message_id) { record.failureReplyMessageId = sent.message_id; await writeJournal(file, record); }
         } catch { /* An unknown receipt remains unknown; no retries. */ }
       }

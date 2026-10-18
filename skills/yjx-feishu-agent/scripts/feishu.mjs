@@ -16,6 +16,7 @@ import { createMessageRouter } from './message-routes.mjs';
 import { createProcessingFeedback } from './processing-feedback.mjs';
 import { reactionTransport } from './reaction-transport.mjs';
 import { safeFailure } from './message-diagnostics.mjs';
+import { renderReply } from './reply-renderer.mjs';
 
 const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -181,13 +182,14 @@ export async function main(argv) {
     transport:reactionTransport(credentials), log:print});
   const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
     feedback,
+    prepareReply: renderReply,
     context:item => resolveContext(item,contextOptions), admitRoute:router.admit, confirmReply:router.rememberReply,
-    async reply(messageId, answer, requestId) {
+    async reply(messageId, answer, requestId, prepared) {
       // One bounded text response; keep UUID stable for Feishu deduplication.
-      const text = answer.length > 6000 ? `${answer.slice(0, 6000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : answer;
+      const rendered = prepared ?? renderReply(answer.length > 12000 ? `${answer.slice(0, 12000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : answer);
       const response = await api(() => client.im.v1.message.reply({ path: { message_id: messageId },
-        data: { msg_type: 'text', content: JSON.stringify({ text }), uuid: digest(requestId).slice(0, 32) } }));
-      return {message_id:response.data?.message_id,msg_type:'text',body:{content:JSON.stringify({text})}};
+        data: { msg_type: rendered.msgType, content: JSON.stringify(rendered.content), uuid: digest(requestId).slice(0, 32) } }));
+      return {message_id:response.data?.message_id,msg_type:rendered.msgType,body:{content:JSON.stringify(rendered.content)},renderMode:rendered.mode};
     },
   });
   let stopping = false;

@@ -42,7 +42,7 @@ export async function diagnoseMessage({stateDir,appId,messageId}) {
       lastProgressAt:execution.value.lastProgressAt,lastObservationError:execution.value.lastObservationError,
     } : {state:execution.state},
     reply:record ? {state:record.replyMessageId ? 'confirmed' : record.replyAttempted ? 'unknown' : 'not_attempted',
-      messageId:record.replyMessageId,failureMessageId:record.failureReplyMessageId} : {state:task.state},
+      type:record.replyType,mode:record.replyMode,messageId:record.replyMessageId,failureMessageId:record.failureReplyMessageId} : {state:task.state},
     feedback:marker ? {desired:marker.desired,attempts:marker.attempts,lastWarning:marker.lastWarning} : {state:feedback.state},
   };
 }

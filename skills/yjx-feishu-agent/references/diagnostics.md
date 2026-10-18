@@ -17,6 +17,7 @@ node skills/yjx-feishu-agent/scripts/diagnose-message.mjs --message om_MESSAGE
 | codex 的 submitted/status/code | 判断是否已提交；未知结果保持原请求编号核查 |
 | codex.waitTimedOut 为 true | 等待预算耗尽；interruptRequested 仅表示已请求中断，不证明最终状态 |
 | reply 为 unknown | 回复已尝试但缺确认，不自动再回复 |
+| reply.type / reply.mode | 只读记录实际选择的 `text`、`post` 或 `interactive`，不代表客户端视觉已验收 |
 | reply confirmed，task.failure.stage 为 route_confirmation | 回答已送达，来源记账需另查，不能重发回答 |
 | feedback.lastWarning | 仅处理标记失败；结合 desired/attempts 判断，不重跑任务 |
 

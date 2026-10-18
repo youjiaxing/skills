@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { acceptedMessage, createReceiver, validateBindings, resultText } from '../scripts/feishu-core.mjs';
+import { renderReply } from '../scripts/reply-renderer.mjs';
 
 const config = { version: 1, bindings: [{ chatId: 'oc_test', users: ['ou_user'], threadId: '11111111-1111-4111-8111-111111111111' }] };
 const event = (id = 'om_one') => ({ sender: { sender_type: 'user', sender_id: { open_id: 'ou_user' } },
@@ -125,6 +126,18 @@ test('wait timeout explains interruption request or ongoing queue without claimi
   assert.match(owned,/15 分钟/);assert.match(owned,/已请求中断/);assert.doesNotMatch(owned,/partial/);
   const queued=resultText({...common,route:'queue'},'request');
   assert.match(queued,/可能仍在/);assert.doesNotMatch(queued,/已请求中断/);
+});
+
+test('reply rendering metadata is persisted before the remote reply',async t=>{
+  const payloads=[];
+  const f=await fixture(t,{prepareReply:renderReply,reply:async(...args)=>{
+    payloads.push(args[3]);return {message_id:'om_rendered'};
+  },send:async()=>({status:'completed',answer:'<!-- feishu:card -->\n结论\n\n**结果**'})});
+  await f.receiver.handle(event('om_rendered_input'));await f.receiver.stop();
+  assert.equal(payloads[0].msgType,'interactive');
+  const {readFile}=await import('node:fs/promises');
+  const record=JSON.parse(await readFile(`${f.options.stateDir}/feishu/${(await import('../scripts/feishu-core.mjs')).digest('cli_test')}/messages/fs-${(await import('../scripts/feishu-core.mjs')).digest('cli_test:om_rendered_input')}.json`,'utf8'));
+  assert.equal(record.replyType,'interactive');assert.equal(record.replyMode,'card');assert.ok(record.replyPayloadDigest);
 });
 
 test('rejected group messages leave no request or reply', async (t) => {
