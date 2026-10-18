@@ -10,6 +10,7 @@ export const digest = (text) => createHash('sha256').update(text).digest('hex');
 export function resultText(result, requestId) {
   if (result.status === 'completed') return result.answer;
   if (result.status==='interrupted') return `本次 Codex 执行已中断，未取得最终回复；不会自动重跑。请在原会话核查。请求：${requestId}`;
+  if (result.status==='failed') return `本次 Codex 执行已失败，未取得最终回复；请在原会话查看原因。请求：${requestId}`;
   if (result.waitTimedOut && result.submitted) {
     const duration=Number.isSafeInteger(result.timeoutMs) ? `（${Number((result.timeoutMs/60000).toFixed(2))} 分钟）` : '';
     return `等待 Codex 已超时${duration}，尚未取得最终回复。${result.interruptRequested
@@ -31,6 +32,8 @@ export function validateBindings(config) {
       config.maxConcurrentThreads<1 || config.maxConcurrentThreads>8)) throw new Error('maxConcurrentThreads must be 1–8');
   if (config.codexTimeoutMs !== undefined && (!Number.isSafeInteger(config.codexTimeoutMs) ||
     config.codexTimeoutMs<60000 || config.codexTimeoutMs>3600000)) throw new Error('codexTimeoutMs must be 60000–3600000');
+  if (config.codexRpcTimeoutMs !== undefined && (!Number.isSafeInteger(config.codexRpcTimeoutMs) ||
+    config.codexRpcTimeoutMs<1000 || config.codexRpcTimeoutMs>120000)) throw new Error('codexRpcTimeoutMs must be 1000–120000');
   const groups = new Set();
   for (const binding of config.bindings) {
     if (!/^oc_[\w]+$/.test(binding.chatId) || groups.has(binding.chatId)) throw new Error('Invalid or duplicate group binding');
@@ -102,13 +105,14 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       stage = 'codex'; record.stage = stage;
       await writeJournal(file,record);
       const result = record.routeError ? {status:'blocked',submitted:false} : await send({ threadId: record.threadId, message: text, requestId: record.requestId,
-        autoUnarchive:record.autoUnarchive, stateDir, codex: config.codex, cwd: config.cwd, timeoutMs:record.codexTimeoutMs });
+        autoUnarchive:record.autoUnarchive, stateDir, codex: config.codex, cwd: config.cwd,
+        waitMode:'state',timeoutMs:record.codexRpcTimeoutMs });
       record.codexStatus = result.status;
       record.codexSubmitted = typeof result.submitted === 'boolean' ? result.submitted : null;
       if (result.waitTimedOut) record.waitTimedOut=true;
       if (typeof result.interruptRequested==='boolean') record.interruptRequested=result.interruptRequested;
       if (['TARGET_ARCHIVED','TARGET_UNAVAILABLE','TARGET_UNKNOWN','HOST_INTERACTION_REQUIRED',
-        'COMPLETION_UNCONFIRMED','NOT_SUBMITTED'].includes(result.error?.code)) record.codexCode=result.error.code;
+        'COMPLETION_UNCONFIRMED','NOT_SUBMITTED','TURN_FAILED','TURN_INTERRUPTED'].includes(result.error?.code)) record.codexCode=result.error.code;
       // Never present unconfirmed/blocked turns as successfully completed.
       const answer = record.routeError ?? resultText(result, record.requestId);
       if (typeof answer !== 'string' || !answer.length) throw new Error('No final answer');
@@ -186,7 +190,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       const error=new Error('Receiver queue is full');error.code='QUEUE_FULL';throw error;
     }
     const record = { version: 1, requestId, messageId: item.messageId, chatId: item.binding.chatId,
-      codexTimeoutMs:config.codexTimeoutMs ?? 900000,
+      waitMode:'state',codexRpcTimeoutMs:config.codexRpcTimeoutMs ?? 30000,
       ...(feedback.enabled ? { feedbackVersion:1 } : {}),
       threadId: item.binding.threadId, parentId:item.parentId, rootId:item.rootId,
       messageType:item.source.message_type, status: 'accepted', createdAt: new Date().toISOString() };

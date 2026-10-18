@@ -20,19 +20,20 @@ async function setup(t,extra={}) {
     reply:async id=>({message_id:`${id}_reply`}),...extra};
   return {options,receiver:createReceiver(options),diag:id=>diagnoseMessage({...options,messageId:id})};
 }
-test('same thread stays serial across groups, independent thread bypasses blocked queue head; stop drains all',async t=>{
+test('same thread stays serial across groups, independent thread bypasses blocked queue head; stop drains all',{timeout:10000},async t=>{
   let release,entered;const gate=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+  let bFinished;const independentDone=new Promise(r=>bFinished=r);
   const begins=[],ends=[];
   const f=await setup(t,{send:async input=>{
     begins.push(input.threadId);
     if(begins.length===1) {entered();await gate;}
-    ends.push(input.threadId);return {status:'completed',answer:'ok'};
+    ends.push(input.threadId);if(input.threadId===B) bFinished();return {status:'completed',answer:'ok'};
   }});
   await f.receiver.handle(event('om_a'));await started;
   await f.receiver.handle(event('om_a2','oc_a2'));
   await f.receiver.handle(event('om_b','oc_b'));
-  // Wait for B's durable reply; A remains gated throughout.
-  for(let i=0;i<100 && (await f.diag('om_b')).task.status!=='replied';i++) await new Promise(r=>setTimeout(r,5));
+  // Use the independent task's completion signal, not filesystem timing.
+  await independentDone;
   assert.deepEqual(begins,[A,B]);assert.deepEqual(ends,[B]);
   let stopped=false;const stopping=f.receiver.stop().then(()=>stopped=true);
   await new Promise(r=>setImmediate(r));assert.equal(stopped,false);

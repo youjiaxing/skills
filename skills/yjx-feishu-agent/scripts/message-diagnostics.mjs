@@ -23,7 +23,10 @@ async function read(file) {
 }
 export async function diagnoseMessage({stateDir,appId,messageId}) {
   const requestId=messageRequestId(appId,messageId),root=path.join(stateDir,'feishu',hash(appId));
-  const [task,admission,feedback]=await Promise.all(['messages','admissions','feedback'].map(name=>read(path.join(root,name,`${requestId}.json`))));
+  const [task,admission,feedback,execution]=await Promise.all([
+    ...['messages','admissions','feedback'].map(name=>read(path.join(root,name,`${requestId}.json`))),
+    read(path.join(stateDir,'requests',requestId,'record.json')),
+  ]);
   const record=task.value,marker=feedback.value;
   return {messageId,requestId,readOnly:true,
     admission:record ? {state:'accepted',createdAt:record.createdAt} : admission.value ?? {state:admission.state},
@@ -31,7 +34,13 @@ export async function diagnoseMessage({stateDir,appId,messageId}) {
     route:record ? {state:record.routeError ? 'blocked' : record.threadId ? 'selected' : 'unknown',
       code:record.routeCode,threadId:record.threadId} : {state:task.state},
     codex:record ? {status:record.codexStatus ?? 'not_observed',submitted:record.codexSubmitted ?? null,code:record.codexCode,
+      waitMode:record.waitMode,rpcTimeoutMs:record.codexRpcTimeoutMs,
       timeoutMs:record.codexTimeoutMs,waitTimedOut:record.waitTimedOut,interruptRequested:record.interruptRequested} : {state:task.state},
+    execution:execution.value ? {status:execution.value.status,turnId:execution.value.turnId,
+      waitMode:execution.value.waitMode,submitted:execution.value.submitted,
+      observationState:execution.value.observationState,lastObservedAt:execution.value.lastObservedAt,
+      lastProgressAt:execution.value.lastProgressAt,lastObservationError:execution.value.lastObservationError,
+    } : {state:execution.state},
     reply:record ? {state:record.replyMessageId ? 'confirmed' : record.replyAttempted ? 'unknown' : 'not_attempted',
       messageId:record.replyMessageId,failureMessageId:record.failureReplyMessageId} : {state:task.state},
     feedback:marker ? {desired:marker.desired,attempts:marker.attempts,lastWarning:marker.lastWarning} : {state:feedback.state},

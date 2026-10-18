@@ -107,15 +107,15 @@ test('unconfirmed Codex results are reported without a successful answer claim',
   assert.doesNotMatch(f.replies[0][1], /late partial/);
 });
 
-test('bridge research requests use a longer bounded configurable Codex budget',async t=>{
+test('bridge research requests wait for task state with independently bounded RPC calls',async t=>{
   const defaults=await fixture(t);
   await defaults.receiver.handle(event());await defaults.receiver.stop();
-  assert.equal(defaults.calls[0].timeoutMs,900000);
-  const configured=await fixture(t,{config:{...config,codexTimeoutMs:600000}});
+  assert.equal(defaults.calls[0].waitMode,'state');assert.equal(defaults.calls[0].timeoutMs,30000);
+  const configured=await fixture(t,{config:{...config,codexTimeoutMs:600000,codexRpcTimeoutMs:50000}});
   await configured.receiver.handle(event());await configured.receiver.stop();
-  assert.equal(configured.calls[0].timeoutMs,600000);
-  for(const value of [0,59999,3600001,NaN,'900000']) {
-    assert.throws(()=>validateBindings({...config,codexTimeoutMs:value}),/codexTimeoutMs/);
+  assert.equal(configured.calls[0].timeoutMs,50000);assert.equal(configured.calls[0].waitMode,'state');
+  for(const value of [0,999,120001,NaN,'30000']) {
+    assert.throws(()=>validateBindings({...config,codexRpcTimeoutMs:value}),/codexRpcTimeoutMs/);
   }
 });
 

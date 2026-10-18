@@ -45,14 +45,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     turn = makeTurn(params.input[0].text, false);
     if (mode !== 'before-ack') respond(id, { turn: { id: turn.id } });
     if (mode === 'no-completion') return;
-    if (mode === 'host-request') send({ id: 'host-call', method: 'item/tool/call', params: {} });
+    if (['host-request','state-host-request'].includes(mode)) send({ id: 'host-call', method: 'item/tool/call', params: {} });
     setTimeout(() => {
       turn = makeTurn(params.input[0].text, true);
       log('fixture/completed');
       send({ method: 'turn/completed', params: { threadId: 'other-thread', turn } });
-      send({ method: 'turn/completed', params: { threadId, turn } });
+      if(mode!=='state-missing-event') send({ method: 'turn/completed', params: { threadId, turn } });
       if (mode === 'before-ack') respond(id, { turn: { id: turn.id } });
-    }, 30);
+    }, mode==='state-long-running' ? 1200 : 30);
   } else if (method === 'thread/turns/list') {
     const queuedFile = path.join(directory, 'queue.json');
     if (mode.startsWith('queue') && existsSync(queuedFile)) {

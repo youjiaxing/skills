@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { AppServer, resolveCodex, RpcError, runQueue, timeLeft } from './app-server.mjs';
 import { claimThreadRequest, lockThread, readRecord, reserveRecord, saveRecord, validateRequestId } from './state.mjs';
 import { readTarget } from './target.mjs';
+import { observeTurn, terminalSnapshot } from './turn-observer.mjs';
 
 export function validateThreadId(value) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value ?? '')) {
@@ -46,7 +47,7 @@ async function findTurn(client, record, deadline) {
   for (let page = 0; page < 100; page += 1) {
     const params = { threadId: record.threadId, limit: 100, sortDirection: 'desc', itemsView: 'full' };
     if (cursor) params.cursor = cursor;
-    const result = await client.call('thread/turns/list', params, deadline);
+    const result = await client.call('thread/turns/list', params, typeof deadline==='function' ? deadline() : deadline);
     for (const turn of result.data) {
       if (record.turnId ? turn.id === record.turnId : hasMarker(turn, record.marker)) matches.push(turn);
       if (matches.length > 1) throw new Error('Ambiguous correlation: more than one turn matches this request');
@@ -72,6 +73,14 @@ function applyPersistedTurn(record, turn) {
     record.answer = texts.length ? texts.join('\n\n') : null;
     return; // A later assistant response does not supply the rejected host capability.
   }
+  if(record.waitMode==='state') {
+    const terminal=terminalSnapshot(turn,finalTexts);
+    if(terminal) {
+      Object.assign(record,terminal);
+      record.observationState=terminal.status;record.terminalConfirmedAt=new Date().toISOString();
+    }
+    return;
+  }
   // Our interrupt acknowledgement alone is not terminal proof. Require a
   // matching persisted turn with an explicit completion timestamp as well.
   if (record.route==='app-server' && record.interruptRequested===true && knownTurnId===turn.id &&
@@ -95,7 +104,9 @@ function optionsFor(input) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 86400000) {
     throw new Error('timeout-ms must be an integer between 1 and 86400000');
   }
-  return { ...input, timeoutMs, cwd: path.resolve(input.cwd ?? process.cwd()),
+  const waitMode=input.waitMode ?? 'deadline';
+  if(!['deadline','state'].includes(waitMode)) throw new Error('Unknown waitMode');
+  return { ...input,waitMode, timeoutMs, cwd: path.resolve(input.cwd ?? process.cwd()),
     stateDir: path.resolve(input.stateDir ?? defaultStateDir()),
     codex: input.codex ?? process.env.CODEX_CLI_PATH ?? 'codex' };
 }
@@ -111,15 +122,16 @@ async function observeQueued(client, record, options, deadline) {
 }
 
 async function execute(client, record, message, options, deadline, dependencies) {
-  record.target = await readTarget(client, record.threadId, deadline);
+  const rpcDeadline=()=>options.waitMode==='state' ? performance.now()+options.timeoutMs : deadline;
+  record.target = await readTarget(client, record.threadId, rpcDeadline());
   if (record.target.state === 'archived' && options.autoUnarchive === true) {
     // The durable request is already reserved and the exact thread is locked.
     // A lost restore response never becomes permission to submit or replay.
     record.restoreStatus = 'restoring';
     await saveRecord(options.stateDir,record);
-    const restored = await client.call('thread/unarchive', {threadId:record.threadId}, deadline);
+    const restored = await client.call('thread/unarchive', {threadId:record.threadId}, rpcDeadline());
     if (restored.thread?.id !== record.threadId) throw new Error('Unarchive returned a different thread');
-    record.target = await readTarget(client,record.threadId,deadline);
+    record.target = await readTarget(client,record.threadId,rpcDeadline());
     if (record.target.state !== 'readable') throw new Error('Restored target is not confirmed active');
     record.restoreStatus = 'restored';
     await saveRecord(options.stateDir,record);
@@ -131,7 +143,7 @@ async function execute(client, record, message, options, deadline, dependencies)
   }
   const wireMessage = `${record.marker}\n${message}`;
   try {
-    const resumed = await client.call('thread/resume', { threadId: record.threadId, excludeTurns: true }, deadline);
+    const resumed = await client.call('thread/resume', { threadId: record.threadId, excludeTurns: true }, rpcDeadline());
     if (resumed.thread.id !== record.threadId) throw new Error('Resume returned a different thread ID');
     record.route = 'app-server';
   } catch (error) {
@@ -141,15 +153,16 @@ async function execute(client, record, message, options, deadline, dependencies)
   if (record.route === 'queue') {
     const history = await client.call('thread/turns/list', {
       threadId: record.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded',
-    }, deadline);
+    }, rpcDeadline());
     record.baselineTurnId = history.data[0]?.id ?? null;
     record.status = 'submitting';
     record.submitted = true; // Conservative: a lost acknowledgement must never cause a retry.
     await saveRecord(options.stateDir, record);
-    record.queueReceipt = await dependencies.queue(record.binary, record.threadId, wireMessage, deadline, options.cwd);
+    record.queueReceipt = await dependencies.queue(record.binary, record.threadId, wireMessage, rpcDeadline(), options.cwd);
     record.status = 'waiting';
     await saveRecord(options.stateDir, record);
-    await observeQueued(client, record, options, deadline);
+    if(options.waitMode==='state') await observeState(client,record,options);
+    else await observeQueued(client, record, options, deadline);
     return;
   }
   record.status = 'submitting';
@@ -157,10 +170,11 @@ async function execute(client, record, message, options, deadline, dependencies)
   await saveRecord(options.stateDir, record);
   const started = await client.call('turn/start', {
     threadId: record.threadId, input: [{ type: 'text', text: wireMessage }],
-  }, deadline);
+  }, rpcDeadline());
   record.turnId = started.turn.id;
   record.status = 'running';
   await saveRecord(options.stateDir, record);
+  if(options.waitMode==='state') {await observeState(client,record,options);return;}
   const event = await client.waitFor((event) => event.method === 'turn/completed' &&
     event.params?.threadId === record.threadId && event.params?.turn?.id === record.turnId, deadline);
   const turn = event.params.turn;
@@ -186,6 +200,11 @@ async function execute(client, record, message, options, deadline, dependencies)
   }
 }
 
+async function observeState(client,record,options) {
+  return observeTurn({client,record,rpcTimeoutMs:options.timeoutMs,pollMs:options.pollMs ?? 30000,
+    findTurn,finalTexts,save:()=>saveRecord(options.stateDir,record)});
+}
+
 export async function sendCodex(input, overrides = {}) {
   const dependencies = { createClient: (binary, cwd) => new AppServer(binary, cwd), queue: runQueue, ...overrides };
   const options = optionsFor(input);
@@ -196,7 +215,7 @@ export async function sendCodex(input, overrides = {}) {
   const createdAt = new Date().toISOString();
   const reserved = await reserveRecord(options.stateDir, {
     version: 1, agent: 'codex', requestId, threadId, inputHash: hash,
-    marker: `[yjx-feishu-agent:${randomUUID()}]`, createdAt, status: 'waiting',timeoutMs:options.timeoutMs,
+    marker: `[yjx-feishu-agent:${randomUUID()}]`, createdAt, status: 'waiting',timeoutMs:options.timeoutMs,waitMode:options.waitMode,
     submitted: false, route: null, turnId: null, answer: null, answers: [], error: null,
   });
   const record = reserved.record;
@@ -214,18 +233,18 @@ export async function sendCodex(input, overrides = {}) {
     record.binary = await resolveCodex(options.codex);
     record.cwd = options.cwd;
     client = dependencies.createClient(record.binary, options.cwd);
-    await client.initialize(deadline);
+    await client.initialize(options.waitMode==='state' ? performance.now()+options.timeoutMs : deadline);
     await execute(client, record, input.message, options, deadline, dependencies);
   } catch (error) {
     record.status = record.submitted ? 'unconfirmed' : 'blocked';
-    if (performance.now()>=deadline) record.waitTimedOut=true;
+    if (options.waitMode==='deadline' && performance.now()>=deadline) record.waitTimedOut=true;
     record.error = { code: record.submitted ? 'COMPLETION_UNCONFIRMED' : 'NOT_SUBMITTED', message: error.message };
     if (client?.unsupportedRequests.length) {
       record.status = 'blocked';
       record.unsupportedInteractions = [...new Set(client.unsupportedRequests)];
       record.error = { code: 'HOST_INTERACTION_REQUIRED', message: 'This client could not supply a host interaction' };
     }
-    if (record.route === 'app-server' && record.turnId && client && !client.stopped) {
+    if (options.waitMode!=='state' && record.route === 'app-server' && record.turnId && client && !client.stopped) {
       try {
         await client.call('turn/interrupt', { threadId, turnId: record.turnId }, performance.now() + 2000);
         record.interruptRequested = true;

@@ -94,6 +94,57 @@ test('external resume correlates completion arriving before its RPC acknowledgem
   assert.equal(c.counts().queueCalls, 0);
 });
 
+test('state observation outlives individual RPC budget without interrupting or resubmitting',async t=>{
+  const c=await context(t,'state-long-running');
+  const record=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);
+  assert.equal(record.status,'completed');assert.equal(record.waitMode,'state');
+  assert.equal(record.answer,'protocol-result-✓');assert.equal(record.interruptRequested,undefined);
+  const calls=(await readFile(path.join(c.directory,'calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(calls.filter(c=>c.method==='turn/start').length,1);
+  assert.equal(calls.filter(c=>c.method==='turn/interrupt').length,0);
+  const replay=await sendCodex({...c.input,waitMode:'state'},c.dependencies);
+  assert.equal(replay.deduplicated,true);
+});
+
+test('state observer recovers missing completion event and handles queue correlation',async t=>{
+  for(const mode of ['state-missing-event','queue-pages','queue-null-phase']) {
+    const c=await context(t,mode);
+    const record=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);
+    assert.equal(record.status,'completed');assert.equal(record.answer,'protocol-result-✓');
+  }
+});
+
+test('state host interaction failure leaves an uncertain task without issuing interrupt',async t=>{
+  const c=await context(t,'state-host-request');
+  const record=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);
+  assert.equal(record.status,'blocked');assert.equal(record.error.code,'HOST_INTERACTION_REQUIRED');
+  const calls=(await readFile(path.join(c.directory,'calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(calls.filter(c=>c.method==='turn/interrupt').length,0);
+});
+
+test('state refresh applies the same terminal proof as live observation without restarting a turn',async t=>{
+  const c=await context(t,'direct');
+  const original=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);
+  const requestFile=path.join(c.input.stateDir,'requests',original.requestId,'record.json');
+  const turnFile=path.join(c.directory,'turn.json');
+  for(const [status,completedAt,text,expected] of [
+    ['completed',0,'text','unconfirmed'],['completed','123','text','unconfirmed'],
+    ['completed',123,'','unconfirmed'],['interrupted',null,'partial','unconfirmed'],
+    ['interrupted',123,'partial','interrupted'],['failed',123,'partial','failed'],
+    ['completed',123,'confirmed-final','completed'],
+  ]) {
+    await writeFile(requestFile,JSON.stringify({...original,status:'unconfirmed',answer:null,answers:[]}));
+    await writeFile(turnFile,JSON.stringify({id:original.turnId,status,completedAt,
+      items:[{type:'agentMessage',phase:'final_answer',text}]}));
+    const refreshed=await requestStatus({...c.input,refresh:true},c.dependencies);
+    assert.equal(refreshed.status,expected);
+    assert.equal(refreshed.answer,expected==='completed' ? 'confirmed-final' : null);
+  }
+  const calls=(await readFile(path.join(c.directory,'calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(calls.filter(call=>call.method==='turn/start').length,1);
+  assert.equal(calls.filter(call=>call.method==='turn/interrupt').length,0);
+});
+
 test('archived, unavailable and unknown targets never resume, queue or submit', async t => {
   for (const state of ['archived','unavailable','unknown']) {
     const c = await context(t, `target-${state}`);

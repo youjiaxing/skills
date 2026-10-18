@@ -99,7 +99,7 @@ export class AppServer {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Timed out waiting for ${method}`));
+        const error=new Error(`Timed out waiting for ${method}`);error.code='RPC_TIMEOUT';reject(error);
       }, timeLeft(deadline));
       this.pending.set(id, { resolve, reject, timer });
       this.write({ id, method, params });
@@ -122,7 +122,9 @@ export class AppServer {
           cleanup(); reject(new Error('Host interaction required: this client cannot supply Desktop tools or approval UI'));
         } else if (this.failure) { cleanup(); reject(this.failure); }
       };
-      timer = setTimeout(() => { cleanup(); reject(new Error('Timed out waiting for turn completion')); }, timeLeft(deadline));
+      timer = setTimeout(() => {
+        cleanup();const error=new Error('Timed out waiting for turn completion');error.code='WAIT_TIMEOUT';reject(error);
+      }, timeLeft(deadline));
       this.emitter.on('event', check);
       check();
     });
