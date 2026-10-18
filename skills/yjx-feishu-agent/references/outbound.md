@@ -14,7 +14,7 @@
 | 编辑后是否再次触发通知 | 未实测；不能依赖编辑承担提醒 |
 | 自动调度、消息源下载 | 不由接收器提供，也不因发送成功而自动开启 |
 
-本页需要账本的投递统一从 `outbound.mjs` 执行；独立的一次性消息操作按 [外部工具分工](feishu-cli.md#职责选择) 使用 `lark-im`。SDK 凭证通过 `loadCredentials` 读取，日志只输出必要回执或数值错误码，不输出 Token、Secret 或 SDK 请求配置。
+向本机已接入群推送默认从 `outbound.mjs` 执行，并显式提供当前会话的 `sourceThreadId`；一次性测试文本同样需要来源，才能引用追问。先用 `bindings.mjs list` 核对目标。独立消息操作或明确只需单向发送时，按 [外部工具分工](feishu-cli.md#职责选择) 使用 `lark-im`。SDK 凭证通过 `loadCredentials` 读取，日志只输出必要回执或数值错误码，不输出 Token、Secret 或 SDK 请求配置。
 
 ## 命令与输入
 
@@ -31,12 +31,13 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-
 
 均支持 `--state-dir PATH`，默认复用桥接状态目录与凭证。发送/更新退出码：0 已确认，2 受阻或输入错误，3 结果未知。status 的0只表示存档读出，仍检查状态字段；缺回执返回 missing、submitted:null 和退出码3。参数/版本错误只输出通用安全错误，先核对存档，不换编号重发。
 
-发送 JSON 示例（群 ID 替换为已授权目标）：
+发送 JSON 示例（群 ID 替换为已授权目标，`sourceThreadId` 替换为当前实际会话 UUID）：
 
 ```json
 {
   "requestId": "digest-20261016",
   "chatId": "oc_GROUP",
+  "sourceThreadId": "CURRENT_CODEX_CHAT_UUID",
   "msgType": "interactive",
   "content": {
     "header": {"title": {"tag": "plain_text", "content": "当天汇总"}},
