@@ -18,7 +18,7 @@ function pageTab({ initial = {}, duration = 60, url = `https://www.bilibili.com/
   const location = { href: url };
   const video = { duration };
   const context = {
-    URL, URLSearchParams, location, window: { __INITIAL_STATE__: initial },
+    URL, URLSearchParams, AbortSignal, location, window: { __INITIAL_STATE__: initial },
     document: { title: 'series', querySelector: (selector) => selector === 'video' ? video : { innerText: 'series' } },
   };
   let reads = 0;
@@ -186,7 +186,11 @@ test('frame capture detects a changed BV before quality requests', async () => {
 
 test('frame capture rechecks the source after an asynchronous wait and before drawing', async () => {
   const tab = pageTab({ initial: { bvid, videoData: { bvid, pages } } });
-  Object.assign(tab.video, { videoWidth: 1920, videoHeight: 1080, currentTime: 0, pause() {}, play: async () => {} });
+  let qualityReads = 0;
+  Object.assign(tab.video, { videoWidth: 1920, videoHeight: 1080, currentTime: 0, pause() {},
+    play: async () => { tab.video.currentTime += 1; },
+    getVideoPlaybackQuality: () => ({ totalVideoFrames: qualityReads++ * 30 }),
+  });
   tab.context.fetch = async () => ({ ok: true, json: async () => ({ code: 0, data: { dash: { video: [{ id: 80, width: 1920, height: 1080, frameRate: 30 }] } } }) });
   tab.context.performance = { now: () => 0 };
   tab.context.setTimeout = (callback, milliseconds) => {
@@ -194,6 +198,6 @@ test('frame capture rechecks the source after an asynchronous wait and before dr
     callback();
     return 1;
   };
-  const result = await captureBilibiliFramesFromBrowser(tab, { times: [0], outputDir: 'unused', frameRateSampleSeconds: 0.001 });
+  const result = await captureBilibiliFramesFromBrowser(tab, { times: [1], outputDir: 'unused', frameRateSampleSeconds: 0.001 });
   assert.equal(result.status, 'source_changed');
 });

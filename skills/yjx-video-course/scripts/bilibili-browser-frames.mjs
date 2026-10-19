@@ -15,7 +15,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveBilibiliIdentity } from './bilibili-identity.mjs';
+import { resolveBilibiliIdentity, sameBilibiliPage } from './bilibili-identity.mjs';
 export { resolveBilibiliIdentity } from './bilibili-identity.mjs';
 import {
   classifyBilibiliSession,
@@ -47,6 +47,34 @@ function decodePngDataUrl(dataUrl) {
   return Buffer.from(match[1], 'base64');
 }
 
+async function executeFrameCapture(tab, capture, options) {
+  try {
+    const result = await tab.playwright.evaluate(capture, options);
+    if (result?.status !== 'frame_capture_capability_unavailable') {
+      return { ...result, execution_backend: 'page_evaluate' };
+    }
+  } catch {
+    // Some hosts expose a read-only DOM scope. Try the same operation in the
+    // bound tab's native page context, without exporting browser credentials.
+  }
+  let cdp;
+  try { cdp = await tab.capabilities?.get('cdp'); } catch { /* unavailable */ }
+  if (!cdp?.send) return { status: 'frame_capture_capability_unavailable' };
+  try {
+    const response = await cdp.send('Runtime.evaluate', {
+      expression: `(${capture.toString()})(${JSON.stringify(options)})`,
+      awaitPromise: true,
+      returnByValue: true,
+    }, { timeoutMs: Math.min(60000, (options.times.length + 1) * options.seekTimeoutMs + options.frameRateSampleSeconds * 1000 + 2000) });
+    if (response.exceptionDetails || !response.result?.value?.status) {
+      return { status: 'frame_capture_failed', execution_backend: 'native_cdp', reason: 'page capture did not complete' };
+    }
+    return { ...response.result.value, execution_backend: 'native_cdp' };
+  } catch {
+    return { status: 'frame_capture_failed', execution_backend: 'native_cdp', reason: 'native execution failed or timed out' };
+  }
+}
+
 export async function captureBilibiliFramesFromBrowser(
   tab,
   {
@@ -59,6 +87,7 @@ export async function captureBilibiliFramesFromBrowser(
 ) {
   if (!tab?.playwright?.evaluate) throw new Error('captureBilibiliFramesFromBrowser requires a browser tab with playwright.evaluate');
   if (!Array.isArray(times) || times.length === 0) throw new Error('times must be a non-empty array of seconds');
+  if (times.some((time) => !Number.isFinite(time) || time < 0)) throw new Error('times must contain finite non-negative seconds');
   if (typeof outputDir !== 'string' || outputDir.length === 0) throw new Error('outputDir is required');
   if (!QUALITY_LABEL[requestedQuality]) throw new Error(`unsupported quality code ${requestedQuality}`);
 
@@ -76,8 +105,11 @@ export async function captureBilibiliFramesFromBrowser(
       url: identity.url,
     };
   }
+  if (Number.isFinite(identity.duration) && times.some((time) => time >= identity.duration)) {
+    return { status: 'invalid_capture_time', duration: identity.duration };
+  }
 
-  const pageResult = await tab.playwright.evaluate(
+  const pageResult = await executeFrameCapture(tab,
     async ({
       times: targetTimes,
       requestedQuality: quality,
@@ -148,6 +180,7 @@ export async function captureBilibiliFramesFromBrowser(
       const response = await fetch(`https://api.bilibili.com/x/player/playurl?${params}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!response.ok) return { status: 'playurl_http_error', http_status: response.status, bvid, cid };
       const payload = await response.json();
@@ -212,9 +245,10 @@ export async function captureBilibiliFramesFromBrowser(
         return false;
       };
 
-      if (typeof player?.requestQuality === 'function') {
+      const currentQuality = player?.getQuality?.()?.nowQ;
+      if (typeof player?.requestQuality === 'function' && Number(currentQuality) !== selected.id) {
         try {
-          await player.requestQuality(quality);
+          await player.requestQuality(selected.id);
         } catch (error) {
           return { status: 'quality_request_failed', error: String(error), bvid, cid, selected_variant: describeVariant(selected) };
         }
@@ -234,12 +268,15 @@ export async function captureBilibiliFramesFromBrowser(
       // Measure the delivered frame rate instead of trusting the manifest or
       // the quality label. A 1080P/30fps stream must not silently stand in for
       // an available 1080P high-frame-rate variant.
+      const wasMuted = video.muted;
       video.muted = true;
       const qualityBefore = video.getVideoPlaybackQuality?.();
       const timeBefore = video.currentTime;
       await video.play().catch(() => {});
       await sleep(sampleSeconds * 1000);
       video.pause();
+      video.muted = wasMuted;
+      if (!sourceStillMatches()) return { status: 'source_changed', bvid, cid };
       const qualityAfter = video.getVideoPlaybackQuality?.();
       const timeAfter = video.currentTime;
       const elapsed = timeAfter - timeBefore;
@@ -251,7 +288,11 @@ export async function captureBilibiliFramesFromBrowser(
         minimumFrameRate,
         selected.frameRate - frameRateTolerance,
       );
-      if (measuredFrameRate != null && measuredFrameRate < requiredFrameRate) {
+      if (!Number.isFinite(measuredFrameRate) || elapsed < 1 || frames <= 0) {
+        return { status: 'frame_rate_unverified', bvid, cid, selected_variant: describeVariant(selected) };
+      }
+      // A short counter sample has a one-frame boundary uncertainty.
+      if (measuredFrameRate + 1 / elapsed < requiredFrameRate) {
         return {
           status: 'frame_rate_not_honored',
           bvid,
@@ -309,6 +350,12 @@ export async function captureBilibiliFramesFromBrowser(
         await sleep(500);
         if (!sourceStillMatches()) return { status: 'source_changed', bvid, cid };
         video.pause();
+        if (video.seeking || video.readyState < 2 || Math.abs(video.currentTime - targetTime) > 0.1) {
+          return { status: 'frame_not_ready', bvid, cid, time: targetTime, current_time: video.currentTime };
+        }
+        if (video.videoWidth < targetWidth || video.videoHeight < targetHeight) {
+          return { status: 'quality_not_honored', bvid, cid, actual: { width: video.videoWidth, height: video.videoHeight } };
+        }
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -318,6 +365,7 @@ export async function captureBilibiliFramesFromBrowser(
         framesOut.push({
           time: targetTime,
           current_time: video.currentTime,
+          paused: video.paused,
           data_url: canvas.toDataURL('image/png'),
           decoded_frame_size: { width: canvas.width, height: canvas.height },
         });
@@ -328,6 +376,7 @@ export async function captureBilibiliFramesFromBrowser(
         bvid,
         cid,
         requested_quality: quality,
+        capture_surface: 'video_decoded_frame',
         selected_variant: describeVariant(selected),
         available_variants: variants.map(describeVariant),
         selected_quality: qualityLabel[selected.id] ?? `${selected.height}P`,
@@ -369,18 +418,24 @@ export async function captureBilibiliFramesFromBrowser(
     };
   }
   if (pageResult.status !== 'captured') return pageResult;
+  const after = await resolveBilibiliIdentity(tab);
+  if (after.status !== 'identity_verified' || !sameBilibiliPage(identity, after) || after.cid !== identity.cid) {
+    return { status: 'source_changed' };
+  }
 
   await fs.mkdir(outputDir, { recursive: true });
   const writtenFrames = [];
   for (const frame of pageResult.frames) {
-    const outputPath = path.join(outputDir, `frame-${String(Math.round(frame.time)).padStart(4, '0')}.png`);
+    const outputPath = path.join(outputDir, `frame-${String(frame.time).padStart(4, '0').replace('.', '-')}.png`);
     await fs.writeFile(outputPath, decodePngDataUrl(frame.data_url));
     writtenFrames.push({
       time: frame.time,
       current_time: frame.current_time,
+      paused: frame.paused,
       path: outputPath,
       width: frame.decoded_frame_size.width,
       height: frame.decoded_frame_size.height,
+      final_image_size: frame.decoded_frame_size,
     });
   }
 
