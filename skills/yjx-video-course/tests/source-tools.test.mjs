@@ -118,25 +118,28 @@ test('captures and classifies an observed empty Bilibili subtitle response end t
     },
   };
 
-  const result = await captureBilibiliSubtitle(tab, { waitMs: 1 });
+  const sourceIdentity = { status: 'identity_verified', bvid: 'BV1', page: 2, cid: '2', aid: 1 };
+  const result = await captureBilibiliSubtitle(tab, { waitMs: 1, resolveIdentity: async () => sourceIdentity });
 
   assert.deepEqual(result, {
     status: 'subtitle_empty_response',
     bytes: 2,
     track_activated: false,
+    source_identity: { bvid: 'BV1', page: 2, cid: '2', aid: 1 },
     source_url: 'https://api.bilibili.com/x/v2/subtitle/web/view',
     http_status: 200,
   });
   assert.equal(calls.some((call) => call.method === 'Network.getResponseBody'), true);
 });
 
-test('resolves Bilibili CID through the browser page adapter when initial state is incomplete', async () => {
+test('preserves verified part identity through the frame module export', async () => {
   const tab = {
     playwright: {
       async evaluate() {
         return {
           bvid: 'BV1xztt6tEtu',
           episode: '63',
+          page: 63,
           cid: '41464827714',
           title: '063 执行工单 - 问题_哔哩哔哩_bilibili',
           duration: 373,

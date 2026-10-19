@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 
 // Capture Bilibili frames through the selected browser tab's authenticated
-// session.
+// session, when the host provides a mutable page/media execution capability.
 //
 // This is the preferred path for software-demo courses. The page itself calls
-// the playurl endpoint with the browser's normal credentials, so 1080P/720P
+// the site's playurl endpoint with the browser's normal credentials, so 1080P/720P
 // availability reflects the actual in-app browser login state. The direct CLI
 // capture-bilibili-frames.mjs is an anonymous diagnostic only and must not be
 // used to decide that the user needs to sign in.
 //
 // The module never reads or exports cookies, session storage, or authorization
-// tokens. It only uses same-origin fetches and the already-playing media element
+// tokens. It only uses the site's normal API and the already-playing media element
 // inside the browser page.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { resolveBilibiliIdentity } from './bilibili-identity.mjs';
+export { resolveBilibiliIdentity } from './bilibili-identity.mjs';
 import {
   classifyBilibiliSession,
   nextActionForSessionOutcome,
@@ -43,53 +45,6 @@ function decodePngDataUrl(dataUrl) {
   const match = /^data:image\/png;base64,(.+)$/s.exec(String(dataUrl ?? '').trim());
   if (!match) throw new Error('expected a PNG data URL from the browser frame capture');
   return Buffer.from(match[1], 'base64');
-}
-
-export async function resolveBilibiliIdentity(tab) {
-  if (!tab?.playwright?.evaluate) {
-    throw new Error('resolveBilibiliIdentity requires a browser tab with playwright.evaluate');
-  }
-
-  return tab.playwright.evaluate(async () => {
-    const url = new URL(location.href);
-    const bvid = url.pathname.match(/\/video\/(BV[0-9A-Za-z]+)/)?.[1] ?? null;
-    const episode = url.searchParams.get('p') ?? null;
-    const video = document.querySelector('video');
-    const initial = window.__INITIAL_STATE__ ?? {};
-    const pageList = initial.cidMap?.[initial.p]?.cid
-      ? [{page: initial.p, cid: initial.cidMap[initial.p].cid}]
-      : Array.isArray(initial.videoData?.pages)
-        ? initial.videoData.pages
-        : [];
-    let cid = initial.cid ?? pageList.find((page) => String(page.page ?? page.p) === String(episode))?.cid ?? null;
-
-    if (!cid && bvid) {
-      try {
-        const response = await fetch(`/x/player/pagelist?bvid=${encodeURIComponent(bvid)}`, {
-          credentials: 'include',
-          headers: {Accept: 'application/json'},
-        });
-        if (response.ok) {
-          const payload = await response.json();
-          const pages = Array.isArray(payload?.data) ? payload.data : [];
-          const selected = pages.find((page) => String(page.page ?? page.p) === String(episode))
-            ?? (episode ? null : pages[0]);
-          cid = selected?.cid ?? null;
-        }
-      } catch {
-        // The caller receives an explicit identity_unavailable result.
-      }
-    }
-
-    return {
-      bvid,
-      episode,
-      cid: cid == null ? null : String(cid),
-      title: document.querySelector('h1')?.innerText?.trim() ?? document.title ?? null,
-      duration: Number.isFinite(video?.duration) ? video.duration : null,
-      url: location.href,
-    };
-  });
 }
 
 export async function captureBilibiliFramesFromBrowser(
@@ -154,8 +109,8 @@ export async function captureBilibiliFramesFromBrowser(
       };
       const currentUrl = () => new URL(location.href);
       const initial = window.__INITIAL_STATE__ ?? {};
-      const bvid = expectedBvid ?? initial.bvid ?? currentUrl().pathname.match(/\/video\/(BV[0-9A-Za-z]+)/)?.[1] ?? null;
-      const cid = expectedCid ?? initial.cidMap?.[initial.p]?.cid ?? initial.cid ?? null;
+      const bvid = currentUrl().pathname.match(/\/video\/(BV[0-9A-Za-z]+)/)?.[1] ?? null;
+      const cid = expectedCid;
       const episode = currentUrl().searchParams.get('p') ?? null;
       if (!bvid || !cid) return { status: 'identity_unavailable', bvid, episode, cid };
       const title = document.querySelector('h1')?.innerText?.trim() ?? document.title ?? null;
@@ -189,7 +144,8 @@ export async function captureBilibiliFramesFromBrowser(
         fnval: '4048',
         fourk: '1',
       });
-      const response = await fetch(`/x/player/playurl?${params}`, {
+      if (typeof fetch !== 'function') return { status: 'frame_capture_capability_unavailable', bvid, cid };
+      const response = await fetch(`https://api.bilibili.com/x/player/playurl?${params}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       });
@@ -237,6 +193,14 @@ export async function captureBilibiliFramesFromBrowser(
       const video = document.querySelector('video');
       if (!video) return { status: 'video_element_unavailable', bvid, cid };
 
+      const sourceStillMatches = () => (
+        currentUrl().pathname.match(/\/video\/(BV[0-9A-Za-z]+)/)?.[1] === expectedBvid
+        && String(currentUrl().searchParams.get('p') ?? '') === String(expectedEpisode ?? '')
+        && document.querySelector('video') === video
+        && (!Number.isFinite(expectedDuration) || Math.abs(video.duration - expectedDuration) <= 1)
+      );
+      if (!sourceStillMatches()) return { status: 'source_changed', bvid, cid };
+
       const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
       if (typeof video.pause === 'function') video.pause();
       const waitForQuality = async () => {
@@ -265,6 +229,7 @@ export async function captureBilibiliFramesFromBrowser(
           actual: { width: video.videoWidth, height: video.videoHeight },
         };
       }
+      if (!sourceStillMatches()) return { status: 'source_changed', bvid, cid };
 
       // Measure the delivered frame rate instead of trusting the manifest or
       // the quality label. A 1080P/30fps stream must not silently stand in for
@@ -342,6 +307,7 @@ export async function captureBilibiliFramesFromBrowser(
           });
         }
         await sleep(500);
+        if (!sourceStillMatches()) return { status: 'source_changed', bvid, cid };
         video.pause();
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;

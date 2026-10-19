@@ -6,7 +6,8 @@
 
 - `source-tools.mjs`：只做 URL 和视频/分集身份解析，不声称页面已访问。
 - `browser-adapters.mjs`：接收当前浏览器标签，统一检查 YouTube/Bilibili 页面、播放器、访问门禁和字幕控件；YouTube 字幕通过浏览器导出能力取得。
-- `browser-adapters.mjs` 的 `captureBilibiliSubtitle(tab)`：监听当前页面实际请求的 `/x/v2/subtitle/web/view`，读取字幕元数据；若元数据是非空二进制，则激活实际字幕轨道并读取 `aisubtitle.hdslb.com` 的 JSON 正文，最终区分成功文本、空响应和未解析格式。不会把页面描述当作字幕。
+- `browser-adapters.mjs` 的 `captureBilibiliSubtitle(tab)`：读取与当前分集关联的字幕元数据或实际 AI 字幕文件；身份关联和结果状态见下方 Bilibili 规则，不把页面描述当作字幕。
+- `bilibili-identity.mjs`：按当前 BV＋分P选择 CID，不能用残留首P状态覆盖映射；只读 DOM 不暴露初始状态时，使用当前标签页的原生 CDP 请求 B站正常 API，仅返回公开身份字段，不读取或导出登录凭据。
 - `normalize-transcript.mjs`：将 VTT/SRT 或 `[mm:ss]` 时间文本转换为 `body: [{from,to,text}]`，时间为秒；VTT/SRT 保留原始起止与毫秒精度，文本格式的结束时间仍为推断。用 `--help` 查看格式、语言和自动字幕滚动去重选项。
 - `validate-evidence.mjs`：校验时间范围、知识段和主张引用，替代临时 Shell/Node 检查。
 
@@ -65,7 +66,7 @@ const result = await captureBilibiliFramesFromBrowser(tab, {
 });
 ```
 
-该脚本在页面内使用同源 `fetch` 调 `playurl`，因此自然带上浏览器登录态；它不读取或导出 Cookie。返回 `status: captured` 时才继续；其他返回码的含义与下一步见主 skill 的“访问门禁与登录态判定”。
+该脚本在页面内请求站点 `api.bilibili.com` 的 `playurl`，使用当前浏览器正常登录态，不读取或导出 Cookie。宿主只提供受限只读 DOM、没有页面请求/取帧能力时返回 `frame_capture_capability_unavailable`，不声称已经取帧。返回 `status: captured` 时才继续；其他返回码的含义与下一步见主 skill 的“访问门禁与登录态判定”。
 
 **匿名路径：** 直接命令行检索 `playurl` 不带登录态，结果属于 `anonymous_request`，不能用来决定“是否要登录”。有浏览器时它只作诊断；没有浏览器时它是下文降级路线的正式取帧路径：
 
@@ -121,7 +122,9 @@ node scripts/capture-bilibili-frames.mjs \
 ## Bilibili
 
 - 页面检查调用 `browser-adapters.mjs` 的 `inspectBilibiliTab(tab)`；它只确认页面、播放器、章节和字幕控件状态，不把页面描述中的“人工校对”当作字幕文本。
-- 字幕读取调用 `captureBilibiliSubtitle(tab)`；`subtitle_exported` 且返回 JSON `body` 数组才表示获得可用字幕文本，`subtitle_empty_response` 表示字幕接口实际返回空响应，`subtitle_response_unparsed` 表示已获得响应但还需要对应格式解析。
+- 字幕读取调用 `captureBilibiliSubtitle(tab)`；先核验身份，并用返回的 `source_identity` 核对 BV、分P与 CID；可将已确认身份通过 `expectedIdentity` 锁定。`subtitle_exported` 且返回非空、带合法起止时间的 JSON `body` 数组才表示取得文本；普通 JSON 元数据不能算导出成功。
+- 仅接收明确匹配当前 CID 的元数据及其链接，或实际已观察到的 `{aid}{cid}{32位十六进制hash}` AI 字幕路径；不因同属字幕域名就接受，也不选最后一个跨分集响应。未知文件命名且无元数据关联时保留“当前未取得”。读取后重新核验页面，自动跳集则返回 `source_changed`，不返回旧集正文。
+- `subtitle_empty_response` 表示已关联目标集的空响应；`subtitle_response_unparsed` 表示响应已关联但格式尚未解析；`subtitle_identity_unverified` 表示身份未核实，不能将其当作“没有字幕”。
 - 已用真实 Bilibili 视频 `BV1xztt6tEtu` 第 58 集回归：登录和页面身份确认通过，选择“中文”轨道后实际读取 `aisubtitle.hdslb.com` JSON，得到 154 条带 `from/to/content` 的字幕文本。
 - `subtitle_empty_response` 是一次已完成的接口核验结果，不是“适配器还没做完”。记录接口、HTTP 状态、响应字节数和当前分集后，若页面没有实际暴露其他字幕轨道，就结束本次 Bilibili 字幕路线；不盲猜 `preferred_language` 或反复重放同一请求。
 - 只有当页面实际暴露了不同语言或字幕轨道，或响应参数明确给出可选轨道时，才按已观察到的候选逐个复查。候选仍为空时，终态仍是 `subtitle_empty_response`，而不是“字幕存在但工具失败”。
@@ -131,6 +134,17 @@ node scripts/capture-bilibili-frames.mjs \
 - 分开记录人工字幕、自动字幕、配音和原声轨道；“暂无字幕”只表示当前观察，不能直接推出本集不存在字幕。
 - 通过浏览器支持的能力读取播放器实际请求的字幕响应时，核对分集、CID、轨道语言、时间范围和文本。
 - 短链接或分享链接重定向后，先重新确认分集身份，再决定是否复用证据。
+
+### 非首P实测范围（2026-10-19）
+
+使用内置浏览器的已登录会话，BV 为 `BV1xztt6tEtu`；当前标签页 API 解析分P映射，字幕按实际请求文件关联，音轨取自播放器已请求且路径包含同一 CID 的资源，未导出 Cookie：
+
+| 分P | CID | 标称时长 | 字幕 | 完整音轨（ffprobe） |
+| --- | --- | --- | --- | --- |
+| [58](https://www.bilibili.com/video/BV1xztt6tEtu?p=58) | `41464826279` | 358 秒 | 154 条，末尾 357.42 秒 | AAC，357.44 秒 |
+| [59](https://www.bilibili.com/video/BV1xztt6tEtu?p=59) | `41464826731` | 110 秒 | 42 条，末尾 109.24 秒 | AAC，109.269333 秒 |
+
+首P映射为另一 CID `41454275609`，未被上述两集沿用。字幕与音轨时长的亚秒尾差保留为实际结果；本轮验证了来源关联和完整性，未重新做 ASR 或逐字听音核验。只读宿主的初始状态/fetch 缺失及自动跳集均在真实操作中遇到，修正后完成两集复测；取帧探测实际返回 `frame_capture_capability_unavailable`，本轮不声称已取得高清帧。其他账号、网络、文件命名和权限分支仍需按本次任务实际结果判断。
 
 ## 其他网页视频或本地文件
 

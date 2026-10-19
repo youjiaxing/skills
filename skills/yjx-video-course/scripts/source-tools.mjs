@@ -125,6 +125,10 @@ function anonymousCookieFrom(response) {
 // 遇到 HTTP 412（反爬）时，先访问首页取得匿名 buvid 设备 Cookie 再重试一次。
 // 结果属于匿名请求（anonymous_request），只用于身份解析，不能用来判断登录态。
 export async function resolveBilibiliCid(bvid, page = 1, { fetchImpl = fetch } = {}) {
+  const pageNumber = Number(page);
+  if (!/^\d+$/.test(String(page)) || !Number.isSafeInteger(pageNumber) || pageNumber < 1) {
+    return { status: 'cid_unresolved', reason: 'page must be a positive integer' };
+  }
   const headers = { 'User-Agent': BILIBILI_UA, Referer: 'https://www.bilibili.com/' };
   const viewUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`;
   let response = await fetchImpl(viewUrl, { headers });
@@ -144,7 +148,9 @@ export async function resolveBilibiliCid(bvid, page = 1, { fetchImpl = fetch } =
   if (payload.code !== 0 || !payload.data) {
     return { status: 'cid_unresolved', reason: `view API code=${payload.code} message=${payload.message}`, used_anonymous_cookie: usedAnonymousCookie };
   }
-  const pageNumber = Number(page) || 1;
+  if (payload.data.bvid && payload.data.bvid !== bvid) {
+    return { status: 'cid_unresolved', reason: 'view API returned a different BV', used_anonymous_cookie: usedAnonymousCookie };
+  }
   const entry = (payload.data.pages ?? []).find((item) => Number(item.page) === pageNumber);
   if (!entry) {
     return { status: 'cid_unresolved', reason: `page ${pageNumber} not found`, used_anonymous_cookie: usedAnonymousCookie };

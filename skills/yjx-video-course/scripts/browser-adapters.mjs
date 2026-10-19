@@ -3,6 +3,7 @@ import {
   nextActionForSessionOutcome,
   sessionOutcomeForMissingQuality,
 } from './bilibili-session-status.mjs';
+import { resolveBilibiliIdentity, sameBilibiliPage } from './bilibili-identity.mjs';
 
 function status(value, detail = null) {
   return { status: value, ...(detail ? { detail } : {}) };
@@ -22,7 +23,12 @@ export function classifyBilibiliSubtitleBody(body) {
   if (text.startsWith('{') || text.startsWith('[')) {
     try {
       const value = JSON.parse(text);
-      return { status: 'subtitle_exported', format: 'json', value };
+      if (Array.isArray(value?.body) && value.body.length === 0) return { status: 'subtitle_empty_response', bytes: bytes.length };
+      if (Array.isArray(value?.body) && value.body.length > 0 && value.body.every((cue) => (
+        Number.isFinite(cue.from) && cue.from >= 0 && Number.isFinite(cue.to) && cue.to > cue.from
+        && typeof cue.content === 'string' && cue.content.trim().length > 0
+      ))) return { status: 'subtitle_exported', format: 'json', value };
+      return { status: 'subtitle_response_unparsed', format: 'json', bytes: bytes.length };
     } catch {
       return { status: 'subtitle_response_unparsed', format: 'json', bytes: bytes.length };
     }
@@ -35,8 +41,22 @@ export function classifyBilibiliSubtitleBody(body) {
   };
 }
 
-function subtitleResponseUrl(url) {
-  return /(?:\/x\/v2\/subtitle\/web\/view|aisubtitle\.hdslb\.com\/)/i.test(url ?? '');
+function metadataMatches(url, identity) {
+  const parsed = new URL(url);
+  return parsed.hostname === 'api.bilibili.com' && parsed.pathname === '/x/v2/subtitle/web/view'
+    && parsed.searchParams.get('cid') === String(identity.cid)
+    && (!parsed.searchParams.has('bvid') || parsed.searchParams.get('bvid') === identity.bvid)
+    && (!parsed.searchParams.has('aid') || parsed.searchParams.get('aid') === String(identity.aid));
+}
+
+export function matchesBilibiliSubtitleFile(url, identity, linkedUrls = []) {
+  const parsed = new URL(url);
+  if (parsed.hostname !== 'aisubtitle.hdslb.com') return false;
+  if (linkedUrls.includes(parsed.href)) return true;
+  // Observed Bilibili AI-subtitle filenames bind aid + cid + a 32-hex hash.
+  // Match the entire path, never a CID substring or the domain alone.
+  if (!/^\d+$/.test(String(identity.aid)) || !/^\d+$/.test(String(identity.cid))) return false;
+  return new RegExp(`^/bfs/ai_subtitle/prod/${identity.aid}${identity.cid}[a-f0-9]{32}$`, 'i').test(parsed.pathname);
 }
 
 async function activateBilibiliSubtitleTrack(tab) {
@@ -140,66 +160,73 @@ export async function inspectBilibiliTab(tab) {
 
 export async function captureBilibiliSubtitle(
   tab,
-  { reload = true, waitMs = 4000, activateTrack = true } = {},
+  { reload = true, waitMs = 4000, activateTrack = true, resolveIdentity = resolveBilibiliIdentity, expectedIdentity = null } = {},
 ) {
+  const identity = await resolveIdentity(tab);
+  if (!identity.cid || identity.status !== 'identity_verified') return { status: 'subtitle_identity_unverified' };
+  if (expectedIdentity && (!sameBilibiliPage(expectedIdentity, identity) || expectedIdentity.cid !== identity.cid)) {
+    return { status: 'source_changed' };
+  }
   const cdp = await tab.capabilities.get('cdp');
   await cdp.send('Network.enable');
   const before = await cdp.readEvents({ methods: ['Network.responseReceived'], limit: 1 });
   if (reload) await tab.reload();
   await tab.playwright.waitForTimeout(waitMs);
-  let page = await cdp.readEvents({
-    afterSequence: before.cursor,
-    methods: ['Network.responseReceived'],
-    limit: 1000,
-  });
-  let responses = page.events.filter((event) => /\/x\/v2\/subtitle\/web\/view(?:\?|$)/i.test(event.params?.response?.url ?? ''));
+  const events = [];
+  let cursor = before.cursor;
+  const collect = async () => {
+    for (let count = 0; count < 3; count += 1) {
+      const page = await cdp.readEvents({ afterSequence: cursor, methods: ['Network.responseReceived'], limit: 1000 });
+      events.push(...page.events);
+      cursor = page.cursor;
+      if (!page.hasMore) return;
+    }
+  };
+  await collect();
+  const responseOf = (event) => event.params?.response;
+  const linkedUrls = [];
+  let metadataResult = null;
+  let metadataResponse = null;
+  const processed = new Set();
+  const processMetadata = async () => {
+    for (const event of events) {
+      if (processed.has(event.params?.requestId) || !responseOf(event)?.url || !metadataMatches(responseOf(event).url, identity)) continue;
+      processed.add(event.params.requestId);
+      const body = await cdp.send('Network.getResponseBody', { requestId: event.params.requestId });
+      metadataResult = classifyBilibiliSubtitleBody(body);
+      metadataResponse = responseOf(event);
+      try {
+        const value = JSON.parse(decodeResponseBody(body).toString('utf8'));
+        const tracks = value.subtitle?.subtitles ?? value.subtitles ?? [];
+        for (const track of tracks) if (track.subtitle_url) linkedUrls.push(new URL(track.subtitle_url, responseOf(event).url).href);
+      } catch { /* Binary metadata may still be followed by a linked AI file. */ }
+    }
+  };
+  await processMetadata();
+  const files = () => events.filter((event) => responseOf(event)?.url && matchesBilibiliSubtitleFile(responseOf(event).url, identity, linkedUrls));
   let trackActivated = false;
-  if (responses.length === 0 && activateTrack) {
-    const afterActivation = await cdp.readEvents({ methods: ['Network.responseReceived'], limit: 1 });
+  if (files().length === 0 && !['subtitle_exported', 'subtitle_empty_response'].includes(metadataResult?.status) && activateTrack) {
     trackActivated = await activateBilibiliSubtitleTrack(tab);
     if (trackActivated) {
       await tab.playwright.waitForTimeout(1000);
-      page = await cdp.readEvents({
-        afterSequence: afterActivation.cursor,
-        methods: ['Network.responseReceived'],
-        limit: 1000,
-      });
-      responses = page.events.filter((event) => /\/x\/v2\/subtitle\/web\/view(?:\?|$)/i.test(event.params?.response?.url ?? ''));
+      await collect();
+      await processMetadata();
     }
   }
-  if (responses.length === 0) {
-    return {
-      status: 'subtitle_request_not_observed',
-      track_activated: trackActivated,
-    };
-  }
-  let response = responses.at(-1);
-  let body = await cdp.send('Network.getResponseBody', { requestId: response.params.requestId });
-  const classified = classifyBilibiliSubtitleBody(body);
-  if (activateTrack && !trackActivated && classified.status === 'subtitle_response_unparsed') {
-    const afterMetadata = await cdp.readEvents({ methods: ['Network.responseReceived'], limit: 1 });
-    if (await activateBilibiliSubtitleTrack(tab)) {
-      trackActivated = true;
-      await tab.playwright.waitForTimeout(1000);
-      const activated = await cdp.readEvents({
-        afterSequence: afterMetadata.cursor,
-        methods: ['Network.responseReceived'],
-        limit: 1000,
-      });
-      const subtitleFiles = activated.events.filter((event) => subtitleResponseUrl(event.params?.response?.url));
-      const fileResponse = subtitleFiles.find((event) => /aisubtitle\.hdslb\.com/i.test(event.params.response.url));
-      if (fileResponse) {
-        response = fileResponse;
-        body = await cdp.send('Network.getResponseBody', { requestId: response.params.requestId });
-      }
-    }
-  }
-  const finalClassified = classifyBilibiliSubtitleBody(body);
+  const file = files().at(-1);
+  const finalClassified = file
+    ? classifyBilibiliSubtitleBody(await cdp.send('Network.getResponseBody', { requestId: file.params.requestId }))
+    : metadataResult;
+  const after = await resolveIdentity(tab);
+  if (after.status !== 'identity_verified' || !sameBilibiliPage(identity, after) || identity.cid !== after.cid) return { status: 'source_changed' };
+  if (!finalClassified) return { status: 'subtitle_request_not_observed', track_activated: trackActivated };
+  const response = file ? responseOf(file) : metadataResponse;
   return {
     ...finalClassified,
     track_activated: trackActivated,
-    source_url: new URL(response.params.response.url).origin + new URL(response.params.response.url).pathname,
-    http_status: response.params.response.status,
+    source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
+    source_url: new URL(response.url).origin + new URL(response.url).pathname,
+    http_status: response.status,
   };
 }
 
