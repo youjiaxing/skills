@@ -74,7 +74,9 @@ const result = await captureBilibiliFramesFromBrowser(tab, {
 
 `captureBilibiliFramesFromBrowser` 会在只读 `evaluate` 返回能力缺口或拒绝执行时，使用 `tab.capabilities.get('cdp')` 的 `Runtime.evaluate` 在同一内置浏览器标签内执行相同的取帧逻辑。它导出 `canvas.drawImage(video, …)` 的原始 PNG，保留 `execution_backend`、`capture_surface`、实际时间、暂停状态和图片尺寸；没有切换到外部 Chrome，也不导出 Cookie 或媒体签名 URL。宿主不暴露这项能力时，保留能力缺口，不能凭截图放大宣称高清取帧成功。
 
-批量取帧按目标数量设置原生调用超时，上限60秒；超时返回后先复查页面和暂停状态，再缩小批次，不连续重复失败请求。脚本不重复请求当前档位，并在切换时请求实际选中的变体 ID；通过播放器帧计数核验实际帧率，短采样只容许一个计数帧的边界误差。有效采样不足1秒、没有新增帧或无法测量帧率时返回 `frame_rate_unverified`；未就绪或偏离目标超过0.1秒返回 `frame_not_ready`，均不能记为取帧成功。
+批量取帧按目标数量设置原生调用超时，上限60秒；超时返回后先复查页面和暂停状态，再缩小批次，不连续重复失败请求。脚本不重复请求当前档位，并在切换时请求实际选中的变体 ID；通过播放器帧计数检查明显的帧率落差，短采样只容许一个计数帧的边界误差。有效采样不足1秒、没有新增帧或无法测量帧率时返回 `frame_rate_unverified`；未就绪或偏离目标超过0.1秒返回 `frame_not_ready`，均不能记为取帧成功。
+
+`selected_frame_rate` 是所选变体的清单帧率；`measured_frame_rate` 是短窗口播放器计数估计，可能受缓冲与计数边界影响而高于清单值。分别保留两者，不能据此把30fps源声称为更高帧率；需要精确媒体帧率时使用获授权产物的独立媒体探测结果。本次端到端整理中已实际遇到30fps变体出现约40fps短采样估计。
 
 **匿名路径：** 直接命令行检索 `playurl` 不带登录态，结果属于 `anonymous_request`，不能用来决定“是否要登录”。有浏览器时它只作诊断；没有浏览器时它是下文降级路线的正式取帧路径：
 
