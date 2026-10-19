@@ -153,7 +153,7 @@ Windows PowerShell 使用普通 PowerShell 变量，而非 `$env:` 或 Unix shel
 1. 记录工具名称与版本、模型名称（如 `small`）、量化/计算类型（如 `int8`）、设备（CPU/GPU）和模型来源；中文使用多语言模型，不用 `.en` 模型。
 2. 显式指定语言（中文 `zh`），不启用翻译。若启用 VAD 或 `initial_prompt`，记录参数；`initial_prompt` 只写主题术语，不写视频结论，避免诱导幻觉。
 3. 输入为本集完整音轨（16 kHz 单声道 WAV 或等价数组），核对时长；不裁切、不加速，或记录偏移。
-4. 输出带起止秒数的结构化 JSON（`from`/`to`/`content`）和便于阅读的 `[mm:ss]` 文本，保存在本集证据目录，可用 `normalize-transcript.mjs` 归一化。
+4. 输出带起止秒数的结构化 JSON（`from`/`to`/`content`）和便于阅读的 `[mm:ss]` 文本，保存在本集证据目录。原生 JSON 按工具实际 schema 解析，不直接送入 `normalize-transcript.mjs`；该脚本只接收 VTT/SRT 或时间文本。有显式起止的 SRT/VTT 时优先从它归一化，避免用文本的推断结束时间替换已取得的精确时间。
 5. 检查非空、时间单调、首尾覆盖与长空白（VAD 跳过的段落要标出，并用画面或原音核对其中的重要内容）。
 6. 命令名、专有名词等重要内容按主 skill 用清晰画面或原音校正，并在证据底稿记录“转写写法 / 画面写法 / 采用写法”。
 

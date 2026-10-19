@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 把视频变成一份**可以脱离原视频完成第一次学习**的课程。严谨性优先于交付数量和速度：先取得真实、带时间的视频证据，再编写课程；标题相关、资料合理或内容流畅都不能替代取证。用户没有指定深度时使用“标准”，优先字幕，再按需要补做本地转写和画面分析。
 
-采用“来源无关核心 + 来源适配”的路线：课程结构、证据底稿、主张映射、审核和输出规则对所有来源相同；视频身份、字幕、音频、画面、权限和时间定位的获取方式按来源适配。需要平台差异时，读取 [来源适配与能力协商](references/source-adapters.md)。
+采用“来源无关核心 + 来源适配”的路线：课程结构、证据底稿、主张映射、审核和输出规则对所有来源相同；视频身份、字幕、音频、画面、权限和时间定位的获取方式按来源适配。需要平台差异时，读取 [来源适配与能力协商](references/source-adapters.md)；YouTube 字幕导出或命令行获取读取 [YouTube 字幕取证](references/youtube-subtitles.md)，其路线沿用本 skill 的访问门禁。
 
 机械步骤优先使用 `scripts/` 中的确定性工具：用 `source-tools.mjs` 解析 URL（自动跟踪短链接重定向与防盗链标头），用 `browser-adapters.mjs` 检查已打开的浏览器页面并导出字幕，遇到内嵌硬字幕或无独立字幕轨道时用 `extract-hard-subtitles.mjs` 调用 macOS 原生 Swift Vision OCR 提取中英双语字幕（非 macOS 或缺 `swiftc` 时输出结构化 `ocr_unavailable`，按降级路线处理），用 `capture-bilibili-frames.mjs` 截取解码帧（优先 ffmpeg/ffprobe，其次 OpenCV，均缺失时在下载前返回 `frame_tools_missing`），用 `normalize-transcript.mjs` 标准化字幕，用 `validate-evidence.mjs` 校验底稿，用 `validate-course-artifacts.mjs` 校验正文图片、证据索引和磁盘文件的一致性，用 `validate-delivery.mjs` 校验逐集状态、恢复记录和 Notion 回读。脚本返回的状态是事实底稿；Agent 只解释内容、判断证据是否足够和处理脚本明确标出的 pending 状态。
 

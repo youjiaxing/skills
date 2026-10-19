@@ -7,7 +7,7 @@
 - `source-tools.mjs`：只做 URL 和视频/分集身份解析，不声称页面已访问。
 - `browser-adapters.mjs`：接收当前浏览器标签，统一检查 YouTube/Bilibili 页面、播放器、访问门禁和字幕控件；YouTube 字幕通过浏览器导出能力取得。
 - `browser-adapters.mjs` 的 `captureBilibiliSubtitle(tab)`：监听当前页面实际请求的 `/x/v2/subtitle/web/view`，读取字幕元数据；若元数据是非空二进制，则激活实际字幕轨道并读取 `aisubtitle.hdslb.com` 的 JSON 正文，最终区分成功文本、空响应和未解析格式。不会把页面描述当作字幕。
-- `normalize-transcript.mjs`：把带 `[mm:ss]` 时间文本转换为统一的 `body` 结构。
+- `normalize-transcript.mjs`：将 VTT/SRT 或 `[mm:ss]` 时间文本转换为 `body: [{from,to,text}]`，时间为秒；VTT/SRT 保留原始起止与毫秒精度，文本格式的结束时间仍为推断。用 `--help` 查看格式、语言和自动字幕滚动去重选项。
 - `validate-evidence.mjs`：校验时间范围、知识段和主张引用，替代临时 Shell/Node 检查。
 
 浏览器适配器不能绕过登录、反机器人验证或平台权限；它只能把页面状态转成固定字段。遇到 `login_or_verification_required`，以及一切登录态、画质门禁与“浏览器”定义，统一按主 skill 的“访问门禁与登录态判定”执行，本文件不重复规则。
@@ -87,7 +87,7 @@ node scripts/capture-bilibili-frames.mjs \
 
 ## 无浏览器 / 非 macOS 降级路线
 
-宿主没有内置浏览器、或不是 macOS 时使用。目标是在不绕过门禁、不降低证据门槛的前提下取得可用证据；每一步记录实际结果。
+宿主没有内置浏览器、或不是 macOS 时使用。目标是在不绕过门禁、不降低证据门槛的前提下取得可用证据；每一步记录实际结果。**下列来源接口与媒体步骤针对 Bilibili**；YouTube 按 [YouTube 字幕取证](youtube-subtitles.md) 的命令行路线执行，其他来源按各自能力选路，不套用 B站 CID 或画质代码。
 
 1. **身份**：`node scripts/source-tools.mjs --resolve-cid <链接>`。它用公开 view 接口解析 CID、分集标题与时长；HTTP 412 时先访问首页取得匿名 `buvid3`/`b_nut` 设备 Cookie 再重试一次。只保留匿名设备标识，不携带、读取或导出任何登录 Cookie。结果记为 `anonymous_request`。
 2. **字幕**：匿名 `player/wbi/v2` 等接口返回空字幕时，记录为“当前未取得（anonymous_request）”，不写“本集没有字幕”。浏览器字幕路线记为“未执行：宿主无浏览器”。
@@ -116,14 +116,7 @@ node scripts/capture-bilibili-frames.mjs \
 
 ## YouTube
 
-- 页面检查调用 `browser-adapters.mjs` 的 `inspectYouTubeTab(tab)`；确认 `access.status` 为 `confirmed` 后，调用 `exportYouTubeTranscript(tab)`。
-- 导出成功后保存返回路径，并用 `normalize-transcript.mjs` 生成统一字幕 JSON；导出文件优先于后续一次性的字幕渲染状态。
-- 核对视频 ID、最终 URL、标题、频道、时长、播放列表位置和当前语言轨道；播放列表上下文不能替代当前视频身份。
-- 分开记录人工字幕、自动生成字幕、翻译字幕和配音语言。翻译字幕可以辅助导航，但不能默认等同于原声证据。
-- 字幕菜单可见不等于完整字幕可读取；需要核对实际文本、时间范围和是否存在首尾缺失。
-- 章节可以帮助定位知识段，但不能支撑字幕未覆盖的核心结论。
-- 遇到私有、未列出、年龄限制、地区限制或登录页面时，按权限阻塞处理；不读取 Cookie，也不把第三方转载当作等价来源。
-- 时间参数只有在实际打开后落在对应段落附近时才标记为可跳转；否则保留普通链接和 `mm:ss` 文本。
+处理 YouTube 时读取 [YouTube 字幕取证](youtube-subtitles.md)：内置浏览器优先；没有浏览器或导出能力不足且未触发访问门禁时，可用已有 yt-dlp 取得目标语言的人工或自动字幕，再解析 VTT/SRT。该文件同时规定短时 URL/空响应的有界恢复和原始字幕映射；时间链接仍按主 skill 验证。
 
 ## Bilibili
 
@@ -133,6 +126,8 @@ node scripts/capture-bilibili-frames.mjs \
 - `subtitle_empty_response` 是一次已完成的接口核验结果，不是“适配器还没做完”。记录接口、HTTP 状态、响应字节数和当前分集后，若页面没有实际暴露其他字幕轨道，就结束本次 Bilibili 字幕路线；不盲猜 `preferred_language` 或反复重放同一请求。
 - 只有当页面实际暴露了不同语言或字幕轨道，或响应参数明确给出可选轨道时，才按已观察到的候选逐个复查。候选仍为空时，终态仍是 `subtitle_empty_response`，而不是“字幕存在但工具失败”。
 - 核对最终页面、BV 号、分集 `p`、CID、标题和时长；当前 `p` 是课程身份的一部分。
+- URL 的 `oid` 是依接口上下文而定的对象 ID，不作为 CID 别名。没有明确 `cid` 时，用 BV 与目标 `p` 解析真实 CID；原始 `oid` 留在来源 URL 中，不将它直接用于播放、字幕或音频请求。
+- 同一身份核验也适用于音频：下载或转写前确认目标分P的 CID 与音轨时长，不能只凭 BV 号或合集标题选媒体。不得直接用固定首P的 `bili audio` 作为多分P兜底；只有后端能明确选择并回读目标分P/CID，才可接入。现有匿名媒体与浏览器路线继续按上述规则使用。
 - 分开记录人工字幕、自动字幕、配音和原声轨道；“暂无字幕”只表示当前观察，不能直接推出本集不存在字幕。
 - 通过浏览器支持的能力读取播放器实际请求的字幕响应时，核对分集、CID、轨道语言、时间范围和文本。
 - 短链接或分享链接重定向后，先重新确认分集身份，再决定是否复用证据。

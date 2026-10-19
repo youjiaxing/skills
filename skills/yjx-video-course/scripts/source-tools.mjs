@@ -83,7 +83,9 @@ export function inspectSourceUrl(raw) {
     result.bvid = firstMatch(path, [/(BV[0-9A-Za-z]+)/i])
       ?? query.get('bvid')
       ?? null;
-    result.cid = query.get('cid') ?? query.get('oid') ?? null;
+    // oid is a context-dependent object ID, not an alias for the part's CID.
+    // Keep it in original_url; resolve the actual CID from BV + p when needed.
+    result.cid = query.get('cid') ?? null;
     result.episode = query.get('p') ?? null;
     result.normalized_url = result.bvid
       ? `https://www.bilibili.com/video/${result.bvid}${result.episode ? `?p=${encodeURIComponent(result.episode)}` : ''}`

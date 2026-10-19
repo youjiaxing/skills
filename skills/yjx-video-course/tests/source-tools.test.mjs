@@ -20,7 +20,14 @@ test('normalizes Bilibili watch-later URLs without losing episode identity', () 
   const result = inspectSourceUrl('bilibili.com/list/watchlater/?bvid=BV1q9He6SEyX&oid=117376775358202&p=2');
   assert.equal(result.platform, 'bilibili');
   assert.equal(result.bvid, 'BV1q9He6SEyX');
-  assert.equal(result.cid, '117376775358202');
+  assert.equal(result.cid, null);
+  assert.equal(result.episode, '2');
+  assert.match(result.original_url, /oid=117376775358202/);
+});
+
+test('uses an explicit Bilibili cid without confusing it with oid', () => {
+  const result = inspectSourceUrl('https://www.bilibili.com/video/BV1q9He6SEyX?p=2&oid=117376775358202&cid=41464826279');
+  assert.equal(result.cid, '41464826279');
   assert.equal(result.episode, '2');
 });
 
