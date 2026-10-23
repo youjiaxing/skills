@@ -100,6 +100,11 @@ test('uncertain reply is retained and not retried after receiver restart', async
   assert.equal(replyAttempts, 1);
 });
 
+test('not-submitted request explains the safe next step without imposing an unresolved gate',()=>{
+  const failed=resultText({status:'blocked',submitted:false,error:{code:'NOT_SUBMITTED'}},'request');
+  assert.match(failed,/未提交/);assert.match(failed,/重新发送/);assert.doesNotMatch(failed,/不要重复/);
+});
+
 test('unconfirmed Codex results are reported without a successful answer claim', async (t) => {
   const f = await fixture(t, { send: async () => ({ status: 'unconfirmed', answer: 'late partial' }) });
   await f.receiver.handle(event());

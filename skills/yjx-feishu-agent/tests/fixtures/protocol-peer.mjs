@@ -25,6 +25,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   log(request.method);
   const { id, method, params } = request;
   if (method === 'initialize') {
+    if (request.params?.capabilities?.experimentalApi) writeFileSync(path.join(directory,'experimental.json'),'true');
     if (mode === 'no-initialize') return;
     if (mode === 'malformed') { process.stdout.write('invalid-json\n'); return; }
     respond(id, { userAgent: 'protocol-test' });
@@ -53,6 +54,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       if(mode!=='state-missing-event') send({ method: 'turn/completed', params: { threadId, turn } });
       if (mode === 'before-ack') respond(id, { turn: { id: turn.id } });
     }, mode==='state-long-running' ? 1200 : 30);
+  } else if (method === 'thread/queue/list') {
+    const knownQueued = mode.startsWith('queue') && existsSync(path.join(directory,'queue.json'));
+    respond(id,{data:!knownQueued || existsSync(path.join(directory,'queue-active.flag')) ? [{id:'queued-opaque'}]
+      : existsSync(path.join(directory,'queue-missing.flag')) ? undefined : [] ,nextCursor:null});
   } else if (method === 'thread/turns/list') {
     const queuedFile = path.join(directory, 'queue.json');
     if (mode.startsWith('queue') && existsSync(queuedFile)) {
@@ -62,8 +67,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         return;
       }
       const submitted = JSON.parse(readFileSync(queuedFile, 'utf8'));
-      const complete = mode === 'queue-late' ? existsSync(path.join(directory, 'complete.flag')) : polls > 1;
-      const data = [makeTurn(submitted.message, complete), { id: 'baseline', items: [] }];
+      const complete = ['queue-late','queue-empty-newer-turn'].includes(mode) ? existsSync(path.join(directory, 'complete.flag')) : polls > 1;
+      const data = [makeTurn(submitted.message, complete)];
+      if (mode === 'queue-empty-newer-turn') data.unshift({ id: 'unrelated-later-turn', status: 'interrupted',
+        completedAt: null, items: [] });
+      data.push({ id: 'baseline', items: [] });
       if (mode === 'queue-ambiguous') data.unshift({ ...data[0], id: 'second-matching-turn' });
       respond(id, { data, nextCursor: null });
     } else {

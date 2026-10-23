@@ -122,6 +122,27 @@ test('state host interaction failure leaves an uncertain task without issuing in
   assert.equal(calls.filter(c=>c.method==='turn/interrupt').length,0);
 });
 
+test('refresh retries only when persisted binary is unavailable and uses the current executable',async t=>{
+  const c=await context(t,'direct');
+  const original=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);
+  const requestFile=path.join(c.input.stateDir,'requests',original.requestId,'record.json');
+  await writeFile(requestFile,JSON.stringify({...original,binary:path.join(c.directory,'missing-codex.exe'),
+    status:'unconfirmed',answer:null,answers:[]}));
+  await writeFile(path.join(c.directory,'turn.json'),JSON.stringify({id:original.turnId,status:'completed',
+    completedAt:123,items:[{type:'agentMessage',phase:'final_answer',text:'recovered'}]}));
+  const refreshed=await requestStatus({...c.input,refresh:true},c.dependencies);
+  assert.equal(refreshed.status,'completed');assert.equal(refreshed.answer,'recovered');
+});
+
+test('refresh does not retry a configured binary that the caller explicitly selected',async t=>{
+  const c=await context(t,'direct');
+  const original=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);
+  const requestFile=path.join(c.input.stateDir,'requests',original.requestId,'record.json');
+  const explicit=path.join(c.directory,'explicit-missing.exe');
+  await writeFile(requestFile,JSON.stringify({...original,binary:explicit,status:'unconfirmed'}));
+  await assert.rejects(requestStatus({...c.input,refresh:true,codex:explicit},c.dependencies),/Codex executable not found/);
+});
+
 test('state refresh applies the same terminal proof as live observation without restarting a turn',async t=>{
   const c=await context(t,'direct');
   const original=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);
@@ -143,6 +164,16 @@ test('state refresh applies the same terminal proof as live observation without 
   const calls=(await readFile(path.join(c.directory,'calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(calls.filter(call=>call.method==='turn/start').length,1);
   assert.equal(calls.filter(call=>call.method==='turn/interrupt').length,0);
+});
+
+test('new input refreshes an unresolved prior request before evaluating the thread gate',async t=>{
+  const c=await context(t,'no-completion');
+  const first=await sendCodex({...c.input,requestId:'first',timeoutMs:1000},c.dependencies);
+  await writeFile(path.join(c.input.stateDir,'requests',first.requestId,'record.json'),
+    JSON.stringify({...first,status:'unconfirmed',answer:null,answers:[]}));
+  const guard=await sendCodex({...c.input,requestId:'second'},c.dependencies);
+  assert.equal(guard.status,'blocked');assert.equal(guard.submitted,false);
+  assert.equal(guard.oldThreadRequest.requestId,first.requestId);
 });
 
 test('archived, unavailable and unknown targets never resume, queue or submit', async t => {
@@ -205,17 +236,58 @@ test('ambiguous correlation remains unconfirmed and never resubmits', async (t) 
   assert.equal(c.counts().queueCalls, 1);
 });
 
+test('queue-empty refresh ends a request only after its own turn is proven transiently interrupted',async t=>{
+  const c=await context(t,'queue-late');
+  const record=await sendCodex({...c.input,timeoutMs:1000},c.dependencies);
+  assert.equal(record.status,'unconfirmed');
+  assert.ok(record.turnId);
+  const originalTurnId=record.turnId;
+  const requestFile=path.join(c.input.stateDir,'requests',record.requestId,'record.json');
+  await writeFile(requestFile,JSON.stringify({...record,status:'unconfirmed',answer:null,answers:[]}));
+  await writeFile(path.join(c.directory,'turn.json'),JSON.stringify({id:originalTurnId,status:'interrupted',completedAt:null,
+    items:[{type:'userMessage',content:[{type:'text',text:record.marker}]}]}));
+  const refreshed=await requestStatus({...c.input,refresh:true},c.dependencies);
+  assert.equal(refreshed.status,'interrupted');assert.equal(refreshed.queueState,'empty');
+  assert.equal(refreshed.turnId,originalTurnId);
+  assert.equal(refreshed.error,null);assert.deepEqual(refreshed.answers,[]);
+});
+
+test('new input proceeds after an unresolved prior request refreshes to a terminal state',async t=>{
+  const c=await context(t,'queue-empty-newer-turn');
+  const first=await sendCodex({...c.input,requestId:'first',timeoutMs:1000},c.dependencies);
+  assert.equal(first.status,'unconfirmed');assert.ok(first.turnId);
+  await writeFile(path.join(c.input.stateDir,'requests',first.requestId,'record.json'),
+    JSON.stringify({...first,status:'unconfirmed',answer:null,answers:[]}));
+  const second=await sendCodex({...c.input,requestId:'second',timeoutMs:1000},c.dependencies);
+  const heldByPrevious=second.error?.code==='REQUEST_HELD';
+  assert.equal(heldByPrevious,false,
+    JSON.stringify({error:second.error,oldThreadRequest:second.oldThreadRequest}));
+  assert.equal(second.oldThreadRequest.requestId,'first');
+  assert.equal(second.oldThreadRequest.status,'interrupted');
+  const prior=JSON.parse(await readFile(path.join(c.input.stateDir,'requests',first.requestId,'record.json'),'utf8'));
+  assert.equal(prior.status,'interrupted');assert.equal(prior.turnId,first.turnId);
+  assert.notEqual(prior.turnId,'unrelated-later-turn');
+});
+test('queue-empty refresh ignores a newer unrelated interrupted turn',async t=>{
+  const c=await context(t,'queue-empty-newer-turn');
+  const record=await sendCodex({...c.input,timeoutMs:1000},c.dependencies);
+  assert.equal(record.status,'unconfirmed');assert.ok(record.turnId);
+  const originalTurnId=record.turnId;
+  const requestFile=path.join(c.input.stateDir,'requests',record.requestId,'record.json');
+  await writeFile(requestFile,JSON.stringify({...record,status:'unconfirmed',answer:null,answers:[]}));
+  await writeFile(path.join(c.directory,'turn.json'),JSON.stringify({id:originalTurnId,status:'interrupted',completedAt:null,
+    items:[{type:'userMessage',content:[{type:'text',text:record.marker}]}]}));
+  const refreshed=await requestStatus({...c.input,refresh:true},c.dependencies);
+  assert.equal(refreshed.status,'interrupted');assert.equal(refreshed.turnId,originalTurnId);
+  assert.notEqual(refreshed.turnId,'unrelated-later-turn');
+});
+
 test('late queued completion can be refreshed without submitting again', async (t) => {
   const c = await context(t, 'queue-late');
   const result = await sendCodex({ ...c.input, timeoutMs: 5000 }, c.dependencies);
   assert.equal(result.status, 'unconfirmed');
   assert.equal(result.submitted, true);
   await sendCodex(c.input, c.dependencies);
-  assert.equal(c.counts().queueCalls, 1);
-  const next = await sendCodex({ ...c.input, requestId: 'another-request' }, c.dependencies);
-  assert.equal(next.status, 'blocked');
-  assert.equal(next.submitted, false);
-  assert.match(next.error.message, /Previous request/);
   assert.equal(c.counts().queueCalls, 1);
   await writeFile(path.join(c.directory, 'complete.flag'), 'ready');
   const refreshed = await requestStatus({ ...c.input, refresh: true }, c.dependencies);

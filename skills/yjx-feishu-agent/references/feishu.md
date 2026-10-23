@@ -42,7 +42,7 @@ node skills/yjx-feishu-agent/scripts/feishu.mjs bind --chat oc_GROUP --user ou_U
 node skills/yjx-feishu-agent/scripts/receiver.mjs start
 ```
 
-Windows 将 `--codex` 替换为原生 `codex.exe` 路径；`--cwd` 是该 Codex 请求的工作目录，路径带空格时加引号。以上命令均支持 `--state-dir`。绑定保存在状态目录 `feishu/bindings.json`；再次绑定另一个群可添加映射，同一群已有映射时拒绝覆盖。变更配置先停止接收器，再核实并编辑该本机文件；`codex` 和 `cwd` 为进程共用配置。
+Windows 将 `--codex` 替换为原生 `codex.exe` 路径；`--cwd` 是该 Codex 请求的工作目录，路径带空格时加引号。以上命令均支持 `--state-dir`。绑定保存在状态目录 `feishu/bindings.json`；再次绑定另一个群可添加映射。同一群已有映射时会拒绝覆盖，因为 `bind` 只新增群。修改已有群的单条映射应先停止接收器，通过 `bindings.mjs rebind` 的旧 UUID 校验和备份流程完成；其他情况可停服后按原结构编辑本机文件，再运行 `bindings.mjs check`。变更配置先停止接收器，再核实并编辑该本机文件；`codex` 和 `cwd` 为进程共用配置。
 
 ## 查询与重新绑定
 
@@ -56,7 +56,7 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs start
 
 以上命令均支持 `--state-dir PATH`。list 只读本机配置；check 通过原生 App Server 的 `thread/read` 只读核对目标，不续写、不解归档。当前版本按返回 path 的独立目录组件区分 sessions 与 archived_sessions；路径缺失/未知为 unknown，notLoaded 不能证明删除。已核实的 `thread not loaded: UUID` 错误归为 unavailable，原因可能是未加载或数据缺失，不声称永久删除。
 
-发送前核查目标。默认绑定路径的 archived、unavailable、unknown 均阻断；只有按全局默认规则使用 [引用路由](routing.md) 且来源明确的引用请求，可自动解归档精确目标并读回核实后提交。恢复失败、响应未知或状态无法确认均不提交、不改投其他会话。已提交但未知的请求仍按旧编号只读核对；旧入站事件不会自动重放。
+发送前核查目标。默认绑定路径的 archived、unavailable、unknown 均阻断；收到新消息后，同线程上一请求若仍未显示终态，会先做一次只读历史刷新；刷新得到 `completed`、`failed` 或 `interrupted` 终态才继续，仍无法确认时保留原门禁。旧请求记录中的 Codex 路径若已因 Desktop 更新失效，刷新只回退到当前绑定配置的原生 `codex.exe`，不会据此发送新轮次。未提交的新消息提示会明确本轮没有执行、稍后可重试，不会误称“不要重复”。`feishu.mjs explain-request --request-id ID` 只读展示同一安全说明。只有按全局默认规则使用 [引用路由](routing.md) 且来源明确的引用请求，可自动解归档精确目标并读回核实后提交。恢复失败、响应未知或状态无法确认均不提交、不改投其他会话。已提交但未知的请求仍按旧编号只读核对；旧入站事件不会自动重放。
 
 rebind 仅更改已存在群的 threadId，要求旧 UUID 完全匹配、新目标可读且未归档；保留用户白名单、其他群、原请求/投递日志。它与接收器共用应用锁，必须先优雅停止；残留锁需核查而非强行删除。写入前保存 previous/next 到 `feishu/binding-history`，存档是变更意图和恢复依据，不单独证明配置写入成功。重启后新消息才使用新目标；不会迁移上下文、创建会话或重放任务。新增群的 bind 命令也使用同一应用锁，需先停止接收器。手工编辑无法参与锁协调，必须停服并串行维护配置。
 
@@ -90,7 +90,7 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs recover-lock
 
 `feishu.mjs serve` 仍可用于独立终端前台调试，Ctrl+C 或 SIGTERM 优雅停止。若从 Codex Desktop 的工具终端启动，Desktop 退出可能连带停止它；日常使用应走上述管理命令。
 
-接收器接受绑定群、白名单用户发出的 text/post，且必须明确 @ 当前机器人。会补入同群引用链的文字/卡片内容与图片路径，另提供按需历史查询，见 [消息上下文](messages.md)。事件以应用 ID + 飞书 message ID 生成稳定请求编号；接收日志写入并同步文件后才向 SDK 返回，Codex 执行在队列中串行完成。入口和执行队列各有 32 条上限，超限返回失败。仍以文本回复原消息，过长时截断并提示到 Codex 查看；不支持普通附件自动解析或主动定时推送。主动卡片/图片投递见 [投递说明](outbound.md)，与接收器能力区分。
+接收器接受绑定群、白名单用户发出的 text/post，且必须明确 @ 当前机器人。会补入同群引用链的文字/卡片内容与图片路径，另提供按需历史查询，见 [消息上下文](messages.md)。事件以应用 ID + 飞书 message ID 生成稳定请求编号；接收日志写入并同步文件后才向 SDK 返回，Codex 执行在队列中串行完成。入口和执行队列各有 32 条上限，超限返回失败。仍以文本回复原消息，过长时截断并提示到 Codex 查看；普通文件附件不自动解析，引用图片由接收器下载为本地路径，主动定时推送走投递命令。主动卡片/图片投递见 [投递说明](outbound.md)，与接收器能力区分。
 
 进程中断后的日志保留在 `feishu/<app hash>/messages`，重启报告 `unsettled`，不会自动重放。日志不保存原消息全文：`accepted` 且无对应 Codex 请求记录时，正文需从飞书人工找回；`processing`、`replying`、`unconfirmed` 则先查 `agent.mjs status --request-id ... --refresh` 和飞书是否已有回复，不能直接删日志重发。写入文件使用 sync 和原子 rename；目录元数据未做跨平台断电保证。回复 API 返回未知时不自动重发，避免重复回复。实际模型执行权限、Desktop 宿主限制沿用 [Codex 接入说明](codex.md)。
 

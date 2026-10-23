@@ -3,7 +3,7 @@ import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AppServer, resolveCodex, RpcError, runQueue, timeLeft } from './app-server.mjs';
-import { claimThreadRequest, lockThread, readRecord, reserveRecord, saveRecord, validateRequestId } from './state.mjs';
+import { claimThreadRequest, lockThread, readRecord, reserveRecord, resolveThreadRequest, saveRecord, validateRequestId } from './state.mjs';
 import { readTarget } from './target.mjs';
 import { observeTurn, terminalSnapshot } from './turn-observer.mjs';
 
@@ -229,6 +229,14 @@ export async function sendCodex(input, overrides = {}) {
   try {
     release = await lockThread(options.stateDir, threadId, deadline);
     if (!release) throw new Error('Thread is busy or a previous sender left a lock; inspect the lock before recovery');
+    const prior = await resolveThreadRequest(options.stateDir, record,
+      requestId => requestStatus({...options,requestId,refresh:true}, {...dependencies,lockHeld:true}));
+    if (prior.old) {
+      const unresolved = prior.old.submitted && !['completed','failed','interrupted'].includes(prior.old.status);
+      record.oldThreadRequest = { requestId:prior.old.requestId, status:prior.old.status,
+        submitted:prior.old.submitted, ...(prior.refreshError ? {refreshError:prior.refreshError} : {}) };
+      if (unresolved) throw new Error('Previous request ' + prior.old.requestId + ' is unresolved; refresh its status before sending another request');
+    }
     await claimThreadRequest(options.stateDir, record);
     record.binary = await resolveCodex(options.codex);
     record.cwd = options.cwd;
@@ -238,7 +246,10 @@ export async function sendCodex(input, overrides = {}) {
   } catch (error) {
     record.status = record.submitted ? 'unconfirmed' : 'blocked';
     if (options.waitMode==='deadline' && performance.now()>=deadline) record.waitTimedOut=true;
-    record.error = { code: record.submitted ? 'COMPLETION_UNCONFIRMED' : 'NOT_SUBMITTED', message: error.message };
+    const heldBy = record.oldThreadRequest && !['completed','failed','interrupted'].includes(record.oldThreadRequest.status)
+      ? record.oldThreadRequest.requestId : null;
+    record.error = { code: !record.submitted && heldBy ? 'REQUEST_HELD' : record.submitted ? 'COMPLETION_UNCONFIRMED' : 'NOT_SUBMITTED',
+      message: error.message, ...(heldBy ? { blockedByRequestId:heldBy } : {}) };
     if (client?.unsupportedRequests.length) {
       record.status = 'blocked';
       record.unsupportedInteractions = [...new Set(client.unsupportedRequests)];
@@ -260,26 +271,78 @@ export async function sendCodex(input, overrides = {}) {
   return record;
 }
 
-export async function requestStatus(input, { createClient = (binary, cwd) => new AppServer(binary, cwd) } = {}) {
+export async function requestStatus(input, { createClient = (binary, cwd) => new AppServer(binary, cwd), lockHeld = false } = {}) {
   const options = optionsFor(input);
   let record = await readRecord(options.stateDir, validateRequestId(input.requestId));
   if (!input.refresh || !record.submitted || record.status === 'completed') return record;
-  const release = await lockThread(options.stateDir, validateThreadId(record.threadId), performance.now());
-  if (!release) return { ...record, refreshSkipped: 'sender_lock_held' };
+  // sendCodex holds this same per-thread lock while refreshing a predecessor.
+  // Reuse that exclusive lock; standalone status checks still acquire it.
+  const release = lockHeld ? null
+    : await lockThread(options.stateDir, validateThreadId(record.threadId), performance.now());
+  if (!lockHeld && !release) return { ...record, refreshSkipped: 'sender_lock_held' };
   let client;
   try {
     // A sender may have finished between our initial read and acquiring its lock.
     record = await readRecord(options.stateDir, input.requestId);
     if (['completed', 'failed', 'interrupted'].includes(record.status)) return record;
-    const binary = await resolveCodex(input.codex ?? record.binary ?? options.codex);
+    let binary;
+    try {
+      binary = await resolveCodex(input.codex ?? record.binary ?? options.codex);
+    } catch (error) {
+      // A request journal may outlive a Desktop update that moves the binary.
+      // Re-reading history is read-only; retry with the current executor only
+      // when the persisted path no longer resolves.
+      if (input.codex || !record.binary) throw error;
+      binary = await resolveCodex(options.codex);
+    }
+    record.binary = binary;
     client = createClient(binary, options.cwd);
     const deadline = performance.now() + options.timeoutMs;
-    await client.initialize(deadline);
+    await client.initialize(deadline, { experimental: true });
+    if (record.route === 'queue' && record.baselineTurnId) {
+      let queue;
+      try { queue = await client.call('thread/queue/list', { threadId: record.threadId }, deadline); }
+      catch (error) { queue = null; }
+      if (queue && Array.isArray(queue.data) && queue.data.length === 0) {
+        // Empty queue is meaningful only when no turn followed the one that was
+        // active when the durable queue submission began. Otherwise it may have
+        // already executed; read the exact turn history before drawing a result.
+        const history = await client.call('thread/turns/list', {
+          threadId:record.threadId,limit:100,sortDirection:'desc',itemsView:'full'},deadline);
+        const baselineIndex = history.data.findIndex(turn => turn.id === record.baselineTurnId);
+        if (baselineIndex >= 0) {
+          const candidates = history.data.slice(0, baselineIndex);
+          const transient = turn => turn.status === 'interrupted' && turn.completedAt == null;
+          let turn;
+          if (record.turnId) {
+            // A known turn proves this request only when that exact turn is still
+            // in its transient interrupted state. Never substitute a later turn.
+            turn = candidates.find(item => item.id === record.turnId && transient(item));
+          } else {
+            // Queued submissions may not expose their turn ID in the receipt. The
+            // durable marker is the fallback correlation; ambiguity stays blocked.
+            const matches = candidates.filter(item => transient(item) && hasMarker(item, record.marker));
+            if (matches.length === 1) turn = matches[0];
+          }
+          if (turn) {
+            record.turnId = turn.id;
+            record.status = 'interrupted';
+            record.answer = null;
+            record.answers = [];
+            record.error = null;
+            record.queueState = 'empty';
+            record.terminalConfirmedAt = new Date().toISOString();
+            await saveRecord(options.stateDir, record);
+            return record;
+          }
+        }
+      }
+    }
     applyPersistedTurn(record, await findTurn(client, record, deadline));
     await saveRecord(options.stateDir, record);
     return record;
   } finally {
     try { if (client) await client.close(); }
-    finally { await release(); }
+    finally { if (release) await release(); }
   }
 }

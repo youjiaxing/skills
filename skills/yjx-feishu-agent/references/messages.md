@@ -16,7 +16,7 @@
 
 引用中的 text/post/interactive 展开可读文字，单条引用文本最多4000字符并标记截断。当前富文本或引用里的图片通过消息资源接口下载到状态目录 `feishu/<app hash>/images`，一条请求最多4张、单张10MB；不遍历下载整个群的资源。已撤回/删除消息只返回状态，不展示正文或下载其图片。
 
-首次读取文字或图片失败时，入站上下文会提示 Agent 使用 `read-feishu.mjs message` / `image --chat SOURCE_CHAT` 按来源群、消息 ID 和图片 key 补读；能读多少用多少，仍无法读取时在回答中说明限制。路径会放入 Codex 请求作为图片查看工具的输入，不等于 App Server/queue 已收到多模态附件。Agent 需要实际用可用工具查看，不能仅凭路径声称看过。外部 Codex 缺少宿主工具时仍受 [Codex 限制](codex.md)约束。
+首次读取文字或图片失败时，入站上下文会提示 Agent 使用 `read-feishu.mjs message` / `image --chat SOURCE_CHAT` 按来源群、消息 ID 和图片 key 补读；能读多少用多少，仍无法读取时在回答中说明限制。路径会放入 Codex 请求作为图片查看工具的输入，不等于 App Server/queue 已收到多模态附件。当用户的问题涉及“这张图是什么”“图里有什么”“有没有漏题/已交”等视觉内容，或图片承载截止时间、名单状态、作业要求等行动依据时，Agent 必须用可用图片查看工具打开相关图片；多图按问题选择。只有图片与问题无关、已经撤回、无法取得或超出当前绑定可见范围时才能跳过，并在图片影响回答时说明限制。不能仅凭路径、图片 key、消息类型或 `not_downloaded` 状态声称看过。外部 Codex 缺少宿主工具时仍受 [Codex 限制](codex.md)约束。
 
 ## 查询命令
 
@@ -38,7 +38,7 @@ node skills/yjx-feishu-agent/scripts/read-feishu.mjs image --chat oc_GROUP --mes
 
 history 每次1–50条，默认20条、按创建时间倒序，返回 hasMore/nextPageToken；要读完整范围需继续分页，不能把首屏当全群。时间参数为秒，消息创建时间为毫秒。普通群历史不含全部话题回复，需使用返回的 threadId 另查，话题容器不支持起止时间。查询仅覆盖平台对当前机器人可见的数据，群历史限制、入群时间和保密设置仍可能阻止读取。
 
-history/message 可加 `--concise` 返回精简 JSON，每条正文最多 2000 字符；默认最多 12000 字符。两种输出均保留查询 ID、`textLength/truncated`，API 实际提供时显示 `senderName` 和 `updateTime`，不额外查询通讯录。图片资源标记为 `not_downloaded`，需要时再按消息和 key 下载，不能据键名声称看过附件。history 的 `complete` 仅指当前容器与筛选条件下的分页结束，`completenessScope` 明示范围；`hasMore:true` 却缺 token 时给出 `pagination_incomplete`，不能报告完整。不会自动继续分页或下载全群资源。这些查询字段不自动附入 Codex 入站背景。
+history/message 可加 `--concise` 返回精简 JSON，每条正文最多 2000 字符；默认最多 12000 字符。两种输出均保留查询 ID、`textLength/truncated`，API 实际提供时显示 `senderName` 和 `updateTime`，不额外查询通讯录。图片资源标记为 `not_downloaded`，不能据键名声称看过附件；当当前问题或明确引用依赖图片内容时，使用 `image` 子命令下载该消息的相关 key，再交给图片查看工具。history 的 `complete` 仅指当前容器与筛选条件下的分页结束，`completenessScope` 明示范围；`hasMore:true` 却缺 token 时给出 `pagination_incomplete`，不能报告完整。不会自动继续分页或批量下载全群资源；按需选择与问题相关的消息和图片。这些查询字段不自动附入 Codex 入站背景。
 
 ## 权限核对
 
@@ -47,6 +47,8 @@ history/message 可加 `--concise` 返回精简 JSON，每条正文最多 2000 �
 本机当前应用对用户反馈的绑定群已实测成功读取历史、单条消息及引用图片，无需为本次修复扩大权限。换应用/环境时重新查询验证；若出现数值权限错误，在开放平台检查对应 scope、发布及授权状态，不把所有失败都说成没入群，不自动申请全量权限。
 
 ## 本次故障证据与边界
+
+2026-10-19 用户通过图片指出此前回复中的展示或执行问题。图片本身就是回答所需证据，不能只读取上下文中的本地路径或描述消息类型；现规则要求涉及视觉判断时主动查看相关图片，并把历史查询中的 `imageKeys`、`not_downloaded` 当作待读取提示。
 
 2026-10-17 用户反馈带引用 @ 后 Codex 不知道上下文。原日志证明文字已 completed/replied，API显示 parent_id 指向图片；旧接收器未使用 parent_id，也只接收 text。新增协议测试先复现 post 被忽略，再验证其接收、引用正文展开、同群隔离、图片落盘和错误提示。现有记录仅只读核对，未重放旧任务。新消息的用户端到端验收需在接收器加载新版后进行。
 

@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { loadCredentials } from './feishu-credentials.mjs';
 import { defaultStateDir } from './codex.mjs';
 import { lockThread } from './state.mjs';
-import { createReceiver, digest, validateBindings, writeJournal } from './feishu-core.mjs';
+import { createReceiver, digest, resultText, validateBindings, writeJournal } from './feishu-core.mjs';
 import { receiverPaths, readJson, atomicJson } from './receiver-runtime.mjs';
 import { readTransport, resolveContext } from './feishu-context.mjs';
 import { createMessageRouter } from './message-routes.mjs';
@@ -28,9 +28,9 @@ const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 function args(argv) {
   const command = argv.shift();
   if (!command || command === '--help') return { help: true };
-  if (!['diagnose', 'discover', 'bind', 'serve'].includes(command)) throw new Error('Unknown command');
+  if (!['diagnose', 'discover', 'bind', 'serve', 'explain-request'].includes(command)) throw new Error('Unknown command');
   const result = { command };
-  const keys = { '--state-dir': 'stateDir', '--chat': 'chatId', '--user': 'user', '--thread': 'threadId', '--codex': 'codex', '--cwd': 'cwd' };
+  const keys = { '--state-dir': 'stateDir', '--chat': 'chatId', '--user': 'user', '--thread': 'threadId', '--codex': 'codex', '--cwd': 'cwd', '--request-id': 'requestId' };
   while (argv.length) {
     const flag = argv.shift();
     if (flag === '--managed' && command === 'serve' && !result.managed) { result.managed = true; continue; }
@@ -85,11 +85,21 @@ async function pages(operation) {
 export async function main(argv) {
   const options = args([...argv]);
   if (options.help) {
-    process.stdout.write('Usage: node feishu.mjs diagnose|discover|bind|serve [--state-dir PATH]\nBind: --chat oc_... --user ou_... [--thread DEFAULT_UUID] [--codex PATH] [--cwd PATH]\nQuote routing is on by default. Omitting --thread authorizes quote-only access without choosing a default chat.\nOnly bound groups and users with an explicit @bot text message are forwarded.\n');
+    process.stdout.write('Usage: node feishu.mjs diagnose|explain-request|discover|bind|serve [--state-dir PATH]\nExplain: --request-id ID prints the stored result and safe reply without sending.\nBind: --chat oc_... --user ou_... [--thread DEFAULT_UUID] [--codex PATH] [--cwd PATH]\nQuote routing is on by default. Omitting --thread authorizes quote-only access without choosing a default chat.\nOnly bound groups and users with an explicit @bot text message are forwarded.\n');
     return;
   }
   const stateDir = path.resolve(options.stateDir ?? defaultStateDir());
   const configFile = path.join(stateDir, 'feishu', 'bindings.json');
+  if (options.command === 'explain-request') {
+    if (!/^fs-[a-f0-9]{64}$/.test(options.requestId ?? '')) throw new Error('Invalid request ID');
+    let record;
+    try { record = JSON.parse(await readFile(path.join(stateDir, 'requests', options.requestId, 'record.json'), 'utf8')); }
+    catch (error) { throw new Error(error.code==='ENOENT' ? 'Request record not found' : 'Request record is unreadable'); }
+    print({requestId: options.requestId,status:record.status,submitted:record.submitted,
+      code:record.error?.code,blockedByRequestId:record.blockedByRequestId,
+      replyText:resultText(record, options.requestId),readOnly:true});
+    return;
+  }
   if (options.command === 'bind') {
     const credentials = await loadCredentials(stateDir);
     const releaseConfig = await lockThread(path.join(os.homedir(), '.yjx-feishu-agent-receivers'), digest(credentials.appId), performance.now());

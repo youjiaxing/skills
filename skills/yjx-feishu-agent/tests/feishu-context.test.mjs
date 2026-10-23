@@ -48,6 +48,7 @@ test('quoted image bytes reach a local file while revoked content stays hidden',
   const files=await readdir(c.imageDirectory);assert.equal(files.length,1);
   const context=JSON.parse(text.split('\n')[3]);
   assert.equal(context.quotedMessages[0].images[0],path.join(c.imageDirectory,files[0]));
+  assert.match(text,/本次消息或明确引用包含已下载图片/);assert.match(text,/图片查看工具/);
   assert.equal(await readFile(path.join(c.imageDirectory,files[0]),'utf8'),'image bytes');
   assert.deepEqual(imageKeys({...image,deleted:true}),[]);
   assert.equal(bodyText({...image,deleted:true}),'[消息已撤回或删除]');
@@ -61,6 +62,7 @@ test('context without quotes contains only source metadata',async t=>{
   const text=await resolveContext(incoming,c);
   const context=JSON.parse(text.split('\n')[3]);
   assert.deepEqual(context,{chatId:'oc_bound',messageId:'om_current'});
+  assert.doesNotMatch(text,/本次消息或明确引用包含已下载图片/);
   const custom=JSON.parse((await resolveContext(incoming,{...c,contextStateDir:c.imageDirectory})).split('\n')[3]);
   assert.equal(custom.stateDir,c.imageDirectory);
 });

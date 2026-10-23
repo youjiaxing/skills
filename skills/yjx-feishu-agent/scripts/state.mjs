@@ -50,6 +50,26 @@ export async function reserveRecord(stateDir, initial) {
 
 // A timed-out queue item may run later. Retain this gate after releasing the
 // process lock so a new request ID cannot silently bypass unresolved work.
+export async function resolveThreadRequest(stateDir, record, refresh) {
+  const target = path.join(stateDir, 'threads', `${record.threadId}.json`);
+  let prior;
+  try { prior = JSON.parse(await readFile(target, 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (!prior || prior.requestId === record.requestId) return { old: null };
+  let old = await readRecord(stateDir, prior.requestId);
+  let refreshError;
+  if (old.submitted && !['completed','failed','interrupted'].includes(old.status) && refresh) {
+    try { old = await refresh(prior.requestId); }
+    catch (error) {
+      // Read-only reconciliation may temporarily fail while the original turn is
+      // still active. The gate remains; retry on the next admitted message.
+      if (!['Codex executable not found','Ambiguous correlation: more than one turn matches this request'].includes(error.message)) throw error;
+      refreshError = error.message;
+    }
+  }
+  return { old, refreshError };
+}
+
 export async function claimThreadRequest(stateDir, record) {
   const directory = path.join(stateDir, 'threads');
   await mkdir(directory, { recursive: true, mode: 0o700 });

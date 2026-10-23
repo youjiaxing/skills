@@ -23,6 +23,9 @@ export function resultText(result, requestId) {
   if (!result.submitted && ['TARGET_UNAVAILABLE','TARGET_UNKNOWN'].includes(result.error?.code)) {
     return `暂时无法确认绑定的 Codex 聊天可用，本次消息未提交。请在本机检查会话和绑定；不能据此判断聊天已删除。请求：${requestId}`;
   }
+  if (!result.submitted && result.error?.code === 'NOT_SUBMITTED') {
+    return `本次消息未提交给 Codex，未产生执行或重复发送。可以根据提示修正后重新发送。请求：${requestId}`;
+  }
   return `本次请求状态：${result.status}。请在本机查看请求 ${requestId}，不要重复发送同一任务。`;
 }
 

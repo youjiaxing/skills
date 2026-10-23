@@ -106,8 +106,9 @@ export class AppServer {
     });
   }
 
-  async initialize(deadline) {
-    await this.call('initialize', { clientInfo: { name: 'yjx_feishu_agent', version: '0.1.0' } }, deadline);
+  async initialize(deadline, { experimental = false } = {}) {
+    await this.call('initialize', { clientInfo: { name: 'yjx_feishu_agent', version: '0.1.0' },
+      ...(experimental ? { capabilities: { experimentalApi: true } } : {}) }, deadline);
     this.write({ method: 'initialized' });
   }
 
