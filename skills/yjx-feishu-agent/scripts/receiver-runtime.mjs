@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile, unlink, rmdir, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { digest } from './feishu-core.mjs';
 
 export function receiverPaths(appId, home = os.homedir()) {
@@ -21,11 +22,19 @@ export async function readJson(file) {
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
-export async function atomicJson(file, value) {
+export async function atomicJson(file, value, { replace = rename, wait = delay } = {}) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${process.pid}.tmp`;
   await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-  await rename(temporary, file);
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      try { await replace(temporary, file); break; }
+      catch (error) {
+        if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 4) throw error;
+        await wait(50 * (attempt + 1));
+      }
+    }
+  } finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 }
 
 export async function receiverStatus(appId, { home, alive = processAlive } = {}) {
@@ -39,7 +48,8 @@ export async function receiverStatus(appId, { home, alive = processAlive } = {})
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       return { state: 'stopped', runtimeDirectory: paths.runtime,
-        ...(runtime?.connection==='stopped' ? {stopReason:runtime.stopReason ?? 'unknown',updatedAt:runtime.updatedAt} : {}) };
+        ...(runtime?.connection==='stopped' ? {stopReason:runtime.stopReason ?? 'unknown',updatedAt:runtime.updatedAt,
+          ...(runtime.failure ? { failure: runtime.failure } : {})} : {}) };
     }
   }
   const living = alive(owner.pid);

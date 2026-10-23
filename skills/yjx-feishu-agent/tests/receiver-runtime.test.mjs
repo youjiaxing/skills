@@ -76,7 +76,8 @@ test('scheduled task ownership includes current-user logon trigger', () => {
     .replace('<AllowStartOnDemand>true</AllowStartOnDemand>', '')
     .replaceAll('&quot;', '"')
     .replace('<UserId>S-1-5-21-123</UserId></LogonTrigger>', '<UserId>FIXTURE\\TestUser</UserId></LogonTrigger>');
-  assert.equal(matchesTask(normalized, definition), true);
+  assert.equal(matchesTask(normalized, definition, { logonUser: 'FIXTURE\\TestUser' }), true);
+  assert.equal(matchesTask(normalized, definition), false);
   for (const change of [
     definition.replace('S-1-5-21-123', 'S-1-5-21-456'),
     definition.replace('<Arguments>', '<Arguments>extra '),
@@ -86,6 +87,10 @@ test('scheduled task ownership includes current-user logon trigger', () => {
     definition.replace('PT0S', 'PT72H'),
     definition.replace('<StopIfGoingOnBatteries>false', '<StopIfGoingOnBatteries>true'),
     definition.replace('<AllowStartOnDemand>true', '<AllowStartOnDemand>false'),
+    definition.replace('</Exec>', '</Exec><SendEmail/>'),
+    definition.replace('</LogonTrigger>', '</LogonTrigger><LogonTrigger/>'),
+    definition.replace('<Enabled>true</Enabled><UserId>S-1-5-21-123</UserId></LogonTrigger>', '<Enabled>false</Enabled><UserId>S-1-5-21-123</UserId></LogonTrigger>'),
+    definition.replace('<UserId>S-1-5-21-123</UserId></LogonTrigger>', '<UserId>S-1-5-21-999</UserId></LogonTrigger>'),
   ]) assert.equal(matchesTask(change, definition), false);
   assert.equal(matchesTask(legacyTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' }), legacyTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' })), true);
   assert.equal(matchesTask(previousTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' }), previousTaskDefinition({ sid: 'S-1-5-21-123', node: 'C:\\Program Files\\node.exe', args: ['C:\\含空格 path\\feishu.mjs', 'serve', '--state-dir', 'D:\\a & b\\'].map(windowsArgument).join(' '), cwd: 'D:\\a & b' })), true);

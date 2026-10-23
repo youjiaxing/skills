@@ -17,6 +17,10 @@ import { createProcessingFeedback } from './processing-feedback.mjs';
 import { reactionTransport } from './reaction-transport.mjs';
 import { safeFailure } from './message-diagnostics.mjs';
 import { renderReply } from './reply-renderer.mjs';
+import { withReceiverControl, recoveryEnabled, recordRuntimeFailure, runtimeFailure } from './receiver-recovery.mjs';
+
+let runtimeFailurePaths;
+let recordedRuntimeError;
 
 const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -28,7 +32,9 @@ function args(argv) {
   const result = { command };
   const keys = { '--state-dir': 'stateDir', '--chat': 'chatId', '--user': 'user', '--thread': 'threadId', '--codex': 'codex', '--cwd': 'cwd' };
   while (argv.length) {
-    const key = keys[argv.shift()];
+    const flag = argv.shift();
+    if (flag === '--managed' && command === 'serve' && !result.managed) { result.managed = true; continue; }
+    const key = keys[flag];
     const value = argv.shift();
     if (!key || !value || result[key]) throw new Error('Invalid command arguments');
     result[key] = value;
@@ -104,6 +110,7 @@ export async function main(argv) {
     } finally { await releaseConfig(); }
   }
   const credentials = await loadCredentials(stateDir);
+  if (options.command === 'serve') runtimeFailurePaths = receiverPaths(credentials.appId);
   if (options.command === 'diagnose') {
     let response;
     let body;
@@ -150,20 +157,36 @@ export async function main(argv) {
   }
   // Stable per-account/app lock, regardless of custom journal directories.
   const lockHome = path.join(os.homedir(), '.yjx-feishu-agent-receivers');
-  const release = await lockThread(lockHome, digest(credentials.appId), performance.now());
+  const runtimePaths = receiverPaths(credentials.appId);
+  const acquire = async () => {
+    if (options.managed && !await recoveryEnabled(runtimePaths, stateDir)) return null;
+    const unlock = await lockThread(lockHome, digest(credentials.appId), performance.now());
+    if (!unlock) throw new Error('Another receiver or leftover receiver lock exists; inspect before recovery');
+    try {
+      const startingOwner = await readJson(path.join(runtimePaths.lock, 'owner.json'));
+      await atomicJson(path.join(runtimePaths.runtime, 'status.json'), {
+        ...startingOwner, stateDir, connection: 'starting', updatedAt: new Date().toISOString(),
+      });
+      return unlock;
+    } catch (error) { await unlock(); throw error; }
+  };
+  const release = options.managed ? await withReceiverControl(runtimePaths, acquire) : await acquire();
+  if (!release && options.managed) return;
   if (!release) throw new Error('Another receiver or leftover receiver lock exists; inspect before recovery');
   let config;
   try { config = validateBindings(JSON.parse(await readFile(configFile, 'utf8'))); }
   catch { await release(); throw new Error('Missing or invalid bindings.json; bind a group first'); }
-  const runtimePaths = receiverPaths(credentials.appId);
   const owner = await readJson(path.join(runtimePaths.lock, 'owner.json'));
   let lastPublishedConnection;
   let stopReason;
+  let lastFailure;
+  let runtimeStage = 'initialization';
   const publish = async (connection) => {
     const updatedAt = new Date().toISOString();
     await atomicJson(path.join(runtimePaths.runtime, 'status.json'), {
       pid: process.pid, token: owner.token, stateDir, connection, updatedAt,
       ...(stopReason ? {stopReason} : {}),
+      ...(lastFailure ? { failure: lastFailure } : {}),
     });
     if (connection !== lastPublishedConnection) {
       await appendFile(path.join(runtimePaths.runtime, 'connection-events.ndjson'),
@@ -199,9 +222,11 @@ export async function main(argv) {
   process.once('SIGTERM', onTerminate);
   try {
     await publish('starting');
+    runtimeStage = 'feedback_recovery';
     await feedback.recover();
     const unsettled = await receiver.unsettled();
     if (unsettled.length) print({ type: 'unsettled', requests: unsettled });
+    runtimeStage = 'connection_start';
     await ws.start({ eventDispatcher: new Lark.EventDispatcher({ logger }).register({
       'im.message.receive_v1': (data) => receiver.handle(data),
     }) });
@@ -210,9 +235,12 @@ export async function main(argv) {
     let connected = false;
     let heartbeatAt = 0;
     while (!stopping) {
+      runtimeStage = 'connection_status';
       const state = ws.getConnectionStatus().state;
       if (state !== previous) { print({ type: 'connection', state }); previous = state; }
+      runtimeStage = 'heartbeat';
       if (Date.now() - heartbeatAt > 1000) { await publish(state); heartbeatAt = Date.now(); }
+      runtimeStage = 'stop_control';
       const control = await readJson(path.join(runtimePaths.runtime, 'stop.json'));
       if (control?.pid === process.pid && control?.token === owner.token) { stop('control'); break; }
       if (state === 'connected') connected = true;
@@ -224,6 +252,8 @@ export async function main(argv) {
     }
   } catch(error) {
     stopReason ??= 'runtime_failed';
+    lastFailure = runtimeFailure(error, runtimeStage);
+    try { await recordRuntimeFailure(runtimePaths, error, runtimeStage); recordedRuntimeError = error; } catch { /* Preserve the original error if storage is unavailable. */ }
     print({type:'receiver-failure',reason:stopReason,failure:safeFailure(error,'receiver')});
     throw error;
   } finally {
@@ -242,7 +272,8 @@ export async function main(argv) {
 
 try {
   if (realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
-    main(process.argv.slice(2)).catch((error) => {
+    main(process.argv.slice(2)).catch(async (error) => {
+      if (runtimeFailurePaths && recordedRuntimeError !== error) await recordRuntimeFailure(runtimeFailurePaths, error, 'serve_exit').catch(() => {});
       // Never serialize SDK/Axios errors: they can contain credentials and tokens.
       process.stderr.write(error.safe ? `${error.message}\n` : 'Feishu command failed. Check permissions, network, local bindings and receiver locks.\n');
       process.exitCode = 1;
