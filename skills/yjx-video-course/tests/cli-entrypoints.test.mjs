@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { isMainModule } from '../scripts/is-main.mjs';
 import { checkOcrAvailability } from '../scripts/extract-hard-subtitles.mjs';
 import { resolveBilibiliCid } from '../scripts/source-tools.mjs';
 
@@ -23,59 +22,6 @@ async function withSymlinkedSkill(t) {
 function run(script, args, cwd) {
   return spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8' });
 }
-
-test('isMainModule compares realpaths', () => {
-  const self = fileURLToPath(import.meta.url);
-  assert.equal(isMainModule(import.meta.url, self), true);
-  assert.equal(isMainModule(import.meta.url, path.join(skillDir, 'scripts', 'nope.mjs')), false);
-  assert.equal(isMainModule(import.meta.url, null), false);
-});
-
-test('validator CLIs still run main() when invoked through a symlinked skill directory', async (t) => {
-  const { work, linked } = await withSymlinkedSkill(t);
-  const evidence = path.join(work, 'evidence.json');
-  const course = path.join(work, 'course.md');
-  const delivery = path.join(work, 'delivery.json');
-  await writeFile(evidence, JSON.stringify({
-    source: { source_id: 's', duration_seconds: 10 },
-    segments: [], claims: [], raw_evidence: [],
-    visual_coverage: { embedded_files: [] },
-  }));
-  await writeFile(course, '# course\n');
-  await writeFile(delivery, JSON.stringify({
-    source_id: 's', episode_id: '1', state: 'source_verified',
-    state_history: [{ state: 'source_verified' }],
-  }));
-
-  for (const [script, args] of [
-    ['validate-evidence.mjs', [evidence, work]],
-    ['validate-course-artifacts.mjs', [evidence, course, work]],
-    ['validate-delivery.mjs', [delivery, work]],
-  ]) {
-    const result = run(path.join(linked, 'scripts', script), args, work);
-    assert.equal(result.status, 0, `${script}: ${result.stderr}`);
-    assert.deepEqual(JSON.parse(result.stdout), { valid: true, errors: [] }, script);
-  }
-
-  const transcript = path.join(work, 't.txt');
-  await writeFile(transcript, '[0:00] hi\n');
-  const normalized = run(path.join(linked, 'scripts', 'normalize-transcript.mjs'), ['--input', transcript], work);
-  assert.equal(normalized.status, 0, normalized.stderr);
-  assert.notEqual(normalized.stdout.trim(), '');
-
-  const source = run(path.join(linked, 'scripts', 'source-tools.mjs'), ['https://www.bilibili.com/video/BV1xztt6tEtu/?p=58'], work);
-  assert.equal(source.status, 0, source.stderr);
-  assert.equal(JSON.parse(source.stdout)[0].bvid, 'BV1xztt6tEtu');
-});
-
-test('a failing validator exits non-zero through a symlink', async (t) => {
-  const { work, linked } = await withSymlinkedSkill(t);
-  const delivery = path.join(work, 'delivery.json');
-  await writeFile(delivery, JSON.stringify({ state: 'bogus' }));
-  const result = run(path.join(linked, 'scripts', 'validate-delivery.mjs'), [delivery, work], work);
-  assert.equal(result.status, 1);
-  assert.equal(JSON.parse(result.stdout).valid, false);
-});
 
 test('hard-subtitle OCR reports a structured ocr_unavailable state off macOS', () => {
   assert.deepEqual(

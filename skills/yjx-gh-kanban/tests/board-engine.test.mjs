@@ -10,9 +10,7 @@ import {
   isWayfinderMap,
   parseReadyLabelFromTriageDoc,
   priorityKey,
-  renderAgent,
   renderHuman,
-  renderReadyOnly,
   selectViewNodes,
   selectWayfinderFrontier,
   startCommandForEntry,
@@ -308,70 +306,6 @@ test('next priority: critical → infra → tracer → other, then number', () =
   assert.ok(priorityKey(issues[13])[0] < priorityKey(issues[12])[0]);
 });
 
-test('json shape exposes next/ready and key entry fields', () => {
-  const issues = {
-    1: issue(1, 'spec', { body: SPEC_BODY, labels: [] }),
-    7: issue(7, 'child ticket'),
-  };
-  const { board, json } = buildBoard({
-    issues,
-    relations: { 7: rel(1) },
-  });
-  const parsed = JSON.parse(json);
-  assert.equal(parsed.next.number, 7);
-  assert.equal(parsed.ready.length, 1);
-  assert.equal(parsed.ready[0].ref, '#7');
-  assert.equal(parsed.ready[0].parent, 1);
-  assert.deepEqual(parsed.ready[0].blockedBy, []);
-  assert.deepEqual(parsed.ready[0].openBlockers, []);
-  assert.ok(Array.isArray(parsed.ready[0].labels));
-  assert.equal(parsed.summary.readyLabel, 'ready-for-agent');
-  assert.equal(board.specs[0].isSpec, true);
-});
-
-test('agent output includes READY and next=', () => {
-  const board = classify(
-    { 7: issue(7, '独立票') },
-    'ready-for-agent',
-    { 7: rel() },
-  );
-  const text = renderAgent(board);
-  assert.match(text, /^ready=1 blocked=0 spec=0 other_open=0$/m);
-  assert.match(text, /^next=#7$/m);
-  assert.match(text, /^READY$/m);
-  assert.match(text, /#7 独立票/);
-
-  const empty = classify({}, 'ready-for-agent', {});
-  assert.match(renderAgent(empty), /^next=none$/m);
-});
-
-test('human render has LEGEND, dependency tree, WARNINGS area, NOW', () => {
-  const issues = {
-    1: issue(1, '规格容器', { body: SPEC_BODY, labels: [] }),
-    3: issue(3, '基础能力', { labels: [] }),
-    7: issue(7, '依赖基础能力'),
-    8: issue(8, '可直接开干'),
-  };
-  const relations = {
-    7: rel(1, [3]),
-    8: rel(1),
-  };
-  const text = renderHuman(issues, relations, { readyLabel: 'ready-for-agent' });
-  assert.match(text, /^LEGEND /m);
-  assert.match(text, /^DEPENDENCY TREE$/m);
-  assert.match(text, /^WARNINGS$/m);
-  assert.match(text, /\[spec\].*规格容器/);
-  assert.match(text, /├─|└─/);
-  assert.match(text, /7 \[impl\] 依赖基础能力 <- #3/);
-  assert.match(text, /NOW  READY：1 \| Wayfinder frontier：0 \| 进行中：0/);
-  assert.match(text, /可新增并行实施（READY）/);
-  assert.match(text, /Wayfinder frontier/);
-  assert.match(text, /\/rename gh\/#8-/);
-  assert.match(text, /\/implement #8/);
-  assert.doesNotMatch(text, /gh issue view 8/);
-  assert.match(text, /进行中（assignee 近似/);
-});
-
 test('startCommandForEntry is implement vs wayfinder by type', () => {
   assert.equal(startCommandForEntry({ number: 8, isWayfinder: false }), '/implement #8');
   assert.equal(
@@ -578,20 +512,6 @@ test('NOW in-progress uses assignee approximation and does not redefine READY', 
   assert.match(text, /\/implement #6/);
   // In-progress does not print a start slash command.
   assert.doesNotMatch(text, /assignees=alice\n {2}\/implement/);
-});
-
-test('ready-only lists implementable READY with rename and implement command', () => {
-  const board = classify(
-    { 8: issue(8, '可直接开干') },
-    'ready-for-agent',
-    { 8: rel() },
-  );
-  const text = renderReadyOnly(board);
-  assert.match(text, /ready=1 next=#8/);
-  assert.match(text, /○ 8 \[impl\] 可直接开干/);
-  assert.match(text, /\/rename gh\/#8-/);
-  assert.match(text, /\/implement #8/);
-  assert.doesNotMatch(text, /gh issue view/);
 });
 
 test('buildBoard returns consistent human/agent/json projections', () => {

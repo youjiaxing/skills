@@ -15,6 +15,7 @@ function decodeResponseBody(body) {
 }
 
 export function classifyBilibiliSubtitleBody(body) {
+  if (typeof body?.body !== 'string') return { status: 'subtitle_response_unavailable' };
   const bytes = decodeResponseBody(body);
   if (bytes.length === 0 || (bytes.length === 2 && bytes[0] === 0x0a && bytes[1] === 0x00)) {
     return { status: 'subtitle_empty_response', bytes: bytes.length };
@@ -43,8 +44,15 @@ export function classifyBilibiliSubtitleBody(body) {
 
 function metadataMatches(url, identity) {
   const parsed = new URL(url);
-  return parsed.hostname === 'api.bilibili.com' && parsed.pathname === '/x/v2/subtitle/web/view'
-    && parsed.searchParams.get('cid') === String(identity.cid)
+  const params = parsed.searchParams;
+  const player = ['/x/player/v2', '/x/player/wbi/v2'].includes(parsed.pathname);
+  const subtitle = parsed.pathname === '/x/v2/subtitle/web/view';
+  // On subtitle/web/view only, the observed oid/pid pair means CID/aid.
+  const target = params.has('cid') ? params.get('cid') === String(identity.cid)
+    : subtitle && params.get('oid') === String(identity.cid) && params.get('pid') === String(identity.aid);
+  return parsed.hostname === 'api.bilibili.com' && (player || subtitle) && target
+    && (!params.has('oid') || !subtitle || params.get('oid') === String(identity.cid))
+    && (!params.has('pid') || !subtitle || params.get('pid') === String(identity.aid))
     && (!parsed.searchParams.has('bvid') || parsed.searchParams.get('bvid') === identity.bvid)
     && (!parsed.searchParams.has('aid') || parsed.searchParams.get('aid') === String(identity.aid));
 }
@@ -163,7 +171,11 @@ export async function captureBilibiliSubtitle(
   { reload = true, waitMs = 4000, activateTrack = true, resolveIdentity = resolveBilibiliIdentity, expectedIdentity = null } = {},
 ) {
   const identity = await resolveIdentity(tab);
-  if (!identity.cid || identity.status !== 'identity_verified') return { status: 'subtitle_identity_unverified' };
+  if (!identity.cid || identity.status !== 'identity_verified') return {
+    status: 'subtitle_identity_unverified', identity_status: identity.status, reason: identity.reason,
+    source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid,
+      duration: identity.duration, source_duration: identity.source_duration },
+  };
   if (expectedIdentity && (!sameBilibiliPage(expectedIdentity, identity) || expectedIdentity.cid !== identity.cid)) {
     return { status: 'source_changed' };
   }
@@ -197,7 +209,7 @@ export async function captureBilibiliSubtitle(
       metadataResponse = responseOf(event);
       try {
         const value = JSON.parse(decodeResponseBody(body).toString('utf8'));
-        const tracks = value.subtitle?.subtitles ?? value.subtitles ?? [];
+        const tracks = value.data?.subtitle?.subtitles ?? value.subtitle?.subtitles ?? value.subtitles ?? [];
         for (const track of tracks) if (track.subtitle_url) linkedUrls.push(new URL(track.subtitle_url, responseOf(event).url).href);
       } catch { /* Binary metadata may still be followed by a linked AI file. */ }
     }
@@ -205,7 +217,7 @@ export async function captureBilibiliSubtitle(
   await processMetadata();
   const files = () => events.filter((event) => responseOf(event)?.url && matchesBilibiliSubtitleFile(responseOf(event).url, identity, linkedUrls));
   let trackActivated = false;
-  if (files().length === 0 && !['subtitle_exported', 'subtitle_empty_response'].includes(metadataResult?.status) && activateTrack) {
+  if (files().length === 0 && (linkedUrls.length > 0 || !['subtitle_exported', 'subtitle_empty_response'].includes(metadataResult?.status)) && activateTrack) {
     trackActivated = await activateBilibiliSubtitleTrack(tab);
     if (trackActivated) {
       await tab.playwright.waitForTimeout(1000);
@@ -220,6 +232,10 @@ export async function captureBilibiliSubtitle(
   const after = await resolveIdentity(tab);
   if (after.status !== 'identity_verified' || !sameBilibiliPage(identity, after) || identity.cid !== after.cid) return { status: 'source_changed' };
   if (!finalClassified) return { status: 'subtitle_request_not_observed', track_activated: trackActivated };
+  if (!file && linkedUrls.length > 0 && finalClassified.status !== 'subtitle_exported') return {
+    status: 'subtitle_track_not_loaded', track_activated: trackActivated,
+    source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
+  };
   const response = file ? responseOf(file) : metadataResponse;
   return {
     ...finalClassified,

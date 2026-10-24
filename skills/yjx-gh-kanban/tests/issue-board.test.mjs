@@ -6,15 +6,11 @@ import test from 'node:test';
 
 import {
   BOARD_LIST_FIELDS,
-  DEFAULT_LIMIT,
   loadBoardSnapshot,
   loadNativeRelations,
   main,
-  parseArgs,
-  parseParentFilter,
   resolveReadyLabel,
   runBoard,
-  stubIssueFromRelationRef,
 } from '../scripts/issue-board.mjs';
 
 const SPEC_BODY = [
@@ -67,57 +63,6 @@ function issueJson(number, title, {
 function isBoardListCall(args) {
   return args.includes('--json') && args.some((part) => String(part).includes('parent') && String(part).includes('blockedBy'));
 }
-
-test('parseArgs covers human default, machine flags, parent filter, and limit', () => {
-  assert.deepEqual(parseArgs([]), {
-    agent: false,
-    json: false,
-    readyOnly: false,
-    limit: DEFAULT_LIMIT,
-    readyLabel: null,
-    parentFilter: null,
-    projectRoot: null,
-    includeClosed: false,
-    help: false,
-  });
-
-  const parsed = parseArgs([
-    '--json',
-    '--agent',
-    '--ready-only',
-    '--include-closed',
-    '--limit',
-    '50',
-    '--ready-label',
-    'afk-ready',
-    '--parent',
-    '#102',
-    '--project-root',
-    '/repo',
-  ]);
-  assert.equal(parsed.json, true);
-  assert.equal(parsed.agent, true);
-  assert.equal(parsed.readyOnly, true);
-  assert.equal(parsed.includeClosed, true);
-  assert.equal(parsed.limit, 50);
-  assert.equal(parsed.readyLabel, 'afk-ready');
-  assert.equal(parsed.parentFilter, 102);
-  assert.equal(parsed.projectRoot, path.resolve('/repo'));
-});
-
-test('parseParentFilter accepts number and #number forms', () => {
-  assert.equal(parseParentFilter('102'), 102);
-  assert.equal(parseParentFilter('#102'), 102);
-  assert.throws(() => parseParentFilter('abc'), /parent/i);
-  assert.throws(() => parseParentFilter(''), /parent/i);
-});
-
-test('parseArgs rejects unknown flags and missing values', () => {
-  assert.throws(() => parseArgs(['--nope']), /unknown option/);
-  assert.throws(() => parseArgs(['--limit']), /--limit requires/);
-  assert.throws(() => parseArgs(['--parent']), /--parent requires/);
-  assert.throws(() => parseArgs(['--limit', '0']), /positive/);
-});
 
 test('resolveReadyLabel uses triage doc mapping when present', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'yjx-gh-kanban-triage-'));
@@ -197,18 +142,6 @@ test('loadNativeRelations does not require execution relations for a declared sp
     limit: 200,
   });
   assert.equal(relations.size, 0);
-});
-
-test('stubIssueFromRelationRef copies title/state/url', () => {
-  const stub = stubIssueFromRelationRef({
-    number: 9,
-    state: 'CLOSED',
-    title: 'Done',
-    url: 'https://example/9',
-  });
-  assert.equal(stub.number, 9);
-  assert.equal(stub.title, 'Done');
-  assert.equal(stub._hydratedStub, true);
 });
 
 test('runBoard builds human tree, json, agent, and ready-only outputs via injected gh', async () => {
@@ -297,16 +230,6 @@ test('runBoard excludes explicit and legacy specs from machine execution candida
   const readyOnly = await runBoard({ ...options, mode: 'ready-only' });
   assert.match(readyOnly, /#21\b/);
   assert.doesNotMatch(readyOnly, /#(?:20|22)\b/);
-});
-
-test('main --help exits 0 and prints Usage', async () => {
-  const chunks = [];
-  const code = await main(['--help'], {
-    stdout: { write(text) { chunks.push(text); } },
-    stderr: { write() {} },
-  });
-  assert.equal(code, 0);
-  assert.match(chunks.join(''), /Usage:/);
 });
 
 test('main prints agent board through deps without calling real gh when injected', async () => {

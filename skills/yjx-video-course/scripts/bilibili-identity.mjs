@@ -76,7 +76,9 @@ export async function resolveBilibiliIdentity(tab, { resolveCid } = {}) {
     return { ...after, cid: null, status: 'source_changed' };
   }
   if (Number.isFinite(identity.source_duration) && Number.isFinite(after.duration)
-    && Math.abs(identity.source_duration - after.duration) > 1) {
+    // Public integer duration can include a short encoding tail absent in the
+    // player (observed 952 vs 950.892s). Keep a bounded two-second tolerance.
+    && Math.abs(identity.source_duration - after.duration) > 2) {
     return { ...identity, cid: null, status: 'player_identity_mismatch' };
   }
   return { ...identity, duration: after.duration, status: 'identity_verified', cid_source: cidSource };

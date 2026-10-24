@@ -108,6 +108,10 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ---
 
+### 9. 生活信息查询
+
+- **[`yjx-life-query`](skills/yjx-life-query/SKILL.md)**：查询国内吃喝门店、周边去处、旅游活动与优惠，按信息字段选择来源并核验时效；生成高德/点评地点入口，按需规划主线与备选路线，按行程类型交付当天时间表、项目清单与分段路线图，维护地图及 Notion 行程。附链接生成脚本；手机 App 唤起与来源质量通过真实使用分别验证，不自动接入新服务。
+
 ## 个人全局提示词
 
 [`prompts/`](prompts/) 保存跨 Agent 复用的个人沟通和子代理协作规则，与可按需调用的 `skills/` 分开维护。公开规则存放在 `prompts/shared/`，平台差异按需写在 `prompts/targets/`；私密或机器专有内容使用已被 Git 忽略的 `prompts.local/`。

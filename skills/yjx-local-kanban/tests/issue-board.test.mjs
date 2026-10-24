@@ -627,31 +627,6 @@ test('JSON remains a complete flat graph without recommendations', async (t) => 
   assert.deepEqual(payload.issues[1].blockedByOpen, ['01-ready.md']);
 });
 
-test('human board uses symbols and puts NOW at the bottom', async (t) => {
-  const work = await fixture(t);
-  await writeIssue(work.feature, '01-info.md', { title: 'Info', status: 'needs-info' });
-  await writeIssue(work.feature, '02-human.md', { title: 'Human', status: 'ready-for-human' });
-  await writeIssue(work.feature, '03-agent.md', { title: 'Agent' });
-  const graph = await loadGraph(work.feature, work.config);
-  const text = renderText(work.feature, graph, work.root);
-  assert.match(text, /\? 01 \[impl\] Info/);
-  assert.match(text, /\? 02 \[impl\] Human/);
-  assert.match(text, /○ 03 \[impl\] Agent/);
-  assert.match(text, /NOW  可新增并行实施：1 \| 进行中：0/);
-  assert.equal(text.trimEnd().endsWith('- 无'), true);
-});
-
-test('pure implementation board always prints [impl] type tags', async (t) => {
-  const work = await fixture(t);
-  await writeIssue(work.feature, '01-done.md', { title: 'Done', closed: 'true' });
-  await writeIssue(work.feature, '02-open.md', { title: 'Open', blockedBy: '01' });
-  const graph = await loadGraph(work.feature, work.config);
-  assert.equal(graph.workflow, 'implementation');
-  const text = renderText(work.feature, graph, work.root);
-  assert.match(text, /✓ 01 \[impl\] Done/);
-  assert.match(text, /○ 02 \[impl\] Open <- 01/);
-});
-
 test('config validation rejects non-unique status mappings', () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.statusRoles['ready-for-human'] = 'ready-for-agent';

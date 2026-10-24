@@ -86,6 +86,13 @@ test('a changed part or mismatched player duration invalidates a resolved CID', 
   assert.equal(mismatched.cid, null);
 });
 
+test('a short encoding tail does not reject an otherwise mapped part', async () => {
+  const tab = pageTab({ initial: { bvid, videoData: { bvid, pages: [{ page: 2, cid: 222, duration: 952 }] } }, duration: 950.892 });
+  const result = await resolveBilibiliIdentity(tab);
+  assert.equal(result.status, 'identity_verified');
+  assert.equal(result.cid, '222');
+});
+
 test('subtitle file association requires a complete aid/CID/hash path or explicit metadata linkage', () => {
   assert.equal(matchesBilibiliSubtitleFile(targetFile, identity), true);
   for (const url of [otherFile, targetFile.replace('100222', '1002223'), targetFile.replace('aisubtitle.hdslb.com', 'other.example'), targetFile + 'extra']) {
@@ -169,6 +176,46 @@ test('arbitrary JSON metadata and malformed segments are not exported as subtitl
     { body: [{ from: -1, to: 0, content: 'negative time' }] }]) {
     assert.equal(classifyBilibiliSubtitleBody(jsonBody(value)).status, 'subtitle_response_unparsed');
   }
+});
+
+test('observed oid/pid metadata is bound to the exact subtitle endpoint and part', async () => {
+  const url = 'https://api.bilibili.com/x/v2/subtitle/web/view?oid=222&pid=100';
+  const { tab, options } = subtitleTab({ batches: [[event('meta', url)]], bodies: { meta: { body: 'CgA=', base64Encoded: true } } });
+  assert.equal((await captureBilibiliSubtitle(tab, options)).status, 'subtitle_empty_response');
+  for (const wrong of [url.replace('pid=100', 'pid=999'), url.replace('oid=222', 'oid=111'), url.replace('/subtitle/web/view', '/dm/web/view')]) {
+    const fixture = subtitleTab({ batches: [[event('wrong', wrong)]], bodies: {} });
+    assert.equal((await captureBilibiliSubtitle(fixture.tab, fixture.options)).status, 'subtitle_request_not_observed');
+    assert.deepEqual(fixture.readBodies, []);
+  }
+});
+
+test('player metadata can link the selected subtitle track through data.subtitle', async () => {
+  const url = 'https://aisubtitle.hdslb.com/custom/selected.json';
+  const fixture = subtitleTab({ batches: [[event('meta', 'https://api.bilibili.com/x/player/wbi/v2?aid=100&cid=222'), event('file', url)]],
+    bodies: { meta: jsonBody({ code: 0, data: { subtitle: { subtitles: [{ subtitle_url: url }] } } }), file: jsonBody({ body: [cue] }) } });
+  const result = await captureBilibiliSubtitle(fixture.tab, fixture.options);
+  assert.equal(result.status, 'subtitle_exported');
+  assert.equal(result.value.body[0].content, 'target');
+});
+
+test('a missing network body is unavailable rather than an empty subtitle', () => {
+  assert.equal(classifyBilibiliSubtitleBody({}).status, 'subtitle_response_unavailable');
+});
+
+test('empty oid/pid metadata does not suppress a track discovered by the player', async () => {
+  const url = 'https://aisubtitle.hdslb.com/custom/selected.json';
+  const fixture = subtitleTab({ activation: true,
+    batches: [[event('player', 'https://api.bilibili.com/x/player/wbi/v2?aid=100&cid=222'),
+      event('empty', 'https://api.bilibili.com/x/v2/subtitle/web/view?oid=222&pid=100')], [event('file', url)]],
+    bodies: { player: jsonBody({ data: { subtitle: { subtitles: [{ subtitle_url: url }] } } }),
+      empty: { body: 'CgA=', base64Encoded: true }, file: jsonBody({ body: [cue] }) } });
+  const result = await captureBilibiliSubtitle(fixture.tab, fixture.options);
+  assert.equal(result.status, 'subtitle_exported');
+  assert.equal(result.track_activated, true);
+  const unloaded = subtitleTab({ activation: false,
+    batches: [[event('player', 'https://api.bilibili.com/x/player/wbi/v2?aid=100&cid=222')]],
+    bodies: { player: jsonBody({ data: { subtitle: { subtitles: [{ subtitle_url: url }] } } }) } });
+  assert.equal((await captureBilibiliSubtitle(unloaded.tab, unloaded.options)).status, 'subtitle_track_not_loaded');
 });
 
 test('frame capture detects a changed BV before quality requests', async () => {

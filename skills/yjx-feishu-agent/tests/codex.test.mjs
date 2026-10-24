@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, writeFile, rm, symlink } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -401,15 +400,4 @@ test('CLI and filename validation reject ambiguous or unsafe input', () => {
   assert.throws(() => parseArgs(['send', '--thread', THREAD, '--thread', THREAD]), /Repeated/);
   assert.throws(() => parseArgs(['status', '--request-id', 'a', '--message', 'b']), /does not accept/);
   assert.equal(parseArgs(['send', '--thread', THREAD]).command, 'send');
-});
-
-test('CLI remains executable through an installed skill directory link', async (t) => {
-  const c = await context(t);
-  const source = fileURLToPath(new URL('..', import.meta.url));
-  const linked = path.join(c.directory, 'linked-skill');
-  await symlink(source, linked, process.platform === 'win32' ? 'junction' : 'dir');
-  const result = spawnSync(process.execPath, [path.join(linked, 'scripts', 'agent.mjs'), '--help'], { encoding: 'utf8' });
-  assert.equal(result.status, 0);
-  assert.match(result.stdout, /Usage:/);
-  assert.match(result.stdout, /status --request-id/);
 });

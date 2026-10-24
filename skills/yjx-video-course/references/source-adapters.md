@@ -135,6 +135,8 @@ node scripts/capture-bilibili-frames.mjs \
 - 字幕读取调用 `captureBilibiliSubtitle(tab)`；先核验身份，并用返回的 `source_identity` 核对 BV、分P与 CID；可将已确认身份通过 `expectedIdentity` 锁定。`subtitle_exported` 且返回非空、带合法起止时间的 JSON `body` 数组才表示取得文本；普通 JSON 元数据不能算导出成功。
 - 仅接收明确匹配当前 CID 的元数据及其链接，或实际已观察到的 `{aid}{cid}{32位十六进制hash}` AI 字幕路径；不因同属字幕域名就接受，也不选最后一个跨分集响应。未知文件命名且无元数据关联时保留“当前未取得”。读取后重新核验页面，自动跳集则返回 `source_changed`，不返回旧集正文。
 - `subtitle_empty_response` 表示已关联目标集的空响应；`subtitle_response_unparsed` 表示响应已关联但格式尚未解析；`subtitle_identity_unverified` 表示身份未核实，不能将其当作“没有字幕”。
+- 身份核验失败时先读返回的 `identity_status`、时长和原因，等待播放器就绪后复查；公开标称时长与播放器解码时长容许两秒以内的尾差，BV、分P与 CID 关联仍须一致。
+- 当前已实测播放器 `/x/player/wbi/v2` 的 `data.subtitle.subtitles` 轨道，以及 `/x/v2/subtitle/web/view` 中 `oid=目标CID`、`pid=目标aid` 的联合关联；这里只在该字幕接口解释 `oid/pid`，不推广到其他接口。一个接口的空响应不能覆盖另一个接口已发现的轨道；`subtitle_track_not_loaded` 表示已发现轨道但尚未取得正文。
 - 已用真实 Bilibili 视频 `BV1xztt6tEtu` 第 58 集回归：登录和页面身份确认通过，选择“中文”轨道后实际读取 `aisubtitle.hdslb.com` JSON，得到 154 条带 `from/to/content` 的字幕文本。
 - `subtitle_empty_response` 是一次已完成的接口核验结果，不是“适配器还没做完”。记录接口、HTTP 状态、响应字节数和当前分集后，若页面没有实际暴露其他字幕轨道，就结束本次 Bilibili 字幕路线；不盲猜 `preferred_language` 或反复重放同一请求。
 - 只有当页面实际暴露了不同语言或字幕轨道，或响应参数明确给出可选轨道时，才按已观察到的候选逐个复查。候选仍为空时，终态仍是 `subtitle_empty_response`，而不是“字幕存在但工具失败”。

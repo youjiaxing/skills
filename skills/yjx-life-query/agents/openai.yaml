@@ -1,0 +1,6 @@
+interface:
+  display_name: "生活信息查询"
+  short_description: "查找国内吃喝、周边去处与旅游活动，核对时效、生成地点入口并按需规划路线"
+  default_prompt: "使用 $yjx-life-query 帮我查询这次的去处和吃喝选择，核对时效并附上高德与点评地点链接。"
+policy:
+  allow_implicit_invocation: false
