@@ -4,6 +4,8 @@
 
 | Agent | 故障症状或预检线索 | 读取位置 |
 | --- | --- | --- |
+| Codex | 模型目录有 multi_agent_version 或协作提示，但当前会话没有 spawn_agent/wait 等原生动作；需要区分模型、feature 和工具注入 | [Multi-agent编排动作未注入](codex-third-party.md#multi-agent编排动作未注入) |
+| Codex | 切换模型后 Notion/MCP工具未出现在当前会话，或模型尝试调用未暴露的工具；需要区分工具集合与连接器授权 | [模型切换后的工具暴露](codex-third-party.md#模型切换后的工具暴露) |
 | Codex | 自定义模型目录配置代码工具模式；出现原始代码与JSON参数格式不一致，或尚不清楚第三方接入是否支持该工具格式 | [代码工具载荷失配](codex-third-party.md#工具格式故障) |
 | Codex | 混合模型子代理通信使用v2；需要核实消息投递兼容性，或接收者明确报告初始/后续任务不可读 | [子代理通信失配](codex-third-party.md#子代理通信故障) |
 
