@@ -63,7 +63,8 @@ export async function resolveThreadRequest(stateDir, record, refresh) {
     catch (error) {
       // Read-only reconciliation may temporarily fail while the original turn is
       // still active. The gate remains; retry on the next admitted message.
-      if (!['Codex executable not found','Ambiguous correlation: more than one turn matches this request'].includes(error.message)) throw error;
+      if (error.code !== 'CODEX_NOT_FOUND' &&
+          !['Codex executable not found','Ambiguous correlation: more than one turn matches this request'].includes(error.message)) throw error;
       refreshError = error.message;
     }
   }

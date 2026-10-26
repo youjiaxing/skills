@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ensureReceiver, recoveryEnabled, setRecovery, runtimeFailure, withReceiverControl } from '../scripts/receiver-recovery.mjs';
 import { atomicJson } from '../scripts/receiver-runtime.mjs';
-import { watchdogDefinition, taskDefinition, legacyTaskDefinition, matchesTask } from '../scripts/receiver.mjs';
+import { watchdogDefinition, taskDefinition, legacyTaskDefinition, matchesTask, matchesWatchdogTask } from '../scripts/receiver.mjs';
 
 test('watchdog starts a stopped failed receiver on subsequent ticks instead of exhausting three retries', async () => {
   let attempts = 0;
@@ -82,4 +82,7 @@ test('watchdog definition repeats every minute and rejects changed recovery cade
   assert.equal(matchesTask(definition, taskDefinition(options)), false);
   const legacy = legacyTaskDefinition(options);
   assert.equal(matchesTask(legacy.replace('<Actions', '<Triggers><BootTrigger/></Triggers><Actions'), legacy), false);
+  const disabled = definition.replace('<Enabled>true</Enabled><ExecutionTimeLimit>', '<Enabled>false</Enabled><ExecutionTimeLimit>');
+  assert.equal(matchesWatchdogTask(disabled, definition), true);
+  assert.equal(matchesWatchdogTask(disabled.replace('<Command>', '<Command>other'), definition), false);
 });

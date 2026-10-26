@@ -12,6 +12,15 @@ import { parseArgs } from '../scripts/agent.mjs';
 const THREAD = '12345678-1234-1234-1234-123456789abc';
 const fixture = fileURLToPath(new URL('./fixtures/protocol-peer.mjs', import.meta.url));
 
+test('missing configured native executable blocks before client creation with a specific code', async t => {
+  const c = await context(t, 'normal');
+  const result = await sendCodex({ ...c.input, codex: path.join(c.directory, 'missing-codex.exe') }, c.dependencies);
+  assert.equal(result.submitted, false);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.error.code, 'CODEX_NOT_FOUND');
+  assert.equal(c.counts().clients, 0);
+});
+
 test('explicit quote target restores its exact archived thread before one submission', async t => {
   const c=await context(t,'restore-ok');
   const result=await sendCodex({...c.input,autoUnarchive:true},c.dependencies);

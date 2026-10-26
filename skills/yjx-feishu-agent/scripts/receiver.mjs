@@ -156,6 +156,13 @@ function decodeTask(buffer) {
   return (buffer[0] === 0xff && buffer[1] === 0xfe) || buffer[1] === 0 ? buffer.toString('utf16le') : buffer.toString('utf8');
 }
 
+// A user-disabled watchdog is intentional; starting the receiver must preserve it.
+export function matchesWatchdogTask(definition, expected) {
+  const disabled = expected.replace(/<Settings>([\s\S]*?)<\/Settings>/, (_, settings) =>
+    `<Settings>${settings.replace('<Enabled>true</Enabled>', '<Enabled>false</Enabled>')}</Settings>`);
+  return matchesTask(definition, expected) || matchesTask(definition, disabled);
+}
+
 async function installWindowsWatchdog(paths, stateDir, sid) {
   const taskName = `${paths.taskName}-watchdog`;
   const installation = path.join(paths.runtime, 'watchdog-registration.json');
@@ -165,7 +172,7 @@ async function installWindowsWatchdog(paths, stateDir, sid) {
   if (known) {
     if (known.stateDir !== stateDir || known.taskName !== taskName) throw new Error('Watchdog belongs to another installation');
     const existing = await execute('schtasks.exe', ['/Query', '/TN', taskName, '/XML'], { windowsHide: true, encoding: 'buffer' });
-    if (!matchesTask(decodeTask(existing.stdout), expected)) throw new Error('Watchdog task differs; refusing replacement');
+    if (!matchesWatchdogTask(decodeTask(existing.stdout), expected)) throw new Error('Watchdog task differs; refusing replacement');
   } else {
     const definition = path.join(paths.runtime, 'watchdog.xml');
     await writeFile(definition, Buffer.from(`\ufeff${expected}`, 'utf16le'), { mode: 0o600 });
@@ -173,7 +180,7 @@ async function installWindowsWatchdog(paths, stateDir, sid) {
     await atomicJson(installation, { stateDir, taskName });
   }
   const verified = await execute('schtasks.exe', ['/Query', '/TN', taskName, '/XML'], { windowsHide: true, encoding: 'buffer' });
-  if (!matchesTask(decodeTask(verified.stdout), expected)) throw new Error('Watchdog task read-back differs');
+  if (!matchesWatchdogTask(decodeTask(verified.stdout), expected)) throw new Error('Watchdog task read-back differs');
 }
 
 async function startPosix(paths, stateDir) {

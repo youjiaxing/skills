@@ -248,7 +248,8 @@ export async function sendCodex(input, overrides = {}) {
     if (options.waitMode==='deadline' && performance.now()>=deadline) record.waitTimedOut=true;
     const heldBy = record.oldThreadRequest && !['completed','failed','interrupted'].includes(record.oldThreadRequest.status)
       ? record.oldThreadRequest.requestId : null;
-    record.error = { code: !record.submitted && heldBy ? 'REQUEST_HELD' : record.submitted ? 'COMPLETION_UNCONFIRMED' : 'NOT_SUBMITTED',
+    record.error = { code: !record.submitted && heldBy ? 'REQUEST_HELD' : record.submitted ? 'COMPLETION_UNCONFIRMED'
+      : error.code === 'CODEX_NOT_FOUND' ? 'CODEX_NOT_FOUND' : 'NOT_SUBMITTED',
       message: error.message, ...(heldBy ? { blockedByRequestId:heldBy } : {}) };
     if (client?.unsupportedRequests.length) {
       record.status = 'blocked';

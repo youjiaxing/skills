@@ -15,6 +15,7 @@ node skills/yjx-feishu-agent/scripts/diagnose-message.mjs --message om_MESSAGE
 | `BOT_NOT_MENTIONED`、`USER_NOT_ALLOWED`、`UNSUPPORTED_MESSAGE_TYPE` 等入口原因 | 按当前群/用户授权核对，不自动扩权 |
 | `QUOTE_SOURCE_UNAVAILABLE`、`DEFAULT_UNCONFIGURED` | 检查被引用消息是否登记来源、群是否配置默认会话 |
 | codex 的 submitted/status/code | 判断是否已提交；未知结果保持原请求编号核查 |
+| `CODEX_NOT_FOUND` 且 submitted=false | 配置的原生程序不可用；Desktop 更新可能改变版本目录。停止接收器，备份并修正 bindings.json 的 codex 路径，用 `--version` 和目标会话只读检查验证后重启；保留绑定及原请求，不自动重放 |
 | codex.waitTimedOut 为 true | 等待预算耗尽；interruptRequested 仅表示已请求中断，不证明最终状态 |
 | reply 为 unknown | 回复已尝试但缺确认，不自动再回复 |
 | reply.type / reply.mode | 只读记录实际选择的 `text`、`post` 或 `interactive`，不代表客户端视觉已验收 |

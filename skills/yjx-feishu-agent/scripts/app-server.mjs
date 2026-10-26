@@ -27,7 +27,9 @@ export async function resolveCodex(value, env = process.env) {
     if (process.platform === 'win32' && !candidate.toLowerCase().endsWith('.exe')) continue;
     try { await access(candidate); return candidate; } catch { /* Try the next PATH entry. */ }
   }
-  throw new Error('Codex executable not found. Set --codex or CODEX_CLI_PATH to the native binary (codex.exe on Windows).');
+  const error = new Error('Codex executable not found. Set --codex or CODEX_CLI_PATH to the native binary (codex.exe on Windows).');
+  error.code = 'CODEX_NOT_FOUND';
+  throw error;
 }
 
 export class AppServer {

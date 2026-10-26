@@ -105,6 +105,13 @@ test('not-submitted request explains the safe next step without imposing an unre
   assert.match(failed,/未提交/);assert.match(failed,/重新发送/);assert.doesNotMatch(failed,/不要重复/);
 });
 
+test('missing executable explains the concrete local repair without exposing paths', () => {
+  const text = resultText({ status: 'blocked', submitted: false,
+    error: { code: 'CODEX_NOT_FOUND', message: 'private-path-secret' } }, 'request');
+  assert.match(text, /Codex 程序/); assert.match(text, /路径已变化/); assert.match(text, /未提交/);
+  assert.doesNotMatch(text, /private-path-secret|不要重复/);
+});
+
 test('unconfirmed Codex results are reported without a successful answer claim', async (t) => {
   const f = await fixture(t, { send: async () => ({ status: 'unconfirmed', answer: 'late partial' }) });
   await f.receiver.handle(event());
