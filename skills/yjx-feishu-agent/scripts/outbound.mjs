@@ -11,8 +11,8 @@ import { readTransport } from './feishu-context.mjs';
 import { describePush } from './push-contract.mjs';
 
 export const HELP = `Usage:
-  node outbound.mjs send --input request.json [--state-dir PATH]
-  node outbound.mjs update --input request.json [--state-dir PATH]
+  node outbound.mjs send --input request.json [--state-dir PATH] [--credentials-dir PATH]
+  node outbound.mjs update --input request.json [--state-dir PATH] [--credentials-dir PATH]
   node outbound.mjs status --request-id ID [--state-dir PATH]
   node outbound.mjs preflight --input request.json
   node outbound.mjs recheck --request-id ID [--state-dir PATH]
@@ -32,7 +32,7 @@ export function parseArgs(argv) {
   if (!operation || ['--help','-h'].includes(operation)) return { help: true };
   if (!['send','update','status','preflight','recheck','reconcile'].includes(operation)) throw new Error('Unknown operation');
   const result = { operation };
-  const keys = { '--input': 'input', '--state-dir': 'stateDir', '--request-id': 'requestId' };
+  const keys = { '--input': 'input', '--state-dir': 'stateDir', '--credentials-dir': 'credentialsDir', '--request-id': 'requestId' };
   while (args.length) {
     const key = keys[args.shift()]; const value = args.shift();
     if (!key || !value || result[key]) throw new Error('Invalid or repeated option');
@@ -69,7 +69,8 @@ export async function main(argv) {
     return verdict.status === 'ready' ? 0 : 3;
   }
   const stateDir = path.resolve(options.stateDir ?? defaultStateDir());
-  const credentials = await loadCredentials(stateDir);
+  const credentialsDir = path.resolve(options.credentialsDir ?? stateDir);
+  const credentials = await loadCredentials(credentialsDir);
   let record;
   if (options.operation === 'status') {
     try { record = await outboundStatus({ stateDir, appId: credentials.appId, requestId: options.requestId }); }

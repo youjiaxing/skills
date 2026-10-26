@@ -303,6 +303,19 @@ test('CLI legacy recheck input reads only the ID, even if original media has dis
   assert.equal(c.calls.length,1);
   assert.equal(parseArgs(['recheck','--request-id','daily']).requestId,'daily');
   assert.equal(parseArgs(['reconcile','--request-id','daily']).operation,'reconcile');
+  const isolated = path.join(c.stateDir, 'isolated-ledger');
+  const shared = path.join(c.stateDir, 'shared-credentials');
+  await mkdir(path.join(shared, 'secrets'), { recursive: true });
+  await writeFile(path.join(shared, 'secrets', 'feishu.json'),
+    JSON.stringify({ version: 1, protection: 'file-permissions', appId: 'cli_test', appSecret: 'secret' }));
+  const chunks2 = [], original2 = process.stdout.write;
+  process.stdout.write = chunk => { chunks2.push(chunk); return true; };
+  let code2;
+  try { code2 = await main(['status', '--request-id', 'missing', '--state-dir', isolated,
+    '--credentials-dir', shared]); }
+  finally { process.stdout.write = original2; }
+  assert.equal(code2, 3);
+  assert.equal(JSON.parse(chunks2.join('')).code, 'receipt-missing');
   assert.throws(()=>parseArgs(['recheck','--request-id','daily','--input',input]),/incompatible/);
 });
 

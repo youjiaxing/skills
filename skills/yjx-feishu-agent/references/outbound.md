@@ -29,7 +29,7 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs recheck --request-id digest-20
 node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-20261016
 ```
 
-均支持 `--state-dir PATH`，默认复用桥接状态目录与凭证。发送/更新退出码：0 已确认，2 受阻或输入错误，3 结果未知。status 的0只表示存档读出，仍检查状态字段；缺回执返回 missing、submitted:null 和退出码3。参数/版本错误只输出通用安全错误，先核对存档，不换编号重发。
+均支持 `--state-dir PATH`，默认复用桥接状态目录与凭证。调用方需要将投递账本与其他任务隔离时，可用 `--credentials-dir PATH` 只读共享另一个目录下的 `secrets/feishu.json`；命令不会复制或改写凭证，账本仍写入 `--state-dir`。发送/更新退出码：0 已确认，2 受阻或输入错误，3 结果未知。status 的0只表示存档读出，仍检查状态字段；缺回执返回 missing、submitted:null 和退出码3。参数/版本错误只输出通用安全错误，先核对存档，不换编号重发。
 
 发送 JSON 示例（群 ID 替换为已授权目标，`sourceThreadId` 替换为当前实际会话 UUID）：
 
