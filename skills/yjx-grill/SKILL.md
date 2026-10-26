@@ -98,6 +98,8 @@ Source and approval are independent. Approving a proposal does not turn its atta
 
 选择问题格式前先判断是否需要人类输入。只有真正涉及意图、判断或正式批准请求时才使用 `Q<N>`，不要每次回复都使用。用户要求解释时直接回答；对已确定选择做简短确认；事实、进度、blocker 或结论用普通 prose 报告，除非新问题独立通过门禁。格式偏好不足以支持虚构选项或重开已确定选择。
 
+在同一连续上下文中，问题编号从当前已出现的最大编号继续递增，不因新一轮或新批次重置；同一未决选择的澄清和追问沿用原编号。无需维护编号台账或回溯对话历史。若上下文压缩导致编号丢失，允许从 `Q1` 重新开始，接受小概率重复。
+
 When ready questions remain, lead the round with its first question after at most a brief acknowledgment, not a preliminary diagnosis or proposal. Start each question with a stable `Q<N>` heading that states the actual question. Directly beneath it, put the necessary background in a Markdown blockquote, without a "Context" label or equivalent. Place any options and their trade-offs below and outside the quote.
 
 Make the background sufficient to judge the question without relying on the user having read earlier Agent output: include the established situation or constraints, the unresolved judgment, and what the answer changes, only as needed. Distinguish verified facts, assumptions, and suggestions naturally. Explain unfamiliar terms and cite decisive evidence briefly, but keep the question understandable without opening links. Omit investigation history and option comparisons already covered below. Use one paragraph when enough, without mandatory fields, sentence counts, or fixed lengths; the background must not present the recommended choice as an established premise.
@@ -149,11 +151,11 @@ Apply the collaborative-discussion rule before concluding either form. Complete 
 
 ## 7. 按风险评审
 
-每个 Formal Contract 都需要一名未参与形成提案的独立 Reviewer。当实际影响、可逆性、权限、数据影响、兼容性、安全性或项目治理规则要求时，也要评审 Direct Result。评审本身不自动要求 contract。
+每个 Formal Contract 都需要一名未参与形成提案的独立 Reviewer。独立评审必须由主代理通过宿主提供的子代理工具新建真正的子代理完成，并显式使用 `fork_turns: "none"` 或等价的最小上下文隔离。当前代理自查、续写同一会话、复用提案形成者，或另起 `codex exec`、CLI 进程和普通对话，都不算子代理独立评审。子代理只接收原始目标、已验证事实、候选结果和 coverage record，不接收提案形成过程。当实际影响、可逆性、权限、数据影响、兼容性、安全性或项目治理规则要求时，也要评审 Direct Result。评审本身不自动要求 contract。
 
 Supply the original goal, verified facts, candidate result, and the relevant coverage record: sources/evidence, pending or constrained boundaries, selected approach and costs, rejected branches and reasons, and remaining assumptions. Ask whether the conclusion is supported and the overall solution correct, applicable, maintainable, compatible, proportionate, and faithful to provenance. Findings require concrete evidence and impact, not design preference.
 
-Resolve substantiated findings and obtain targeted independent re-review after material revisions. A newly discovered human fork returns to the frontier. If required review cannot run or a supported correctness finding remains unresolved, report the blocker rather than delivering the result or requesting approval.
+Resolve substantiated findings and obtain targeted independent re-review from a newly created subagent after material revisions. A newly discovered human fork returns to the frontier. If the subagent tool is unavailable, subagent creation fails, or a supported correctness finding remains unresolved, report the specific blocker rather than delivering the result, requesting approval, or presenting the result as reviewed.
 
 ## 8. 在交接中保留授权
 
