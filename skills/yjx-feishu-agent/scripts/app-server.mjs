@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
+import { resolveDesktopCodex } from './desktop-codex.mjs';
 
 export class RpcError extends Error {
   constructor(error) {
@@ -18,6 +19,7 @@ export function timeLeft(deadline) {
 }
 
 export async function resolveCodex(value, env = process.env) {
+  if (value === 'desktop') return resolveDesktopCodex();
   const candidates = value.includes('/') || value.includes('\\')
     ? [path.resolve(value)]
     : (env.PATH ?? '').split(path.delimiter).flatMap((directory) => process.platform === 'win32'

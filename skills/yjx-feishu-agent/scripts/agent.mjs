@@ -12,7 +12,8 @@ Prints a JSON request record. No Feishu connection is started in this version.
 
 Options:
   --request-id ID       Idempotency key; generated for a new send if omitted
-  --codex PATH          Native Codex executable (or CODEX_CLI_PATH; default: codex)
+  --codex PATH          Native executable; desktop follows Windows Desktop registration
+                        (or CODEX_CLI_PATH; default: codex)
   --state-dir PATH      Journal/lock directory (or YJX_FEISHU_AGENT_HOME)
                        Default: ~/.yjx-feishu-agent
   --cwd PATH            Process working directory (default: current directory)

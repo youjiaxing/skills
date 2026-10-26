@@ -33,12 +33,19 @@ test('explicit stop policy serializes against pending managed startup and scopes
   assert.equal(await recoveryEnabled(paths, 'fixture-state'), false);
   await withReceiverControl(paths, () => setRecovery(paths, 'fixture-state', true));
   assert.equal(await recoveryEnabled(paths, 'other-state'), false);
-  await Promise.all([
-    withReceiverControl(paths, () => setRecovery(paths, 'fixture-state', false)),
-    withReceiverControl(paths, async () => {
-      assert.equal(await recoveryEnabled(paths, 'fixture-state'), false);
-    }),
-  ]);
+  let acquired, proceed;
+  const held = new Promise(resolve => { acquired = resolve; });
+  const gate = new Promise(resolve => { proceed = resolve; });
+  const stopping = withReceiverControl(paths, async () => {
+    acquired(); await gate;
+    await setRecovery(paths, 'fixture-state', false);
+  });
+  await held; // OS directory locks guarantee exclusion, not FIFO acquisition order.
+  const starting = withReceiverControl(paths, async () => {
+    assert.equal(await recoveryEnabled(paths, 'fixture-state'), false);
+  });
+  proceed();
+  await Promise.all([stopping, starting]);
 });
 
 test('runtime snapshots retry transient replacement failures without erasing prior file', async t => {

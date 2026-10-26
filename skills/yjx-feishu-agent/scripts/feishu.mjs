@@ -110,7 +110,7 @@ export async function main(argv) {
     catch (error) { if (error.code !== 'ENOENT') throw new Error('Cannot read group bindings'); config = { version: 1, bindings: [] }; }
     if (config.bindings.some((binding) => binding.chatId === options.chatId)) throw new Error('Group already bound; edit bindings.json intentionally to change it');
     config.bindings.push({ chatId: options.chatId, users: [options.user], threadId: options.threadId });
-    if (options.codex) config.codex = path.resolve(options.codex);
+    if (options.codex) config.codex = options.codex === 'desktop' ? 'desktop' : path.resolve(options.codex);
     if (options.cwd) config.cwd = path.resolve(options.cwd);
     validateBindings(config);
     await mkdir(path.dirname(configFile), { recursive: true, mode: 0o700 });

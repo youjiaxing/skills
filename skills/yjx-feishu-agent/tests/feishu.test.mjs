@@ -108,7 +108,7 @@ test('not-submitted request explains the safe next step without imposing an unre
 test('missing executable explains the concrete local repair without exposing paths', () => {
   const text = resultText({ status: 'blocked', submitted: false,
     error: { code: 'CODEX_NOT_FOUND', message: 'private-path-secret' } }, 'request');
-  assert.match(text, /Codex 程序/); assert.match(text, /路径已变化/); assert.match(text, /未提交/);
+  assert.match(text, /Codex 程序/); assert.match(text, /Desktop 安装或桥接程序配置/); assert.match(text, /未提交/);
   assert.doesNotMatch(text, /private-path-secret|不要重复/);
 });
 

@@ -24,7 +24,7 @@ export function resultText(result, requestId) {
     return `暂时无法确认绑定的 Codex 聊天可用，本次消息未提交。请在本机检查会话和绑定；不能据此判断聊天已删除。请求：${requestId}`;
   }
   if (!result.submitted && result.error?.code === 'CODEX_NOT_FOUND') {
-    return `本机找不到已配置的 Codex 程序，本次消息未提交。可能是 Desktop 更新后程序路径已变化，请在本机修复桥接配置后重新发送。请求：${requestId}`;
+    return `本机找不到可用的 Codex 程序，本次消息未提交。请在本机检查 Desktop 安装或桥接程序配置，修复后重新发送。请求：${requestId}`;
   }
   if (!result.submitted && result.error?.code === 'NOT_SUBMITTED') {
     return `本次消息未提交给 Codex，未产生执行或重复发送。可以根据提示修正后重新发送。请求：${requestId}`;

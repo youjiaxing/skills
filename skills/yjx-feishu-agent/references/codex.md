@@ -6,6 +6,10 @@
 
 依赖 Node.js 20+ 和已登录的本机 Codex 原生可执行文件，不安装额外依赖。优先显式指定与 Desktop 相同版本的程序；Windows 使用 `codex.exe`，不经 `.cmd`、`.ps1` 或 shell 转发。PATH 中只有 npm 包装器时，传 `--codex` 或设置 `CODEX_CLI_PATH`。
 
+Windows Desktop 桥接可在 `bindings.json` 设置 `codex:"desktop"`，独立命令可用 `--codex desktop`。该模式每次请求前查询当前用户 Windows 包注册，以唯一可读 OpenAI.Codex 包的 `app/resources/codex.exe` 为内容依据。WindowsApps 内的程序可能禁止直接启动，因此对 Desktop 导出的 `OpenAI/Codex/bin/<hash>/codex.exe` 做 SHA-256 内容匹配后才启动；不会按目录时间猜版本，也不把 hash 路径写成固定配置或依赖常驻进程的 PATH。内容未变时内存缓存已核对副本，注册位置或文件状态变化后重新核验。读取失败、多个可用包或没有匹配副本均返回 `CODEX_NOT_FOUND`，不改用 npm；刚更新而未导出副本时先打开 Desktop。
+
+此模式仅支持已核对的 Windows 包布局和当前 ASCII 注册路径（reg.exe 输出按 UTF-8 读取）；布局变化、非 ASCII 安装路径或其他平台可显式配置原生程序。显式自定义路径继续严格使用，不自动替换。安装更新期间若解析/启动失败，本次保持未提交，下一条新请求重新解析，不自动重放旧消息。它是本技能依据本机安装验证的适配，不是公开稳定的 Desktop 发现接口。
+
 ## 命令
 
 从仓库根目录运行，UUID、程序路径和请求编号替换为本次真实值：
