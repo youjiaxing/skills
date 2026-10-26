@@ -1,0 +1,7 @@
+interface:
+  display_name: "iPhone 原生 App 操作"
+  short_description: "通过已授权真机链路查询 iPhone 原生 App"
+  default_prompt: "使用 $yjx-iphone-app-ops 在已授权 iPhone 上读取原生 App 页面并完成查询。"
+policy:
+  allow_implicit_invocation: false
+

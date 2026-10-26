@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yjx.iphone-appium</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin/node</string>
+    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/lib/node_modules/appium/build/lib/main.js</string>
+    <string>--address</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>4723</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/youjiaxing</string>
+    <key>APPIUM_HOME</key>
+    <string>/Users/youjiaxing/.appium</string>
+    <key>PATH</key>
+    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/youjiaxing/Code/youjiaxing/skills</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>/Users/youjiaxing/Library/Logs/yjx-iphone-appium.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/youjiaxing/Library/Logs/yjx-iphone-appium.error.log</string>
+</dict>
+</plist>

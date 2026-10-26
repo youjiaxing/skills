@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.yjx.iphone-tunnel</string>
+  <key>UserName</key>
+  <string>root</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin/node</string>
+    <string>/Users/youjiaxing/.appium/node_modules/appium-xcuitest-driver/scripts/tunnel-creation.mjs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/youjiaxing</string>
+    <key>APPIUM_HOME</key>
+    <string>/Users/youjiaxing/.appium</string>
+    <key>PATH</key>
+    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/youjiaxing/Code/youjiaxing/skills</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/yjx-iphone-tunnel.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/yjx-iphone-tunnel.error.log</string>
+</dict>
+</plist>
