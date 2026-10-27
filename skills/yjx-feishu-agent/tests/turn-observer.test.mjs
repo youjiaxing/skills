@@ -44,6 +44,31 @@ test('only persisted terminal timestamps end failed/interrupted turns; partial t
   }
 });
 
+test('completed turn without usable final text ends as terminal failure after a grace period',async()=>{
+  const leaked='reasoning echo';
+  const stuck={id:'turn',status:'completed',completedAt:123,items:[
+    {type:'reasoning',summary:[leaked]},{type:'agentMessage',phase:null,text:leaked}]};
+  const r=record(),states=[];
+  await observeTurn({client:client(),record:r,rpcTimeoutMs:50,pollMs:1,noFinalTextPolls:2,finalTexts,
+    findTurn:async()=>stuck,save:async()=>states.push(r.observationState)});
+  assert.equal(r.status,'failed');assert.equal(r.error.code,'TURN_NO_FINAL_TEXT');
+  assert.equal(r.answer,null);assert.deepEqual(r.answers,[]);
+  assert.deepEqual(states,['awaiting_final','failed']);
+});
+
+test('reasoning echo is never accepted as an unphased final answer',async()=>{
+  const leaked='Now I understand the root cause.';
+  const echoed={id:'turn',status:'completed',completedAt:123,items:[
+    {type:'reasoning',summary:[leaked]},{type:'agentMessage',phase:null,text:leaked}]};
+  assert.deepEqual(finalTexts(echoed),[]);
+  const clean={id:'turn',status:'completed',completedAt:123,items:[
+    {type:'reasoning',summary:[leaked]},{type:'agentMessage',phase:null,text:'干净回答'}]};
+  const r=record(),states=[];
+  await observeTurn({client:client(),record:r,rpcTimeoutMs:50,pollMs:1,finalTexts,
+    findTurn:async()=>clean,save:async()=>states.push(r.observationState)});
+  assert.equal(r.status,'completed');assert.equal(r.answer,'干净回答');
+});
+
 test('broken transport or unsupported host request ends observation as an error, not success',async()=>{
   for(const c of [{...client(),failure:new Error('connection lost')},{...client(),unsupportedRequests:['item/tool/call']}]) {
     const r=record();

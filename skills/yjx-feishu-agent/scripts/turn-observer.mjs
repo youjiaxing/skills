@@ -14,8 +14,9 @@ export function terminalSnapshot(turn,finalTexts) {
 
 // Observation has no total execution deadline. RPC and polling deadlines only
 // bound individual checks; silence is never evidence of task failure.
-export async function observeTurn({client,record,rpcTimeoutMs,pollMs=30000,findTurn,finalTexts,save}) {
+export async function observeTurn({client,record,rpcTimeoutMs,pollMs=30000,noFinalTextPolls=3,findTurn,finalTexts,save}) {
   let fingerprint;
+  let settledWithoutText = 0;
   for (;;) {
     if (client.unsupportedRequests.length) throw new Error('Host interaction required');
     if (client.failure) throw client.failure;
@@ -34,7 +35,7 @@ export async function observeTurn({client,record,rpcTimeoutMs,pollMs=30000,findT
       if(record.turnId && turn.id!==record.turnId) throw new Error('Turn identity mismatch');
       record.turnId=turn.id;
       const next=createHash('sha256').update(JSON.stringify(turn)).digest('hex');
-      if(next!==fingerprint) {fingerprint=next;record.lastProgressAt=record.lastObservedAt;}
+      if(next!==fingerprint) {fingerprint=next;record.lastProgressAt=record.lastObservedAt;settledWithoutText=0;}
       record.observedTurnStatus=['completed','failed','interrupted','inProgress','running','pending'].includes(turn.status)
         ? turn.status : 'unknown';
       const terminal=terminalSnapshot(turn,finalTexts);
@@ -43,6 +44,19 @@ export async function observeTurn({client,record,rpcTimeoutMs,pollMs=30000,findT
         record.observationState=terminal.status;record.terminalConfirmedAt=record.lastObservedAt;
         await save();return;
       }
+      // A turn that is already finished but exposes no usable final text cannot
+      // produce one later; waiting forever would leave the caller hanging. Allow
+      // a short grace period for late-arriving items, then end as a terminal
+      // failure so the caller reports it instead of leaking reasoning or hanging.
+      if(turn.status==='completed' && Number.isSafeInteger(turn.completedAt) && turn.completedAt>0) {
+        settledWithoutText+=1;
+        if(settledWithoutText>=noFinalTextPolls) {
+          record.status='failed';record.answers=[];record.answer=null;
+          record.error={code:'TURN_NO_FINAL_TEXT',message:'Turn completed without a usable final answer'};
+          record.observationState='failed';record.terminalConfirmedAt=record.lastObservedAt;
+          await save();return;
+        }
+      } else settledWithoutText=0;
       record.observationState=turn.status==='completed' ? 'awaiting_final'
         : ['inProgress','running'].includes(turn.status) ? 'running' : 'unknown';
       record.status='waiting';

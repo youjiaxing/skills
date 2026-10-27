@@ -22,6 +22,28 @@ function inputHash(threadId, message) {
   return createHash('sha256').update(JSON.stringify({ agent: 'codex', threadId, message })).digest('hex');
 }
 
+function normalizedText(value) {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+function reasoningSummaries(turn) {
+  return (turn.items ?? []).filter((item) => item.type === 'reasoning')
+    .flatMap((item) => Array.isArray(item.summary) ? item.summary : [])
+    .map((entry) => normalizedText(entry?.text ?? entry)).filter(Boolean);
+}
+
+// A provider turn can end with the model's own reasoning persisted as the last
+// unphased agentMessage (a runaway reasoning loop emits no final answer at all).
+// Treating that echo as the answer leaks internal reasoning to the caller, so it
+// is rejected: the turn then ends as a terminal no-final-text failure instead.
+export function echoesReasoning(turn, text) {
+  const normalized = normalizedText(text);
+  if (!normalized) return false;
+  const summaries = reasoningSummaries(turn);
+  if (summaries.includes(normalized)) return true;
+  return summaries.length > 1 && summaries.join(' ') === normalized;
+}
+
 export function finalTexts(turn) {
   const items = turn.items ?? [];
   const explicit = items.filter((item) => item.type === 'agentMessage' && item.phase === 'final_answer')
@@ -31,7 +53,8 @@ export function finalTexts(turn) {
   const last = items.at(-1);
   if (turn.status === 'completed' && turn.completedAt != null &&
       last?.type === 'agentMessage' && last.phase == null &&
-      typeof last.text === 'string' && last.text.trim()) return [last.text];
+      typeof last.text === 'string' && last.text.trim() &&
+      !echoesReasoning(turn, last.text)) return [last.text];
   return [];
 }
 

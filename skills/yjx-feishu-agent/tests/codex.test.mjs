@@ -61,6 +61,33 @@ test('completed persisted turns accept only terminal unphased text as fallback',
   assert.deepEqual(finalTexts({ ...turn, items: [{ ...terminal, phase: 'final_answer', text: 'explicit' }, terminal] }), ['explicit']);
 });
 
+test('unphased text that only echoes reasoning is never returned as the answer', () => {
+  const leaked = 'Now I understand the root cause. The fallback takes the last item.';
+  const echoed = { status: 'completed', completedAt: 123, items: [
+    { type: 'userMessage', content: [{ type: 'text', text: 'request' }] },
+    { type: 'reasoning', summary: [leaked], content: [] },
+    { type: 'agentMessage', phase: null, text: leaked },
+  ] };
+  assert.deepEqual(finalTexts(echoed), []);
+  const whitespace = { ...echoed, items: [echoed.items[1],
+    { type: 'agentMessage', phase: null, text: `  ${leaked.replaceAll(' ', '\n')}  ` }] };
+  assert.deepEqual(finalTexts(whitespace), []);
+  const joined = { status: 'completed', completedAt: 123, items: [
+    { type: 'reasoning', summary: ['first part', 'second part'] },
+    { type: 'agentMessage', phase: null, text: 'first part\n\nsecond part' },
+  ] };
+  assert.deepEqual(finalTexts(joined), []);
+  const real = { status: 'completed', completedAt: 123, items: [echoed.items[1], echoed.items[2],
+    { type: 'agentMessage', phase: null, text: '这是干净的回答。' }] };
+  assert.deepEqual(finalTexts(real), ['这是干净的回答。']);
+  const explicit = { status: 'completed', completedAt: 123, items: [
+    { type: 'reasoning', summary: [leaked] },
+    { type: 'agentMessage', phase: 'final_answer', text: leaked },
+  ] };
+  assert.deepEqual(finalTexts(explicit), [leaked]);
+});
+
+
 test('queued completion with null phase is recovered without a second submission', async (t) => {
   const c = await context(t, 'queue-null-phase');
   const result = await sendCodex({ ...c.input, timeoutMs: 1000 }, c.dependencies);
