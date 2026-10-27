@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { appendFile } from 'node:fs/promises';
 import { lockThread } from './state.mjs';
-import { readJson, atomicJson } from './receiver-runtime.mjs';
+import { readJson, atomicJson, receiverStatus, recoverReceiverLock } from './receiver-runtime.mjs';
 
 export async function withReceiverControl(paths, operation) {
   const release = await lockThread(paths.runtime, 'lifecycle', performance.now() + 10000);
@@ -18,6 +18,15 @@ export async function setRecovery(paths, stateDir, enabled) {
   await atomicJson(path.join(paths.runtime, 'recovery.json'), {
     enabled, stateDir, updatedAt: new Date().toISOString(),
   });
+}
+
+// Managed logon/failure restart only, under the lifecycle lock and after policy
+// validation. This never touches Codex sender locks or unsettled request records.
+export async function recoverManagedReceiver(appId, options = {}) {
+  const status = await receiverStatus(appId, options);
+  if (status.state !== 'stale_lock') return { recovered: false, state: status.state };
+  const recovered = await recoverReceiverLock(appId, options);
+  return { recovered, state: (await receiverStatus(appId, options)).state };
 }
 
 // Only fixed stages, allowlisted system codes and numeric API/HTTP codes persist.

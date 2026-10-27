@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile, open } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -100,7 +100,9 @@ export async function lockThread(stateDir, threadId, deadline) {
       await mkdir(directory, { mode: 0o700 });
       const token = randomUUID();
       try {
-        await writeFile(path.join(directory, 'owner.json'), JSON.stringify({ pid: process.pid, token }), { mode: 0o600 });
+        const handle = await open(path.join(directory, 'owner.json'), 'wx', 0o600);
+        try { await handle.writeFile(JSON.stringify({ pid: process.pid, token })); await handle.sync(); }
+        finally { await handle.close(); }
       } catch (error) {
         await rm(directory, { recursive: true, force: true });
         throw error;

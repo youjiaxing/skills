@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { defaultStateDir } from './codex.mjs';
 import { loadCredentials } from './feishu-credentials.mjs';
-import { receiverPaths, receiverStatus, recoverReceiverLock, readJson, atomicJson, processAlive } from './receiver-runtime.mjs';
+import { receiverPaths, receiverStatus, recoverReceiverLock, readJson, readRuntimeSnapshot, atomicJson, processAlive } from './receiver-runtime.mjs';
 import { withReceiverControl, recoveryEnabled, setRecovery, ensureReceiver, recordRuntimeFailure } from './receiver-recovery.mjs';
 
 const execute = promisify(execFile);
@@ -208,9 +208,11 @@ export async function main(argv) {
   const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
   const status = await receiverStatus(appId);
   if (command === 'status') {
+    const watchdog = await readRuntimeSnapshot(path.join(paths.runtime, 'watchdog-status.json'));
+    const failure = await readRuntimeSnapshot(path.join(paths.runtime, 'last-failure.json'));
     print({ ...status, recovery: { enabled: await recoveryEnabled(paths, stateDir),
-      watchdog: await readJson(path.join(paths.runtime, 'watchdog-status.json')),
-      lastFailure: await readJson(path.join(paths.runtime, 'last-failure.json')) } });
+      watchdog: watchdog.value, watchdogState: watchdog.state,
+      lastFailure: failure.value, failureState: failure.state } });
     return;
   }
   if (command === 'recover-lock') {

@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, writeFile, unlink, rmdir, lstat } from 'node:fs/promises';
+import { mkdir, readFile, rename, open, unlink, rmdir, lstat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -22,11 +23,24 @@ export async function readJson(file) {
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
+// Telemetry is not an ownership or authorization source. Keep strict readJson
+// for receiver owners, recovery intent, stop controls and request journals.
+export async function readRuntimeSnapshot(file) {
+  try {
+    const value = await readJson(file);
+    if (value === null) return { value: null, state: 'missing' };
+    if (typeof value !== 'object' || Array.isArray(value)) return { value: null, state: 'unreadable' };
+    return { value, state: 'readable' };
+  } catch { return { value: null, state: 'unreadable' }; }
+}
+
 export async function atomicJson(file, value, { replace = rename, wait = delay } = {}) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temporary = `${file}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
+    const handle = await open(temporary, 'wx', 0o600);
+    try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
+    finally { await handle.close(); }
     for (let attempt = 0; ; attempt += 1) {
       try { await replace(temporary, file); break; }
       catch (error) {
@@ -39,27 +53,34 @@ export async function atomicJson(file, value, { replace = rename, wait = delay }
 
 export async function receiverStatus(appId, { home, alive = processAlive } = {}) {
   const paths = receiverPaths(appId, home);
-  const owner = await readJson(path.join(paths.lock, 'owner.json'));
-  const runtime = await readJson(path.join(paths.runtime, 'status.json'));
+  let owner;
+  try { owner = await readJson(path.join(paths.lock, 'owner.json')); }
+  catch { return { state: 'incomplete_lock', ownerState: 'unreadable', runtimeDirectory: paths.runtime }; }
+  const snapshot = await readRuntimeSnapshot(path.join(paths.runtime, 'status.json'));
+  const runtime = snapshot.value;
+  const diagnostic = snapshot.state === 'unreadable' ? { runtimeState: 'unreadable' } : {};
+  if (owner && (!Number.isSafeInteger(owner.pid) || owner.pid < 1 || typeof owner.token !== 'string' || !owner.token)) {
+    return { state: 'incomplete_lock', ownerState: 'invalid', runtimeDirectory: paths.runtime, ...diagnostic };
+  }
   if (!owner) {
     try {
       await lstat(paths.lock);
       return { state: 'incomplete_lock', lockDirectory: paths.lock, runtimeDirectory: paths.runtime };
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
-      return { state: 'stopped', runtimeDirectory: paths.runtime,
+      return { state: 'stopped', runtimeDirectory: paths.runtime, ...diagnostic,
         ...(runtime?.connection==='stopped' ? {stopReason:runtime.stopReason ?? 'unknown',updatedAt:runtime.updatedAt,
           ...(runtime.failure ? { failure: runtime.failure } : {})} : {}) };
     }
   }
   const living = alive(owner.pid);
-  if (living === false) return { state: 'stale_lock', pid: owner.pid, runtimeDirectory: paths.runtime };
+  if (living === false) return { state: 'stale_lock', pid: owner.pid, runtimeDirectory: paths.runtime, ...diagnostic };
   const matching = runtime?.pid === owner.pid && runtime?.token === owner.token;
   const fresh = matching && Date.now() - Date.parse(runtime.updatedAt) < 15000;
   return { state: fresh && living === true ? 'running' : 'unknown', pid: owner.pid,
     connection: matching ? runtime.connection : 'unknown',
     updatedAt: matching ? runtime.updatedAt : null,
-    runtimeDirectory: paths.runtime };
+    runtimeDirectory: paths.runtime, ...diagnostic };
 }
 
 // Explicit recovery only. Serialize recoverers before re-reading the lock;
@@ -76,6 +97,9 @@ export async function recoverReceiverLock(appId, { home, alive = processAlive } 
       try { await lstat(paths.lock); }
       catch (error) { if (error.code === 'ENOENT') return false; throw error; }
       throw new Error('Receiver lock has no owner; inspect its directory and processes manually');
+    }
+    if (!Number.isSafeInteger(owner.pid) || owner.pid < 1 || typeof owner.token !== 'string' || !owner.token) {
+      throw new Error('Receiver owner is invalid; inspect before recovery');
     }
     if (alive(owner.pid) !== false) throw new Error('Receiver owner may still be alive; refusing lock recovery');
     const again = await readJson(ownerFile);

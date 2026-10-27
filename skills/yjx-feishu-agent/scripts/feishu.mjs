@@ -17,7 +17,7 @@ import { createProcessingFeedback } from './processing-feedback.mjs';
 import { reactionTransport } from './reaction-transport.mjs';
 import { safeFailure } from './message-diagnostics.mjs';
 import { renderReply } from './reply-renderer.mjs';
-import { withReceiverControl, recoveryEnabled, recordRuntimeFailure, runtimeFailure } from './receiver-recovery.mjs';
+import { withReceiverControl, recoveryEnabled, recordRuntimeFailure, runtimeFailure, recoverManagedReceiver } from './receiver-recovery.mjs';
 
 let runtimeFailurePaths;
 let recordedRuntimeError;
@@ -170,6 +170,10 @@ export async function main(argv) {
   const runtimePaths = receiverPaths(credentials.appId);
   const acquire = async () => {
     if (options.managed && !await recoveryEnabled(runtimePaths, stateDir)) return null;
+    if (options.managed) {
+      const recovery = await recoverManagedReceiver(credentials.appId);
+      if (recovery.recovered) print({ type: 'receiver-lock-recovered', reason: 'owner_process_absent' });
+    }
     const unlock = await lockThread(lockHome, digest(credentials.appId), performance.now());
     if (!unlock) throw new Error('Another receiver or leftover receiver lock exists; inspect before recovery');
     try {

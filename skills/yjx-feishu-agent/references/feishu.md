@@ -80,13 +80,15 @@ Windows 使用原生 `schtasks.exe` 注册当前用户的任务：InteractiveTok
 
 macOS/Linux 使用 detached Node 进程，将标准输出记录在运行目录的 `receiver.log`；未做这两个平台的实机验收，也不安装 launchd/systemd 或定时 watchdog。`ensure` 可以单次检查，但不表示已安装调度。各平台的 `status.json` 保存实时心跳，`connection-events.ndjson` 保存连接状态变化，位于用户目录 `.yjx-feishu-agent-receivers/runtime/<app hash>`。`recovery.json` 保存启停意图，`watchdog-status.json` 保存最近检查结果，`last-failure.json` 与 `failures.ndjson` 保存故障阶段和允许的系统/API码，不保存原始异常、堆栈、消息正文或凭证。`receiver.mjs status` 一并显示恢复开关、最后检查及最近故障。心跳原子替换遇到短暂 EPERM/EACCES/EBUSY 时有限重试，持续失败仍保留错误。任务参数和日志不保存 App Secret；请求结果仍在原状态目录。
 
-每个应用同一系统账户只允许一个接收器，锁在固定的用户目录 `.yjx-feishu-agent-receivers/locks/<app hash>`，与自定义状态目录无关。死亡进程留下的锁不会自动抢占，明确检查后可执行：
+每个应用同一系统账户只允许一个接收器，锁在固定的用户目录 `.yjx-feishu-agent-receivers/locks/<app hash>`，与自定义状态目录无关。受管 `serve --managed` 在生命周期锁内先校验启用意图，再识别有效 owner 且确认 PID 已不存在的接收器锁，通过恢复互斥、二次 owner/token/PID 检查后回收，随后重新申请接收器锁。登录启动和任务失败重启因此可从上次进程突然退出恢复，不依赖周期 watchdog。独立 `serve` 和手动 `start` 遇到残留锁仍要求明确检查后执行：
 
 ```sh
 node skills/yjx-feishu-agent/scripts/receiver.mjs recover-lock
 ```
 
 该命令串行核对 owner 和 PID，仅回收已确认不存在的接收器进程锁，不改 Codex sender locks 或请求日志。权限不足、PID 仍存在、owner 缺失都拒绝恢复；`incomplete_lock` 或恢复互斥目录遗留时需先检查相关进程和目录，不能直接按 PID 强杀或批量删状态。其他电脑或系统账户上的同应用实例也应关闭，飞书会在多个长连接间分发事件。
+
+状态文件、恢复意图和停止请求使用唯一排他临时文件，完成写入、`sync` 和关闭后再原子替换；锁 owner 写入也先 `sync`。这降低异常关机后出现全零文件的概率，不能保证硬件或目录元数据的断电持久性。`status.json`、watchdog 和故障快照损坏时报告 `unreadable`，不从损坏内容推断正在运行，也不让它遮蔽已死亡 owner；owner、恢复意图、停止控制及请求日志仍严格读取，损坏时不授予恢复权限。生命周期锁、恢复互斥锁、不完整 owner 的损坏仍保留人工检查边界。不要因本机曾有 watchdog 而重新开启已禁用任务。
 
 `feishu.mjs serve` 仍可用于独立终端前台调试，Ctrl+C 或 SIGTERM 优雅停止。若从 Codex Desktop 的工具终端启动，Desktop 退出可能连带停止它；日常使用应走上述管理命令。
 

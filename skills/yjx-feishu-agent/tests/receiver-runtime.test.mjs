@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, access, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { receiverPaths, receiverStatus, recoverReceiverLock } from '../scripts/receiver-runtime.mjs';
+import { receiverPaths, receiverStatus, recoverReceiverLock, atomicJson } from '../scripts/receiver-runtime.mjs';
+import { recoverManagedReceiver } from '../scripts/receiver-recovery.mjs';
 import { taskDefinition, legacyTaskDefinition, previousTaskDefinition, matchesTask, windowsArgument } from '../scripts/receiver.mjs';
 
 async function fixture(t) {
@@ -26,6 +27,60 @@ test('status distinguishes dead locks, live heartbeat and mismatched instance', 
   assert.equal(status.connection, 'connected');
   await writeFile(path.join(f.paths.runtime, 'status.json'), JSON.stringify({ ...f.owner, token: 'different', updatedAt: new Date().toISOString() }));
   assert.equal((await receiverStatus('cli_fixture', { home: f.home, alive: () => true })).state, 'unknown');
+});
+
+test('power-loss-corrupted heartbeat does not conceal a dead owner or prevent explicit lock recovery', async t => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.paths.runtime, 'status.json'), Buffer.alloc(181));
+  const status = await receiverStatus('cli_fixture', { home: f.home, alive: () => false });
+  assert.equal(status.state, 'stale_lock');
+  assert.equal(status.runtimeState, 'unreadable');
+  assert.equal(await recoverReceiverLock('cli_fixture', { home: f.home, alive: () => false }), true);
+  const stopped = await receiverStatus('cli_fixture', { home: f.home });
+  assert.equal(stopped.state, 'stopped');
+  assert.equal(stopped.runtimeState, 'unreadable');
+});
+
+test('a corrupt heartbeat never permits recovery of a live or unknown receiver owner', async t => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.paths.runtime, 'status.json'), Buffer.alloc(181));
+  for (const alive of [() => true, () => null]) {
+    assert.equal((await receiverStatus('cli_fixture', { home: f.home, alive })).state, 'unknown');
+    await assert.rejects(recoverReceiverLock('cli_fixture', { home: f.home, alive }), /may still be alive/);
+    await access(f.paths.lock);
+  }
+});
+
+test('managed logon recovery clears only confirmed-dead receiver ownership after corrupt telemetry', async t => {
+  const f = await fixture(t);
+  const journal = path.join(f.home, 'submitted-request.json');
+  await writeFile(journal, 'preserve execution evidence');
+  await writeFile(path.join(f.paths.runtime, 'status.json'), Buffer.alloc(181));
+  const result = await recoverManagedReceiver('cli_fixture', { home: f.home, alive: () => false });
+  assert.deepEqual(result, { recovered: true, state: 'stopped' });
+  assert.equal(await readFile(journal, 'utf8'), 'preserve execution evidence');
+});
+
+test('managed recovery leaves live, unknown and malformed owners untouched', async t => {
+  const f = await fixture(t);
+  for (const alive of [() => true, () => null]) {
+    assert.equal((await recoverManagedReceiver('cli_fixture', { home: f.home, alive })).recovered, false);
+    assert.deepEqual(JSON.parse(await readFile(path.join(f.paths.lock, 'owner.json'))), f.owner);
+  }
+  await writeFile(path.join(f.paths.lock, 'owner.json'), Buffer.alloc(100));
+  const result = await recoverManagedReceiver('cli_fixture', { home: f.home, alive: () => false });
+  assert.equal(result.state, 'incomplete_lock');
+  assert.equal(result.recovered, false);
+  await access(f.paths.lock);
+});
+
+test('concurrent runtime replacements use independent temporary files and retain complete JSON', async t => {
+  const f = await fixture(t);
+  const file = path.join(f.paths.runtime, 'snapshot.json');
+  const values = Array.from({ length: 6 }, (_, sequence) => ({ sequence, content: '完整'.repeat(1000) }));
+  await Promise.all(values.map(value => atomicJson(file, value)));
+  const result = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(result, values[result.sequence]);
 });
 
 test('dead receiver recovery leaves Codex journals untouched and refuses live owners', async (t) => {
