@@ -110,4 +110,6 @@ There is no default Git commit step in either storage mode. Honor a separate exp
 
 Before mutation, check the final content against the agreed scope, readiness gate, marker protocol, and reference targets. After writing or publishing, verify the stored content and references and apply only the project's required triage labels for a completed specification. Do not declare success from a local upload file alone.
 
+验证必须对应具体要求、明确协议或有证据的失败风险，并使用能判断该问题的证据。将机器协议、自然语言语义和远程存储分别验证：协议可用稳定结构检查，语义通过内容与来源核对，存储通过目标身份和回读结果确认。不得临时把问题编号、内部说明、自然语言短语或其他表面特征当成规格必须包含的条件，也不得用关键词匹配代替语义审阅。比较发布前后的文本时，先统一平台允许的换行和末尾空白；只有内容本身发生变化才算不一致。已有证据足以支持结论后停止检查，只有发现新问题或证据缺口才追加验证。若检查器自身失败，先区分检查器错误、发布失败和发布状态未知，不要据此盲目重试或重复创建目标。
+
 If publication fails, is partial, or cannot be verified, report completed targets and outstanding work accurately and preserve recoverable temporary material. Do not silently reduce the requested scope, claim the entire specification is published, or launch an implementation workflow.
