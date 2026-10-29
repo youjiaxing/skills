@@ -141,21 +141,23 @@ If a new answer invalidates an earlier branch, discard dependent inferences and 
 选择两种交付形式之一：
 
 - **Direct Result**: no consequential human judgment required formal approval, including cases where only low-risk core intent needed clarification. Use natural prose, not a mandatory contract or a repeat approval request.
-- **Formal Contract**: the slice has a recorded `contract required` obligation. Before drafting, reviewing, or requesting approval, read [references/contract.md](references/contract.md) in full. Produce one independently reviewed contract for that slice and obtain explicit approval.
+- **Formal Contract**: the slice has a recorded `contract required` obligation. Before drafting, reviewing, or requesting approval, read [references/contract.md](references/contract.md) in full. Produce one reviewed contract for that slice and obtain explicit approval.
 
 For either form, synthesize the result around the actual problem and intended outcome, then the selected solution with key reasons and accepted costs. Keep related decisions together by topic rather than replaying Q numbers or the conversation. Include relevant boundaries, material assumptions, remaining uncertainties, and the confirmation status or next step. These are content needs, not four mandatory sections: omit empty categories, and let a simple result be one paragraph. New unconfirmed suggestions remain visibly distinct from agreed content; unresolved prerequisites prevent declaring completion.
 
-If new evidence reveals consequential human judgment, record the obligation and address it. Independent review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
+If new evidence reveals consequential human judgment, record the obligation and address it. Risk-triggered review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
 
 Apply the collaborative-discussion rule before concluding either form. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. State whether alignment is complete, whether the relevant scope is ready for implementation, and whether existing authorization and execution intent allow handoff under section 8. Completing this workflow does not claim that any implementation occurred.
 
 ## 7. 按风险评审
 
-每个 Formal Contract 都需要一名未参与形成提案的独立 Reviewer。独立评审必须由主代理通过宿主提供的子代理工具新建真正的子代理完成，并显式使用 `fork_turns: "none"` 或等价的最小上下文隔离。当前代理自查、续写同一会话、复用提案形成者，或另起 `codex exec`、CLI 进程和普通对话，都不算子代理独立评审。子代理只接收原始目标、已验证事实、候选结果和 coverage record，不接收提案形成过程。当实际影响、可逆性、权限、数据影响、兼容性、安全性或项目治理规则要求时，也要评审 Direct Result。评审本身不自动要求 contract。
+每个 Formal Contract 都需要在请求批准前完成评审；当实际影响、可逆性、权限、数据影响、兼容性、安全性或项目治理规则要求时，也要评审 Direct Result。评审本身不自动要求 contract。
 
-Supply the original goal, verified facts, candidate result, and the relevant coverage record: sources/evidence, pending or constrained boundaries, selected approach and costs, rejected branches and reasons, and remaining assumptions. Ask whether the conclusion is supported and the overall solution correct, applicable, maintainable, compatible, proportionate, and faithful to provenance. Findings require concrete evidence and impact, not design preference.
+当宿主提供原生子代理能力时，由主代理启动上下文隔离（不继承主对话历史，仅传入本次评审材料）的独立 Reviewer 子代理执行评审；禁止通过另起 `codex exec`、外部 CLI 进程或普通对话伪造子代理。若宿主没有子代理工具或子代理调用失败，则由当前会话直接对照同一材料与标准完成一轮自审，并在呈现结果或请求批准时注明本次为当前会话自审及原因，不硬阻断交付。
 
-Resolve substantiated findings and obtain targeted independent re-review from a newly created subagent after material revisions. A newly discovered human fork returns to the frontier. If the subagent tool is unavailable, subagent creation fails, or a supported correctness finding remains unresolved, report the specific blocker rather than delivering the result, requesting approval, or presenting the result as reviewed.
+评审输入包含原始目标、已验证事实、候选结果和相关 coverage record：来源与证据、待定或受约束边界、已选方案与代价、被拒分支与理由，以及剩余假设。核查结论是否有证据支撑，整体方案是否正确、适用、可维护、兼容、代价对称且忠实于来源映射。有效发现必须具备具体证据与实际影响，不能仅凭设计偏好重开已决分支。
+
+解决有依据的发现；发生实质修订后，对修订范围做针对性复核（子代理路径可优先复用同一 Reviewer 子代理跟进复核，当前会话自审路径由当前会话复核）。评审中若发现新的人类决策分叉，退回 ready frontier。只有当有证据支撑的实质正确性缺陷仍未解决时，才报告具体 blocker 并暂停交付或请求批准。
 
 ## 8. 在交接中保留授权
 
