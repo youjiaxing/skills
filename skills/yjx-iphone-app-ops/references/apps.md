@@ -1,13 +1,14 @@
 # 已验证 App 配置
 
-这些配置描述 bundle 身份和当前已验证的原生入口，不把一次页面读取当作平台内容已核实。
+这些配置记录实际设备页面；读取成功只代表取得观察。
 
-| App | Bundle ID | 当前验证 | 查询入口约定 |
-| --- | --- | --- | --- |
-| 小红书 | `com.xingin.discover` | XS Max / iOS 18.7.10 可恢复、搜索并读取结果；首页搜索图标无文本，搜索页输入框为 `XCUIElementTypeTextView`，提交按钮为 `recommend_search_button` | 先进入首页搜索页，清空输入框后输入查询词，再点击 `recommend_search_button` |
-| 大众点评 | `com.dianping.dpscope` | XS Max / iOS 18.7.10 可启动并报告前台；首次启动可能出现“大众点评隐私政策协议”，本轮已在用户明确授权后点击“同意”；首页“搜索按钮”可定位。2026-10-26 用户手动通过身份核实并登录后，完成 `blcoffee厦门` 查询；结果页截图可读，曾显示 BL Coffee（航空古地石·灵感店）及 BL Coffee&Bakery（五缘湾店）。结果页内嵌内容有时只向 WDA 暴露空 `rootView`。2026-10-25 曾遇到“身份核实 / 请依次点击下图图标” | 优先使用 CLI `dianping-search --query <词> --screenshot-output <路径> [--source-output <路径>]`；检查返回状态，`screenshot-captured` 后视觉读取截图。CLI 会进入搜索、清空 `search_keyword_edit`、输入查询词并点键盘 `Search`。若页面出现隐私协议或图标验证码/身份核实，命令返回相应阻断状态并交用户处理；不自动同意、不识别或代点验证码，也不盲目重试。不能仅凭空 `rootView` 判定失败 |
+| App | Bundle ID | 已验证入口与限制 |
+| --- | --- | --- |
+| 小红书 | `com.xingin.discover` | XS Max / iOS 18.7.10 曾完成恢复、搜索和读取结果。首页搜索图标无文本；搜索输入框为 TextView，提交为 `recommend_search_button`。xiaohongshu-search 已完成 3 屏真实采集及切换查询词回归；无唯一帖子 ID 时保留独立卡片观察。 |
+| 大众点评 | `com.dianping.dpscope` | 首页“搜索按钮”、搜索页 `search_keyword_edit` 和键盘 `Search` 已验证。结果 WebView 可能只暴露空 rootView，使用本机 Vision OCR。原生 swipe 已取得沙茶面、瑞幸咖啡的真实跨屏结果；五兰详情与商户二维码链接也已实测，二维码只读用前后 App 状态及本机像素解码。 |
 
-## 查询边界
+大众点评使用 `dianping-search --query <词> --max-pages 3 --extract-output <新路径>`，状态、字段来源与停止规则以[查询契约](query-contract.md)为准。主结果和推荐结果分开；后续屏未观察到分区边界时记 unknown。重复候选保留，截断名字不用作去重身份。
 
-原生 App 只提供当时页面可读内容。发布日期、活动适用日期、门店身份、价格和推荐结论仍按 `yjx-life-query` 的来源核验规则处理。App 页面出现登录、验证码、风控或权限提示时停止自动操作。
+2026-10-26 用户手动通过大众点评验证并登录。协议只曾在用户明确授权后处理一次；后续出现登录、协议、验证或权限提示均停止，不沿用一次同意作为全部授权。
 
+发布日期、活动适用日期、分店身份、价格和推荐结论交由 `yjx-life-query` 核查。

@@ -27,6 +27,8 @@ The video-course retrospective exposed incomplete coverage and a premature activ
 
 The follow-up retrospective exposed interrupted next-step guidance: a decision acknowledgment ended without advancing or explaining the wait. The user chose clear next steps at key transitions, not a full remaining-topic inventory. Keep the action and its owner visible at convergence, activity changes, waits, and overall closure, including evidence gathering and review rather than only newly unlocked questions. This does not require per-reply status summaries or alter approval and execution authority.
 
+The travel-guide session exposed a second routing failure after alignment: the user asked for a real, usable guide and explicitly directed continued delivery, but repeated clarification checkpoints replaced handoff to completed work. Section 8 now requires a directed implementation request to move into the execution workflow, where the deliverable and its verification are completed. This preserves the alignment-only boundary while preventing clarification from substituting for authorized execution; new intent, consequential judgment, review, and permissions still use their existing gates.
+
 ## Failure Modes and Rationale
 
 - **Over-questioning and silent intent substitution:** use the dual-entry gate, not "ask everything" or "guess anything reversible."

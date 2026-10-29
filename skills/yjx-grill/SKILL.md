@@ -155,6 +155,8 @@ Apply the collaborative-discussion rule before concluding either form. Complete 
 
 当宿主提供原生子代理能力时，由主代理启动上下文隔离（不继承主对话历史，仅传入本次评审材料）的独立 Reviewer 子代理执行评审；禁止通过另起 `codex exec`、外部 CLI 进程或普通对话伪造子代理。若宿主没有子代理工具或子代理调用失败，则由当前会话直接对照同一材料与标准完成一轮自审，并在呈现结果或请求批准时注明本次为当前会话自审及原因，不硬阻断交付。
 
+Start each Reviewer task by stating that the recipient is already the independent Reviewer and must directly review the supplied material and return its own findings. Limit its authority to read-only review: no further delegation or Codex conversation creation, forking, or messaging. If it cannot complete the review, require it to report the limitation to the primary rather than substitute another workflow.
+
 评审输入包含原始目标、已验证事实、候选结果和相关 coverage record：来源与证据、待定或受约束边界、已选方案与代价、被拒分支与理由，以及剩余假设。核查结论是否有证据支撑，整体方案是否正确、适用、可维护、兼容、代价对称且忠实于来源映射。有效发现必须具备具体证据与实际影响，不能仅凭设计偏好重开已决分支。
 
 解决有依据的发现；发生实质修订后，对修订范围做针对性复核（子代理路径可优先复用同一 Reviewer 子代理跟进复核，当前会话自审路径由当前会话复核）。评审中若发现新的人类决策分叉，退回 ready frontier。只有当有证据支撑的实质正确性缺陷仍未解决时，才报告具体 blocker 并暂停交付或请求批准。
@@ -164,9 +166,11 @@ Apply the collaborative-discussion rule before concluding either form. Complete 
 区分讨论中途的建议认同、仅确认最终结论，以及确认结论并指示开始实施：
 
 - **讨论过程中的局部同意不触发实施：** 在对齐尚未收敛或必要评审尚未完成前，用户同意某项建议或回答某个讨论问题，只关闭该决策分支，绝不授予 implementation authority。
-- **最终确认点一并承接“批准并实施”与“仅批准不实施”：** 呈交经独立评审的 Formal Contract 时，按 [references/contract.md](references/contract.md) 直接提供“批准结论并开始实施”、“仅批准结论（暂不实施）”和“需要调整”三项明确选项，避免用户选完推荐项后还要再发一轮“开始实施”。
+- **最终确认点一并承接“批准并实施”与“仅批准不实施”：** 呈交完成必要评审的 Formal Contract 时，按 [references/contract.md](references/contract.md) 直接提供“批准结论并开始实施”、“仅批准结论（暂不实施）”和“需要调整”三项明确选项，避免用户选完推荐项后还要再发一轮“开始实施”。
 
 单独记录明确的 implementation authorization（包括在最终确认点直接选择“批准结论并开始实施”），并限制在指定行为和边界内，同时保留已披露重大推断的来源。未披露的默认值不会从该授权获得权限。允许实施但没有要求开始（或选择“仅批准结论，暂不实施”），不是执行指令。按原始措辞和范围保留早先的明确授权；不要事后扩大或撤销，也不要从含糊记录推断授权。
+
+当用户要求把成果做成可直接使用的正式交付，而不是讨论方案时，先对齐目的、使用场景和边界；对齐完成后，若用户已明确授权并指示执行，就按第 8 节交接给执行工作流，并让执行者带着可审阅的结果回来。继续用澄清问题替代已经授权的交付会停住工作；只有新的核心意图、有后果的人类判断或权限变化才返回问题门禁。
 
 根据当前活动和用户实际意图解释 “continue” 或 “go ahead” 等简短回复，不要依赖关键词白名单。继续讨论会推进对齐，不会自动切换到实施。恢复中断的实施可以依赖仍然有效的授权和执行指令。上下文清楚的实施指令不要求固定措辞或重复确认；如果活动不明确，继续处理 ready 的对齐工作，或只询问未解决的执行意图。
 

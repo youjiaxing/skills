@@ -1,0 +1,6 @@
+interface:
+  display_name: "旅行行程制作"
+  short_description: "制作和维护可执行的旅行行程与正式旅行攻略"
+  default_prompt: "使用 $yjx-travel-planning 帮我制作或完善一份可执行的旅行行程/正式旅行攻略。"
+policy:
+  allow_implicit_invocation: true

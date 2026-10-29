@@ -15,9 +15,10 @@ description: 在网页入口受限、缺少关键功能或需要真实原生 App
 
 ```bash
 node <skill-dir>/scripts/iphone-app-ops.mjs doctor
+node <skill-dir>/scripts/iphone-app-ops.mjs wda-health
 ```
 
-确认目标 UDID、Appium `4723`、RemoteXPC 隧道进程和已安装 WDA Runner。`devicectl` 显示 `available` 不是会话可用的充分证据，最终以 WDA 会话和可读页面树判断。
+`doctor` 检查设备、Appium、隧道和 WDA 安装；`wda-health` 区分 Appium 状态、RemoteXPC registry、本机 WDA 端点、session、AX 页面树与自然锁屏。锁屏下页面树可读算 WDA 健康，之后再执行恢复。`devicectl` 显示 `available` 不是会话可用的充分证据。
 
 ## 会话
 
@@ -29,7 +30,9 @@ node <skill-dir>/scripts/iphone-app-ops.mjs session
 
 CLI 将非敏感 session ID 存在系统临时目录，权限为当前用户可读写。正常查询完成后保留 Appium 和隧道服务；不为单次任务重建 WDA 或停止共享服务。
 
-当前服务由已运行的进程提供；Mac 重启后 Appium 和管理员隧道不会由本 skill 自动拉起，需由本机服务管理器配置启动。
+Session 默认不因空闲自动超时，由 CLI 复用并恢复；客户端命令期限至少 35 秒，默认 45 秒，高于当前 XCUITest WDA 30 秒代理期限。超时的动作结果视为未知；先运行 `wda-health`，它不会在未知结果后向同一 session 发送重叠命令。
+
+本机已安装 Appium LaunchAgent 与管理员隧道 LaunchDaemon。Mac 重启后的实际冷恢复尚未验证；当前可用状态不能替代重启验收。
 
 仓库提供 `launchd/` 配置模板。Appium 可安装为当前用户的 LaunchAgent；XCUITest 隧道官方脚本要求 root，首次迁移时由用户运行 `zsh <skill-dir>/launchd/install-root-tunnel.sh` 并在 sudo 提示输入管理员密码。脚本不会保存密码或修改 sudoers。
 
@@ -41,20 +44,21 @@ CLI 将非敏感 session ID 存在系统临时目录，权限为当前用户可�
 node <skill-dir>/scripts/iphone-app-ops.mjs recover --bundle-id <bundle-id>
 ```
 
-按[恢复流程](references/recovery.md)读取页面树、唤醒、尝试 unlock、按需上滑、启动目标 App，并等待页面树、active bundle 和前台状态一致。`mobile: isLocked` 仅作辅助信号，三者一致才是完成标准。
+按[恢复流程](references/recovery.md)读取页面树，仅在锁屏时唤醒并按需短上滑，启动目标 App，并等待页面树、active bundle 和前台状态一致。`mobile: isLocked` 仅作辅助信号，三者一致才是完成标准。
 
-页面操作优先用 accessibility id、iOS predicate 或稳定语义；WebView 再使用已验证的 DOM 标识。截图用于视觉确认和故障诊断，不将坐标作为普通按钮的默认定位方式。
+页面操作优先用 accessibility id、iOS predicate 或稳定语义；WebView 再使用已验证的 DOM 标识。截图用于视觉确认和故障诊断，不将坐标作为普通按钮的默认定位方式。原生树为空或评估读取效率时，读[读取路径与依据](references/reading-methods.md)。
 
-大众点评有专用查询流程，会处理已验证的搜索入口并保存截图，供调用方进行视觉读取：
+大众点评查询先读[分页、证据与停止契约](references/query-contract.md)，使用结构化输出：
 
 ```bash
 node <skill-dir>/scripts/iphone-app-ops.mjs dianping-search \
-  --query '<query>' \
-  --screenshot-output /tmp/dianping-result.png \
-  --source-output /tmp/dianping-result.xml
+  --query '<query>' --max-pages 3 \
+  --extract-output /tmp/dianping-new-run.json
 ```
 
-命令返回 `screenshot-captured` 只表示查询动作完成且截图已保存；调用方必须检查截图是否显示目标结果。`needs-user-consent` 交由用户确认协议，`blocked-verification` 交由用户处理身份核实；两者均不得自动点击或重试。
+默认最多读取 3 屏，原生文本优先，本机 Vision OCR 兜底；图片默认不落盘。输出 schemaVersion 2，含屏幕覆盖、停止原因、逐字段证据和复核状态，事实仍为未核实。消费方先处理失败/部分结果，再核查候选。出现登录、协议或验证时按契约停止；需要诊断时才显式保存截图或页面树。
+
+需要门店详情、真实分享入口或小红书专用搜索时，读取[原生内容操作](references/native-content.md)。
 
 元素操作使用 CLI 的受限入口：
 
@@ -76,5 +80,7 @@ printf '%s' '<query>' | node <skill-dir>/scripts/iphone-app-ops.mjs element set-
 
 ## 完成与失败
 
-每轮需确认设备、WDA 会话、页面树、目标 App 前台四个阶段。失败时报告最后通过阶段和错误类别；HTTP 成功、进程存在或 unlock 返回成功都不能单独证明已恢复。按[故障分流](references/recovery.md)处理，不重放具有外部副作用的写操作。
+普通页面操作需确认设备、WDA 会话、页面树、目标 App 前台四个阶段。二维码只读观察按原生内容规则，用前后 App 状态和同屏像素文字确认；该路径不执行页面写入。失败时报告最后通过阶段和错误类别；HTTP 成功、进程存在或 unlock 返回成功都不能单独证明已恢复。按[故障分流](references/recovery.md)处理，不重放具有外部副作用的写操作。
 
+
+维护、解释进度或继续建设时，读取[实施目标与验收记录](references/roadmap.md)。
