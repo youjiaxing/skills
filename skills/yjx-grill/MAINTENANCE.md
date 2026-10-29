@@ -19,7 +19,7 @@ Question layout and provenance serve different purposes. Genuine intent/judgment
 
 The conversation retrospective exposed a routing failure, not a need to number every reply: an ordinary conclusion ended in an ambiguous feedback checkpoint, then a formatting correction prompted unnecessary alternatives. Keep the question gate ahead of formatting, and leave explanations, status reports, and completed conclusions unnumbered. Collaborative feedback remains welcome without manufacturing an extra approval gate; this does not waive required review, formal approval, or unresolved material premises.
 
-Formal-contract approval confirms the reviewed conclusion, not permission to implement it. This replaces the former "Approved to implement" approval meaning, which left consequential planning decisions without a completion path when the user withheld implementation authority. Keep the existing consequence gate and independent review; confirmation, implementation authorization, and execution intent can share one explicit reply without becoming synonymous. Earlier explicit authorizations retain their actual scope.
+Mid-discussion agreement on a proposal only settles that decision branch and never starts implementation. At the final reviewed Formal Contract confirmation step, however, forcing a two-option ('Approve conclusion only' vs. 'Adjust') menu created an artificial extra turn when the user wanted to approve and immediately execute by selecting 1. The confirmation step therefore offers three explicit choices ('Approve and start implementation', 'Approve conclusion only, do not implement yet', and 'Items need adjustment'), ordering the recommendation by session context so both direct implementation and planning-only workflows complete in one step without conflating mid-discussion agreement with execution authority.
 
 Independent review requires a genuinely separate subagent created through the host's subagent tool with explicitly isolated context. Self-review, continuation in the same conversation, a separate Codex thread, and a fresh CLI process preserve proposal formation or lack the host's subagent boundary, so none satisfies the review gate. Apply the same test after material revisions; when the tool is unavailable, report the blocker instead of substituting a weaker review.
 
@@ -63,7 +63,7 @@ When changing the skill, verify that:
 - key transitions identify the actual next action and its owner, or a specific blocker and how to clear it, without per-reply status templates or full remaining-topic inventories;
 - decision acknowledgment advances available alignment work or makes the waiting input clear; clarification replies retain their explanation-only boundary;
 - overall closure distinguishes alignment completion, implementation readiness, and existing execution authority without inventing questions or duplicate approvals;
-- a reviewed planning-only contract can be confirmed without implementation authority; bare agreement does not start execution, permission without a start instruction remains permission, and an explicit instruction to implement the reviewed result needs no duplicate confirmation;
+- mid-discussion agreement never starts execution, while the final reviewed Formal Contract confirmation presents explicit options for both 'approve and start implementation' and 'approve conclusion only (do not implement yet)' so neither direct execution nor planning-only work requires a redundant follow-up turn;
 - continuation stays within the current activity unless execution is clearly directed, while still-valid authorization supports resuming interrupted implementation;
 - missed decisions or premature implementation are disclosed against the actual changed state, without retroactive authorization or unauthorized rollback;
 - problem discovery permits open questions and user correction without requiring every discussion to restart from first principles;
@@ -74,3 +74,4 @@ When changing the skill, verify that:
 - runtime text stays in English and user-facing text is localized; no repository or external mutation occurs during alignment.
 
 Follow the repository [Skill verification policy](../../AGENTS.md#skill-verification). Use static checks for packaging, links, and document consistency; retrospect on actual user interactions when evidence exists. These checks do not prove reliable model behavior.
+

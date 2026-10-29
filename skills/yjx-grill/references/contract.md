@@ -24,11 +24,12 @@ Keep the candidate out of the approval step until it has no unresolved substanti
 
 Present the reviewed contract once, organized by the resulting solution rather than question order, with provenance clear in the wording. Name this contract or its concrete scope before asking for approval. Other aligned results shown as background retain their own approval status and stay outside this request; grouping creates neither new approval units nor cross-contract authorization.
 
-Use the entrypoint's question-first layout for this required approval request. Ask for confirmation with exactly these meanings, localized:
+Use the entrypoint's question-first layout for this required approval request. To avoid splitting contract approval and implementation handoff into two separate turns while still protecting planning-only scenarios, provide three explicit options localized to the user's language (place the recommended option first as `1` based on session context—when the current slice has no remaining alignment blockers and can be implemented directly in the current session, recommend "Approve and start implementation"; when the user explicitly asked for planning/spec-only or remaining slices block execution, recommend "Approve conclusion only, do not implement yet"):
 
-1. Approve this conclusion.
-2. Items need adjustment.
+- **Approve this conclusion and start implementation:** confirms the reviewed conclusion and its boundaries, grants implementation authorization for this contract's scope, and directs immediate execution once no blocking alignment slices remain.
+- **Approve this conclusion only (do not implement yet):** confirms the reviewed conclusion and its boundaries without granting implementation authority, suitable for planning-only work or handing off to downstream workflows (such as `to-spec` or `to-tickets`).
+- **Items need adjustment:** keeps the contract unapproved and returns to alignment and required re-review.
 
-The first confirms this reviewed conclusion and its boundaries, including for planning-only work; it does not itself authorize implementation. Apply the entrypoint's authorization rules when the same reply also authorizes implementation or directs execution, without requiring separate turns. A reply with a material condition or change returns to alignment and required re-review before renewed approval; an old candidate's approval cannot approve new content.
+A reply with a material condition or change returns to alignment and required re-review before renewed approval; an old candidate's approval cannot approve new content.
 
-After approval, return to the entrypoint's slice-completion loop rather than ending a multi-slice request prematurely. If a still-valid execution instruction covers this scope, hand off without asking the user to repeat it, subject to remaining dependencies and the execution boundary.
+After approval, return to the entrypoint's slice-completion loop rather than ending a multi-slice request prematurely. When the user selects "Approve this conclusion and start implementation" (or a still-valid earlier execution instruction covers this scope), hand off and execute without asking a second time for "start implementation", subject to remaining dependencies and the execution boundary.
