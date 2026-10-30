@@ -89,7 +89,7 @@ Create a new specification for a new requirement. For an explicitly continuing r
 
 ### Local Tracker
 
-Follow the configured local convention. For a new specification in the `.scratch/` convention, use `.scratch/<YYYYMMDD-HHmm>-<descriptive-slug>/spec.md`, with the user's or project's local timezone. Place optional sub-specifications under that feature's `specs/` directory. Preserve an existing specification's location on revision, and do not overwrite an unrelated file on a naming collision.
+Follow the configured local convention. For a single-module feature in the `.scratch/` convention, use `.scratch/<YYYYMMDD-HHmm>-<descriptive-slug>/spec.md`, with the user's or project's local timezone. When a `.scratch/<feature-slug>/` directory hosts a multi-module effort (for example, it already uses `specs/` or the requirement covers multiple distinct modules and the current request specifies only one module), write each module specification to `.scratch/<feature-slug>/specs/<module-slug>.md` instead of claiming the root `spec.md`. Preserve an existing specification's location on revision, and do not overwrite an unrelated file on a naming collision.
 
 These files are the formal specification, not temporary upload material. Do not add execution `Status:` fields or other task-progress metadata that would enroll a specification in the implementation kanban.
 

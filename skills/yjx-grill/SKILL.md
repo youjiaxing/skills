@@ -28,7 +28,7 @@ disable-model-invocation: true
 
 在议题收敛、活动切换、进入等待或整体结束时，简要交代当前状态、实际下一步及行动方，让用户知道 Agent 会继续处理什么，或正在等待用户的什么输入。下一步可以是提问、取证、评审或实施交接，不限于新解锁的问题；阻塞时说明具体原因与解除方式。普通连续问答直接衔接当前议题，不要求每轮状态摘要、固定模板或全部剩余主题清单。
 
-通过准确措辞保留 provenance，不要强制使用按来源组织的格式。自然地陈述已确认内容，在来源重要时简短归因。新提出但未确认的方案和重大假设首次出现时要明确标识；获得同意不会把 Agent 推导变成用户 requirement 或 verified fact。完整的 source/evidence 映射保留在私有台账和 reviewer handoff 中，不要把台账字段直接展示给用户。
+通过准确措辞保留 provenance，不要强制使用按来源组织的格式。自然地陈述已确认内容，在来源重要时简短归因。新提出但未确认的方案和重大假设首次出现时要明确标识；获得同意不会把 Agent 推导变成用户 requirement 或 verified fact。完整的 source/evidence 映射保留在私有台账和 reviewer handoff 中，不要把台账字段直接展示给用户。当讨论涉及协议、配置字段或公开接口结构时，直接基于已查明的承载模块与项目命名惯例给出具体名称（尚未确定的部分显式作为待确认点提出），不要用“示意”占位名替代真实命名对齐。
 
 Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal”分类。选项及其 trade-offs 放在背景之外。单个结论使用 prose，可比较或可行动的内容使用列表；省略空分类和套话式开场。
 
@@ -140,10 +140,10 @@ If a new answer invalidates an earlier branch, discard dependent inferences and 
 
 选择两种交付形式之一：
 
-- **Direct Result**: no consequential human judgment required formal approval, including cases where only low-risk core intent needed clarification. Use natural prose, not a mandatory contract or a repeat approval request.
+- **Direct Result**: no consequential human judgment required formal approval, including cases where only low-risk core intent needed clarification. Use natural prose, not a mandatory contract or a repeat approval request. When all in-scope slices have converged, any required review is complete, no alignment blocker remains, and the current session can implement the result directly but still lacks an explicit execution instruction (and the user did not ask for planning-only), end with two brief numbered execution-intent options (`1. 按此方案开始实施（推荐）` and `2. 仅保留对齐结论，暂不实施`, inviting adjustment if needed) so the user can direct execution in one reply without a separate "开始实施" turn.
 - **Formal Contract**: the slice has a recorded `contract required` obligation. Before drafting, reviewing, or requesting approval, read [references/contract.md](references/contract.md) in full. Produce one reviewed contract for that slice and obtain explicit approval.
 
-For either form, synthesize the result around the actual problem and intended outcome, then the selected solution with key reasons and accepted costs. Keep related decisions together by topic rather than replaying Q numbers or the conversation. Include relevant boundaries, material assumptions, remaining uncertainties, and the confirmation status or next step. These are content needs, not four mandatory sections: omit empty categories, and let a simple result be one paragraph. New unconfirmed suggestions remain visibly distinct from agreed content; unresolved prerequisites prevent declaring completion.
+For either form, synthesize the result around the actual problem and intended outcome, then the selected solution with key reasons and accepted costs. State converged rules by leading with business conditions and observable behavior (under what scenario and ownership what result is returned), keeping internal function names or call chains only as parenthetical or trailing code anchors rather than a substitute for the behavioral explanation. Keep related decisions together by topic rather than replaying Q numbers or the conversation. Include relevant boundaries, material assumptions, remaining uncertainties, and the confirmation status or next step. These are content needs, not four mandatory sections: omit empty categories, and let a simple result be one paragraph. New unconfirmed suggestions remain visibly distinct from agreed content; unresolved prerequisites prevent declaring completion.
 
 If new evidence reveals consequential human judgment, record the obligation and address it. Risk-triggered review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
 
@@ -153,7 +153,7 @@ Apply the collaborative-discussion rule before concluding either form. Complete 
 
 每个 Formal Contract 都需要在请求批准前完成评审；当实际影响、可逆性、权限、数据影响、兼容性、安全性或项目治理规则要求时，也要评审 Direct Result。评审本身不自动要求 contract。
 
-当宿主提供原生子代理能力时，由主代理启动上下文隔离（不继承主对话历史，仅传入本次评审材料）的独立 Reviewer 子代理执行评审；禁止通过另起 `codex exec`、外部 CLI 进程或普通对话伪造子代理。若宿主没有子代理工具或子代理调用失败，则由当前会话直接对照同一材料与标准完成一轮自审，并在呈现结果或请求批准时注明本次为当前会话自审及原因，不硬阻断交付。
+当宿主提供原生子代理能力时，由主代理启动上下文隔离（不继承主对话历史，仅传入本次评审材料）的独立 Reviewer 子代理执行评审：Start every subagent with a fresh context window (do not fork the current conversation). 禁止通过另起 `codex exec`、外部 CLI 进程或普通对话伪造子代理。若宿主没有子代理工具或子代理调用失败，则由当前会话直接对照同一材料与标准完成一轮自审，并在呈现结果或请求批准时注明本次为当前会话自审及原因，不硬阻断交付。
 
 Start each Reviewer task by stating that the recipient is already the independent Reviewer and must directly review the supplied material and return its own findings. Limit its authority to read-only review: no further delegation or Codex conversation creation, forking, or messaging. If it cannot complete the review, require it to report the limitation to the primary rather than substitute another workflow.
 
@@ -166,7 +166,7 @@ Start each Reviewer task by stating that the recipient is already the independen
 区分讨论中途的建议认同、仅确认最终结论，以及确认结论并指示开始实施：
 
 - **讨论过程中的局部同意不触发实施：** 在对齐尚未收敛或必要评审尚未完成前，用户同意某项建议或回答某个讨论问题，只关闭该决策分支，绝不授予 implementation authority。
-- **最终确认点一并承接“批准并实施”与“仅批准不实施”：** 呈交完成必要评审的 Formal Contract 时，按 [references/contract.md](references/contract.md) 直接提供“批准结论并开始实施”、“仅批准结论（暂不实施）”和“需要调整”三项明确选项，避免用户选完推荐项后还要再发一轮“开始实施”。
+- **最终确认点一并承接“批准并实施”与“仅批准不实施”：** 呈交完成必要评审的 Formal Contract 时，按 [references/contract.md](references/contract.md) 直接提供“批准结论并开始实施”、“仅批准结论（暂不实施）”和“需要调整”三项明确选项；Direct Result 满足第 6 节所列执行意图询问条件时，同样在末尾提供该节规定的两项执行意图选项，避免用户选完推荐项或确认解释后还要再发一轮“开始实施”。
 
 单独记录明确的 implementation authorization（包括在最终确认点直接选择“批准结论并开始实施”），并限制在指定行为和边界内，同时保留已披露重大推断的来源。未披露的默认值不会从该授权获得权限。允许实施但没有要求开始（或选择“仅批准结论，暂不实施”），不是执行指令。按原始措辞和范围保留早先的明确授权；不要事后扩大或撤销，也不要从含糊记录推断授权。
 

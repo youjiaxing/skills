@@ -11,7 +11,7 @@ disable-model-invocation: true
 ## 边界
 
 - 本 skill 只负责协调，不在协调会话中实现 issue 代码。
-- 每个需要实施的 issue 创建一个全新的 Codex task。worker 可以使用受限子代理调查或评审，但由它拥有并负责自己的 issue。
+- 每个需要实施的 issue 创建一个全新的 Codex task。worker 可以使用受限子代理调查或评审（Start every subagent with a fresh context window (do not fork the current conversation).），但由它拥有并负责自己的 issue。
 - 能在当前会话直接完成的普通单 issue 不属于 issue-flow；除非用户明确要求新 worker，否则使用项目正常实施流程。
 - 不要写死 GitHub、Local Markdown 或其它 tracker。读取项目 tracker 说明，使用其已配置能力。
 - 不要为了填补拆分缺口而创建新 issue；父 worker 负责其余要求。

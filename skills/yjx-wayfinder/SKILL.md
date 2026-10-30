@@ -126,7 +126,7 @@ A ticket 应该值得单独开一个会话，但不能让会话不堪重负：
 
 ### Research 所有权
 
-发起 session 负责领取、收集、验证和记录自己的 research 结果。worker 返回证据，不独立关闭 tickets 或修改共享 map。选择一层委托，不要通过 helper 递归生成 workers。
+发起 session 负责领取、收集、验证和记录自己的 research 结果。worker 返回证据，不独立关闭 tickets 或修改共享 map。选择一层委托，不要通过 helper 递归生成 workers。Start every subagent with a fresh context window (do not fork the current conversation).
 
 临时 worker 必须在同一 session 中回收。只有宿主真正支持持久执行和结果恢复时，才允许跨 session research；持久化 owner、task/result pointer 和剩余步骤。单独一个 pointer 不能维持 Agent 存活。如果无法保证回收，就把 research ticket 留给另一个 session，不要启动它。pending 或失败的 research 不是 resolution；恢复时先检查已有 task 或结果，再启动新的。
 

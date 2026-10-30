@@ -20,6 +20,14 @@ skill maintenance; retrospectives of actual user interactions remain allowed.
 These checks do not establish that a prompt reliably produces the intended agent
 behavior.
 
+## Subagent Context Isolation in Skills
+
+When creating or maintaining any skill in this repository that launches or
+delegates to a subagent, explicitly include the instruction:
+`Start every subagent with a fresh context window (do not fork the current conversation).`
+at the subagent dispatch site so subagents never inherit the primary session
+context by default.
+
 ## Temporary Research
 
 Treat exploratory reports, comparisons, and raw research notes as task-temporary

@@ -94,7 +94,7 @@ Check the changed runtime text against these questions; use the scenarios to exp
 - Does every behavior-preserving refactor with an admitted characterization candidate record green evidence before and after the refactor, while a refactor without such a candidate uses complete `No new test` evidence?
 - Does the `No new test` path remain evidence-bearing and reviewable?
 - Do authorized test-order overrides remain distinguishable from missing red-green evidence, with source, scope, and substitute verification recorded?
-- Does the review gate retain the complete final change set, blocker disposition, independent re-review, and incomplete status when review cannot execute?
+- Does the review gate start every subagent with a fresh context window (do not fork the current conversation), and retain the complete final change set, blocker disposition, independent re-review, and incomplete status when review cannot execute?
 - Is the skill still English, manually invoked, and independent of a particular language or application architecture?
 
 | Scenario | Expected assessment |

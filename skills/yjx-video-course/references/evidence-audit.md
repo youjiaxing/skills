@@ -66,14 +66,14 @@
 | 图片与凭据 | 必要画面在对应步骤就近嵌入，时间、观察事实、视觉增量和主张相符，敏感信息已脱敏；已剥离外部非视频外壳，未遮挡核心内容的自然构图予以保留；正文嵌入顺序与 `visual_coverage.embedded_files` 逐项一致 | 修复或明确复制/嵌入限制并给出有证据的降级内容；同步调整正文图片嵌入顺序或索引 |
 | 三方一致性 | 课程正文图片、`visual_coverage.embedded_files` 和磁盘聚焦图数量、顺序、文件名一致；请求 Notion 时回读图片再次一致 | 运行 `validate-course-artifacts.mjs`，修复不一致后再写入或回读 |
 | 链接 | 普通来源链接与手动时间清楚分开，标作可跳转的深链已实际验证 | 改成时间文本与普通来源链接 |
-| 独立审查员终审 | 外部写入或交付前，必须唤起独立只读审查子代理（Auditor Subagent；宿主不支持时由当前代理做一次同标准的正常审查，并在 `delivery.json` 的 `audit` 记录 `method: current_agent_review` 与 `reason`）对照原始字幕、清晰截图与草稿开展实质审查，确认范围、主张、例子及必要操作细节忠实于视频，未扩大解释或保证 | 修复全部实质性缺陷并重新复核，未通过时严禁外部写入或标记完成 |
+| 独立审查员终审 | 外部写入或交付前，必须唤起独立只读审查子代理（Auditor Subagent；Start every subagent with a fresh context window (do not fork the current conversation). 宿主不支持时由当前代理做一次同标准的正常审查，并在 `delivery.json` 的 `audit` 记录 `method: current_agent_review` 与 `reason`）对照原始字幕、清晰截图与草稿开展实质审查，确认范围、主张、例子及必要操作细节忠实于视频，未扩大解释或保证 | 修复全部实质性缺陷并重新复核，未通过时严禁外部写入或标记完成 |
 
 ### 独立审查员终审流程与一票否决机制
 
 本地自动化格式校验仅保障语法、路径与图片数量等物理约束，不能证明内容忠实、清楚或适合用途。
 
 交付或外部写入前的终审流程如下：
-1. **审查方式**：宿主支持时启动只读子代理作为独立审查员（Course Auditor），传入原视频全量字幕、证据索引 `evidence.json`、聚焦截图与草稿正文；宿主不支持子代理时，由当前代理对照同样材料做一次正常审查，不需要额外隔离仪式。两种方式都在 `delivery.json` 的 `audit` 记录 `method`、`result`、时间（`current_agent_review` 另记 `reason`）。
+1. **审查方式**：宿主支持时启动只读子代理作为独立审查员（Course Auditor；Start every subagent with a fresh context window (do not fork the current conversation).），传入原视频全量字幕、证据索引 `evidence.json`、聚焦截图与草稿正文；宿主不支持子代理时，由当前代理对照同样材料做一次正常审查，不需要额外隔离仪式。两种方式都在 `delivery.json` 的 `audit` 记录 `method`、`result`、时间（`current_agent_review` 另记 `reason`）。
 2. **实质审查**：按上表对照主文件的编写边界，重点检查：
    - 是否添加视频外方案、生造理论、拔高结论或强制课程模块；
    - 是否对异常推测原因、粉饰事实或扩写防御建议；

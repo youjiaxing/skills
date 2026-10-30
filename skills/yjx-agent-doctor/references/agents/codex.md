@@ -45,7 +45,7 @@ Multi-agent 需要同时满足模型/协议声明、运行时 feature 和会话�
 
 1. 记录根模型、默认/显式子模型、provider、捆绑CLI版本、multi_agent_version、feature配置和启动参数；不要只看模型名称或模型目录。
 2. 从同一会话的工具声明或 additional_tools 中确认 spawn_agent、wait、close_agent 或当前版本的等价动作是否真实存在。tool_search、协作提示和 [agents] 默认值不能替代动作声明。
-3. 对同一二进制、provider、模型和只读算术任务做单变量对照：增加 --enable multi_agent 或等价的 features.multi_agent=true，再观察工具清单及原生 spawn/wait 事件。若恢复，记录为运行时激活/工具注入问题；不要先修改模型目录或切换模型。
+3. 对同一二进制、provider、模型和只读算术任务做单变量对照：增加 --enable multi_agent 或等价的 features.multi_agent=true，再观察工具清单及原生 spawn/wait 事件（Start every subagent with a fresh context window (do not fork the current conversation).）。若恢复，记录为运行时激活/工具注入问题；不要先修改模型目录或切换模型。
 4. 修复后的验收必须收到子代理真实回传，并在需要时关闭已完成的子代理。一次普通 codex exec 或独立 CLI 请求只能证明模型请求可达，不能证明原会话拥有原生子代理能力。
 5. feature、模型目录或启动参数通常在进程/会话创建时加载。修复后重启对应 app-server 或创建新会话；旧会话保留原工具集合，不能用旧会话验收新配置。
 

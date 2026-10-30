@@ -22,7 +22,8 @@ discarded after synthesis and the benefit justifies coordination cost.
   Combine duplicate investigations and reuse established results.
   Default to one delegation level.
 
-- **Bounded work.** State the goal, scope, available capabilities, allowed
+- **Bounded work.** Start every subagent with a fresh context window (do not
+  fork the current conversation). State the goal, scope, available capabilities, allowed
   side effects, and completion conditions. Return once the question is
   answered; cancel work that can no longer affect the task. Return conclusions,
   key evidence locations, and actual blockers. Use available, authorized

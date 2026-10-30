@@ -16,7 +16,7 @@ Exclude routine mechanics, unaffected call-site inventories, local test filename
 
 ## Review Before Approval
 
-Apply the entrypoint's review protocol (isolated Reviewer subagent when supported by the host, or same-standard current-session review with explicit disclosure when subagent tools are unavailable or fail) to this candidate and the complete decision record. Check that every material implementation-affecting claim remains traceable, that each changed guarantee has a supported basis, and that no inference has been presented as the user's requirement or decision.
+Apply the entrypoint's review protocol (isolated Reviewer subagent when supported by the host, or same-standard current-session review with explicit disclosure when subagent tools are unavailable or fail) to this candidate and the complete decision record. Start every subagent with a fresh context window (do not fork the current conversation). Check that every material implementation-affecting claim remains traceable, that each changed guarantee has a supported basis, and that no inference has been presented as the user's requirement or decision.
 
 Keep the candidate out of the approval step until it has no unresolved substantiated findings. Review may identify another consequential question; return to that frontier, then update and re-review the material revision. A preference for a rejected design is insufficient to reopen it.
 

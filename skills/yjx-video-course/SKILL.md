@@ -215,7 +215,7 @@ disable-model-invocation: true
 
 本地自动化脚本（`validate-course-artifacts.mjs` 等）仅能检验文件数量、路径与语法格式，**无法验证内容的语义真实性与客观性**。
 
-在外部写入或交付前，必须唤起**独立的只读审查子代理（Auditor Subagent）**开展一票否决式实质性批判，实际对照原始材料底稿重点核验以下负向清单。宿主不支持子代理时，由当前代理按同一清单对照原始材料完成一次正常审查即可，不需要额外的隔离仪式；审查标准与一票否决规则不变。两种方式都要在 `delivery.json` 的 `audit` 中记录 `method`（`independent_subagent` 或 `current_agent_review`）、`result` 与时间，`current_agent_review` 另记 `reason`；`validate-delivery.mjs` 在 `draft_audited` 及之后强制校验该字段。
+在外部写入或交付前，必须唤起**独立的只读审查子代理（Auditor Subagent）**开展一票否决式实质性批判（Start every subagent with a fresh context window (do not fork the current conversation).），实际对照原始材料底稿重点核验以下负向清单。宿主不支持子代理时，由当前代理按同一清单对照原始材料完成一次正常审查即可，不需要额外的隔离仪式；审查标准与一票否决规则不变。两种方式都要在 `delivery.json` 的 `audit` 中记录 `method`（`independent_subagent` 或 `current_agent_review`）、`result` 与时间，`current_agent_review` 另记 `reason`；`validate-delivery.mjs` 在 `draft_audited` 及之后强制校验该字段。
 
 1. **反脑补与事实忠实度**：
    - 是否存在讲者未讲却被强行冠以讲者之名的脑补概念或生造理论？
