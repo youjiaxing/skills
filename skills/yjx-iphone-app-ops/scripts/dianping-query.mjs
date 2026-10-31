@@ -170,15 +170,14 @@ export async function runDianpingQuery(client, sid, input, {recover, requireFore
   const knownResult = (text) => /地图/.test(text) && /全部/.test(text) && /商户|团购/.test(text)
   const click = async (element) => { await foreground(); await client.clickElement(sid, id(element)) }
   const editor = async () => find(client, sid, 'accessibility id', 'search_keyword_edit')
-  const guardedEditor = async () => {
+  const editorPage = async () => {
     const xml = await guarded()
     if (!/name="search_keyword_edit"/.test(xml) || !/name="Search"/.test(xml)) {
       throw new QueryStop('search-page-unverified')
     }
-    const element = await editor()
-    if (!element) throw new QueryStop('search-editor-unavailable')
-    return element
+    return xml
   }
+  const hasClearControl = (xml) => /\bvisible="true"/.test(xml.match(/<[^>]*\bname="search_clear_button"[^>]*>/)?.[0] || '')
   try {
     const recovered = await recover(client, sid, DIANPING_BUNDLE)
     if (!recovered.ok) throw new QueryStop(recovered.status || 'app-recovery-failed')
@@ -235,18 +234,37 @@ export async function runDianpingQuery(client, sid, input, {recover, requireFore
     }
     if (!inputElement) throw new QueryStop('search-editor-unavailable')
     phase = 'replace-query'
-    inputElement = await guardedEditor()
-    await client.clearElement(sid, id(inputElement))
-    inputElement = await guardedEditor()
+    xml = await editorPage()
+    const size = viewport(xml)
+    const inputRect = await client.elementRect(sid, id(inputElement))
+    if (!(inputRect.x >= 0 && inputRect.y >= 0 && inputRect.width > 0 && inputRect.height > 0
+      && inputRect.x + inputRect.width <= size.width && inputRect.y + inputRect.height <= size.height * 0.15)) {
+      throw new QueryStop('search-page-unverified')
+    }
+    const queryInField = (observations, screen) => observations.filter((row) => {
+      const x = (row.x + row.width / 2) * screen.width
+      const y = (row.y + row.height / 2) * screen.height
+      return x >= inputRect.x && x <= inputRect.x + inputRect.width
+        && y >= inputRect.y && y <= inputRect.y + inputRect.height
+    }).sort((a, b) => a.y - b.y || a.x - b.x).map((row) => row.text).join('')
+    // This is a value-less Other container: WebDriver clear succeeds without erasing its text.
+    // Use the app's clear action, verify its disappearance, and keep the already verified UUID.
+    if (hasClearControl(xml)) {
+      const clear = await find(client, sid, 'accessibility id', 'search_clear_button')
+      if (!clear) throw new QueryStop('query-input-unverified')
+      await click(clear)
+      xml = await editorPage()
+      if (hasClearControl(xml)) throw new QueryStop('query-input-unverified')
+    }
+    await foreground()
     await client.setElementValue(sid, id(inputElement), options.query)
     phase = 'submit-query'
-    await guardedEditor()
+    await editorPage()
     const inputView = await visualText()
-    const inputHeader = normalizeObservations(inputView.observations, 'vision-ocr')
-      .filter((row) => row.y < 0.15).map((row) => row.text).join('')
+    const inputHeader = queryInField(normalizeObservations(inputView.observations, 'vision-ocr'), size)
     const canonicalQuery = (text) => text.normalize('NFKC').replace(/\s/g, '').toLowerCase()
-    if (!canonicalQuery(inputHeader).includes(canonicalQuery(options.query))) throw new QueryStop('query-input-unverified')
-    await guardedEditor()
+    if (canonicalQuery(inputHeader) !== canonicalQuery(options.query)) throw new QueryStop('query-input-unverified')
+    await editorPage()
     const submit = await find(client, sid, 'accessibility id', 'Search')
     if (!submit) throw new QueryStop('search-submit-unavailable')
     await click(submit)
@@ -277,8 +295,8 @@ export async function runDianpingQuery(client, sid, input, {recover, requireFore
         observations = normalizeObservations(raw.observations, method, size)
       }
       await guarded()
-      const queryHeader = observations.filter((row) => row.y < 0.15).map((row) => row.text).join('')
-      if (pageIndex === 1 && (!knownResult(raw.text) || !canonicalQuery(queryHeader).includes(canonicalQuery(options.query)))) {
+      const queryHeader = queryInField(observations, size)
+      if (pageIndex === 1 && (!knownResult(raw.text) || canonicalQuery(queryHeader) !== canonicalQuery(options.query))) {
         throw new QueryStop('query-or-result-scope-unverified')
       }
       const pageArtifacts = {}

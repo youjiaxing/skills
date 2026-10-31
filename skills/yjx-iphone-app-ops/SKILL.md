@@ -32,7 +32,7 @@ CLI 将非敏感 session ID 存在系统临时目录，权限为当前用户可�
 
 Session 默认不因空闲自动超时，由 CLI 复用并恢复；客户端命令期限至少 35 秒，默认 45 秒，高于当前 XCUITest WDA 30 秒代理期限。超时的动作结果视为未知；先运行 `wda-health`，它不会在未知结果后向同一 session 发送重叠命令。
 
-本机已安装 Appium LaunchAgent 与管理员隧道 LaunchDaemon。Mac 重启后的实际冷恢复尚未验证；当前可用状态不能替代重启验收。
+本机已安装 Appium LaunchAgent 与管理员隧道 LaunchDaemon，Mac 重启并登录后的服务自动启动已实测。切换 App 时先等前台信号收敛再取页面树；验收范围与结果见[实施目标与验收记录](references/roadmap.md)。
 
 仓库提供 `launchd/` 配置模板。Appium 可安装为当前用户的 LaunchAgent；XCUITest 隧道官方脚本要求 root，首次迁移时由用户运行 `zsh <skill-dir>/launchd/install-root-tunnel.sh` 并在 sudo 提示输入管理员密码。脚本不会保存密码或修改 sudoers。
 

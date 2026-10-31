@@ -170,6 +170,7 @@ test('unverified input text cannot submit a different search', async (t) => {
     execute: async (_sid, script) => script === 'mobile: activeAppInfo' ? {bundleId: 'com.dianping.dpscope'} : 4,
     clickElement: async (_sid, element) => actions.push(element),
     clearElement: async () => {}, setElementValue: async () => {},
+    elementRect: async () => ({x: 65, y: 58, width: 233, height: 25}),
     screenshot: async () => Buffer.from('pixels').toString('base64'),
   }, 'session', {query: '沙茶面 厦门', extractionPath: path.join(directory, 'result.json')}, {
     recover: async () => ({ok: true}), requireForeground: async () => {}, sourceText: () => [],
@@ -177,6 +178,51 @@ test('unverified input text cannot submit a different search', async (t) => {
   })
   assert.equal(result.status, 'query-input-unverified')
   assert.deepEqual(actions, ['搜索按钮'])
+})
+
+test('Dianping clears the custom container through its app control and verifies the complete editor text', async (t) => {
+  for (const mode of ['exact', 'appended', 'outside-editor', 'clear-not-applied', 'result-appended']) await t.test(mode, async (t) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'dianping-editor-'))
+    t.after(() => rm(directory, {recursive: true, force: true}))
+    const target = '厦门 咖啡'
+    const actions = []
+    let value = '旧查询', submitted = false, cleared = false, inputLookupsAfterClear = 0, nativeClears = 0
+    const xml = () => '<XCUIElementTypeApplication bundleId="com.dianping.dpscope" width="414" height="896">'
+      + (submitted ? mode === 'result-appended' ? '<Other/>' : '<Text value="验证码"/>' : '<Other name="search_keyword_edit"/><Button name="Search"/>'
+        + (value ? '<Image name="search_clear_button" visible="true"/>' : '')) + '</XCUIElementTypeApplication>'
+    const client = {
+      source: async () => xml(),
+      execute: async (_sid, script) => script === 'mobile: activeAppInfo' ? {bundleId: 'com.dianping.dpscope'} : 4,
+      findElement: async (_sid, _using, selector) => {
+        if (selector === 'search_keyword_edit' && cleared) inputLookupsAfterClear++
+        return {ELEMENT: selector}
+      },
+      elementRect: async () => ({x: 65, y: 58, width: 233, height: 25}),
+      clickElement: async (_sid, element) => {
+        actions.push(element)
+        if (element === 'search_clear_button' && mode !== 'clear-not-applied') { value = ''; cleared = true }
+        if (element === 'Search') submitted = true
+      },
+      clearElement: async () => { nativeClears++ }, // WDA clear is a no-op on this value-less container.
+      setElementValue: async (_sid, _element, text) => { value += text; actions.push('input') },
+      screenshot: async () => Buffer.from('pixels').toString('base64'),
+    }
+    const result = await runDianpingQuery(client, 'sid', {query: target, extractionPath: path.join(directory, 'out.json')}, {
+      recover: async () => ({ok: true}), requireForeground: async () => {}, sourceText: () => [], sleep: async () => {},
+      ocr: async () => ({text: submitted ? '地图 全部 商户 ' + value : value, observations: [
+        {text: mode === 'appended' || (submitted && mode === 'result-appended') ? value + target : mode === 'outside-editor' ? '别的文字' : value,
+          x: 0.16, y: 0.908, width: 0.4, height: 0.022, confidence: 0.8},
+        {text: target, x: 0.82, y: 0.908, width: 0.15, height: 0.022, confidence: 0.9},
+      ]}),
+    })
+    assert.equal(nativeClears, 0)
+    assert.equal(inputLookupsAfterClear, 0)
+    assert.equal(value, mode === 'clear-not-applied' ? '旧查询' : target)
+    assert.deepEqual(actions, mode === 'clear-not-applied' ? ['搜索按钮', 'search_clear_button'] : mode === 'exact' || mode === 'result-appended'
+      ? ['搜索按钮', 'search_clear_button', 'input', 'Search']
+      : ['搜索按钮', 'search_clear_button', 'input'])
+    assert.equal(result.status, mode === 'exact' ? 'blocked-verification' : mode === 'result-appended' ? 'query-or-result-scope-unverified' : 'query-input-unverified')
+  })
 })
 
 test('a located query control is clicked after lightweight foreground checks without a duplicate deep snapshot', async (t) => {

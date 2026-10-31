@@ -35,7 +35,13 @@ factStatus 始终是 unverified。识别置信度不表示事实真实性。need
 
 异常停止：unexpected-overlay、screen-not-readable、query-input-unverified、search-page-unverified、blocked-verification、blocked-login、blocked-credential、blocked-permission、needs-user-consent、protocol-timeout、capture-failed、insufficient-result-evidence、query-or-result-scope-unverified。已有成功页面时发布 status=partial 与 failure（状态、阶段、结果是否未知、最后通过阶段）；下游可以使用已捕获候选，但须保留停止原因，停止后不得继续点击或滚动。
 
-导航阶段遇到未知画面返回 coordinate-target-unverified，不猜坐标。已验证的坐标补充入口仅适用于当前 414×896 竖屏布局。语义 locator 先从当前页面树验证目标，再检查 active bundle 与 `queryAppState=4` 后点击；避免在定位元素后为同一按钮再取一次昂贵的全页面树。坐标动作点击前后仍检查页面与前台；同画面不重复点击。输入前确认专属输入框与键盘搜索按钮，提交前用页顶实际文字核对查询词。滚动用 mobile: swipe，避免长按触发反馈菜单。超时动作的 outcome=unknown，先观察状态，不自动重放输入、点击或滚动。
+导航阶段遇到未知画面返回 coordinate-target-unverified，不猜坐标。已验证的坐标补充入口仅适用于当前 414×896 竖屏布局。语义 locator 先从当前页面树验证目标，再检查 active bundle 与 `queryAppState=4` 后点击；避免在定位元素后为同一按钮再取一次昂贵的全页面树。坐标动作点击前后仍检查页面与前台；同画面不重复点击。输入前确认专属输入框与键盘搜索按钮，按下述规则核对完整查询词。滚动用 mobile: swipe，避免长按触发反馈菜单。超时动作的 outcome=unknown，先观察状态，不自动重放输入、点击或滚动。
+
+当前点评搜索框是没有 value 的 `Other` 容器：WebDriver clear 会返回成功但不删除文字。CLI 在已验证编辑页上使用 `search_clear_button` 语义控件，点击后仍需确认同一编辑页、键盘 Search 存在且清空按钮已消失；空框可显示动态占位词，不把占位词当用户输入。复用已定位且边界已确认的容器 UUID，不在清空后反复 native find。控件未消失、UUID 失效或页面不符即停止，不自动重放输入。
+
+提交前以实际输入容器 rect 限定本机 OCR 的文字范围，按阅读顺序组合；NFKC、空白和大小写归一后须与完整查询词相等。结果首屏也在同一区域核完整查询词。旧词追加、截断或框外同词均不能通过“包含查询词”的方式放行；无法确认时返回 query-input-unverified 或 query-or-result-scope-unverified。
+
+本机 XCUITest driver 会把原生 find 的代理错误转成 no such element。CLI 对达到固定 30 秒 WDA 代理期限才返回的查找 miss 保守标为“查找结果未确认”，输出 protocol-timeout 并保存带 `lookup-result-unconfirmed` 原因的 reset-required 标记，禁止继续 UI 回退。该分类不是根因确证；快 miss 与成功响应保持原语义。下一次命令只按现有恢复流程处理匹配 session，不自动重试整轮查询。
 
 ## 下游消费
 

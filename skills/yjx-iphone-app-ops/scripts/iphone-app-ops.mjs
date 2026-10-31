@@ -24,6 +24,7 @@ const config = {
 }
 
 const timeoutMs = Number(process.env.IPHONE_OPS_TIMEOUT_MS || 45000)
+const WDA_PROXY_TIMEOUT_MS = 30000
 const newCommandTimeoutSeconds = Number(process.env.IPHONE_OPS_NEW_COMMAND_TIMEOUT_SEC ?? 0)
 if (!Number.isFinite(timeoutMs) || timeoutMs < 35000) {
   throw new Error('IPHONE_OPS_TIMEOUT_MS must be at least 35000 to exceed the XCUITest WDA proxy timeout')
@@ -50,13 +51,15 @@ export function parseDeviceLine(output, udid = config.udid) {
   return {raw: line.trim(), state: columns.find((value) => /connected|available|unavailable|offline/i.test(value)) || 'unknown'}
 }
 
-export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetch, requestTimeoutMs = timeoutMs, sessionFile = null} = {}) {
+export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetch, requestTimeoutMs = timeoutMs, sessionFile = null,
+  monotonicNow = () => performance.now()} = {}) {
   const endpoint = new URL(baseUrl)
   if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(endpoint.hostname)) {
     throw new Error('Appium must be bound to a loopback address')
   }
 
   async function request(endpoint, options = {}) {
+    const started = monotonicNow()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), options.timeoutMs || requestTimeoutMs)
     let responseReceived = false
@@ -65,12 +68,22 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
       responseReceived = true
       const body = await response.json()
       if (!response.ok || body.value?.error) {
-        const error = new Error(body.value?.message || 'Appium HTTP ' + response.status)
-        error.code = body.value?.error || 'protocol-error'
+        const elapsedMs = monotonicNow() - started
+        // XCUITest's native find catches proxy errors and may disguise a 30s timeout as a miss.
+        // At that boundary the absence is unconfirmed, so withhold UI fallbacks and recover the session.
+        const lookupUnconfirmed = body.value?.error === 'no such element'
+          && /^\/session\/[^/]+\/elements?$/.test(endpoint) && elapsedMs >= WDA_PROXY_TIMEOUT_MS
+        const error = new Error(lookupUnconfirmed
+          ? `Element lookup returned no such element after ${Math.round(elapsedMs)}ms at the WDA proxy deadline; the lookup result is unconfirmed`
+          : body.value?.message || 'Appium HTTP ' + response.status)
+        error.code = lookupUnconfirmed ? 'ETIMEDOUT' : body.value?.error || 'protocol-error'
+        error.driverCode = body.value?.error || null
+        error.elapsedMs = Math.round(elapsedMs)
         error.phase = endpoint
         error.outcome = 'unknown'
         error.transportPending = false
-        if (sessionFile && isProxyTimeout(error)) await markSessionResetRequired(sessionFile, endpoint).catch(() => {})
+        if (sessionFile && isProxyTimeout(error)) await markSessionResetRequired(sessionFile, endpoint,
+          lookupUnconfirmed ? 'lookup-result-unconfirmed' : 'proxy-timeout-response-received').catch(() => {})
         throw error
       }
       return body.value
@@ -121,7 +134,7 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
         // Keep the shared WDA session alive; the CLI owns explicit recovery.
         'appium:newCommandTimeout': newCommandTimeoutSeconds,
         'appium:wdaLaunchTimeout': 60000,
-        'appium:wdaConnectionTimeout': 30000,
+        'appium:wdaConnectionTimeout': WDA_PROXY_TIMEOUT_MS,
       }, firstMatch: [{}]}}),
     }),
     source: (sessionId) => request(`/session/${sessionId}/source`),
@@ -195,10 +208,10 @@ async function markSessionCommandUnknown(sessionFile, endpoint) {
   }
 }
 
-async function markSessionResetRequired(sessionFile, endpoint) {
+async function markSessionResetRequired(sessionFile, endpoint, reason = 'proxy-timeout-response-received') {
   const match = endpoint.match(/^\/session\/([^/]+)(?:\/|$)/)
   if (!match) return
-  const marker = {sessionId: match[1], at: Date.now(), command: endpoint.split('/').slice(3, 5).join('/') || 'session-command'}
+  const marker = {sessionId: match[1], at: Date.now(), command: endpoint.split('/').slice(3, 5).join('/') || 'session-command', reason}
   const destination = resetRequiredPath(sessionFile)
   const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`
   try {
@@ -328,11 +341,12 @@ export async function doctor(client = createAppiumClient()) {
 }
 
 export function classifyWdaHealth({appium = false, tunnel = false, wda = false, session = false, source = false,
-  active = false, locked = null, commandUnknown = false} = {}) {
+  active = false, locked = null, commandUnknown = false, resetReason = null} = {}) {
   if (!appium) return 'appium-unavailable'
   if (session && source && locked === true) return 'lock-screen-readable'
   if (session && source) return 'session-source-readable'
   if (commandUnknown) return 'appium-command-outcome-unknown'
+  if (resetReason === 'lookup-result-unconfirmed') return 'element-lookup-outcome-unconfirmed'
   if (!wda && !tunnel) return 'wda-and-remote-xpc-unavailable'
   if (!wda) return 'wda-endpoint-unavailable'
   if (!tunnel) return 'remote-xpc-registry-unavailable-wda-reachable'
@@ -364,6 +378,7 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
   const reset = await loadResetRequired(sessionFile)
   result.commandUnknown = Boolean(unknown && (!sessionId || unknown.sessionId === sessionId))
   result.resetRequired = Boolean(reset && (!sessionId || reset.sessionId === sessionId))
+  result.resetReason = result.resetRequired ? reset.reason || 'proxy-timeout-response-received' : null
   if (result.appium && sessionId && !result.commandUnknown && !result.resetRequired) {
     try {
       const page = await client.source(sessionId)
@@ -396,7 +411,7 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
     ageSeconds: Math.max(0, Math.round((Date.now() - marker.at) / 1000)),
     skipped: 'session commands are withheld to avoid overlapping until the proxy deadline has elapsed'}
   }
-  if (result.resetRequired) result.checks.session = {ok: false, outcome: 'proxy-timeout-response-received',
+  if (result.resetRequired) result.checks.session = {ok: false, outcome: result.resetReason,
     command: reset.command, skipped: 'replace this completed-failure session before another page command'}
   return {...result, status: classifyWdaHealth(result)}
 }
@@ -437,13 +452,26 @@ export async function waitForForeground(client, sessionId, bundleId, timeout = 8
   const deadline = Date.now() + timeout
   let state = {page: '', activeAppInfo: null, appState: null, foregroundBundle: null}
   while (Date.now() < deadline) {
-    state.page = await client.source(sessionId)
-    state.foregroundBundle = extractForegroundBundle(state.page)
+    state.appState = null
+    state.activeAppInfo = await client.execute(sessionId, 'mobile: activeAppInfo')
     if (Date.now() >= deadline) break
-    if (state.foregroundBundle === bundleId) {
-      state.activeAppInfo = await client.execute(sessionId, 'mobile: activeAppInfo')
+    if (state.activeAppInfo?.bundleId === bundleId) {
+      const beforeAppState = await client.execute(sessionId, 'mobile: queryAppState', [{bundleId}])
       if (Date.now() >= deadline) break
-      state.appState = await client.execute(sessionId, 'mobile: queryAppState', [{bundleId}])
+      if (beforeAppState === 4) {
+        // Launch may return while AX still targets the previous app. Wait for both live signals first.
+        // A successful pre-check is not readiness: revalidate state after the full snapshot.
+        state.page = await client.source(sessionId)
+        state.foregroundBundle = extractForegroundBundle(state.page)
+        if (Date.now() >= deadline) break
+        if (state.foregroundBundle === bundleId) {
+          state.activeAppInfo = await client.execute(sessionId, 'mobile: activeAppInfo')
+          if (Date.now() >= deadline) break
+          if (state.activeAppInfo?.bundleId === bundleId) {
+            state.appState = await client.execute(sessionId, 'mobile: queryAppState', [{bundleId}])
+          }
+        }
+      }
     }
     if (state.foregroundBundle === bundleId && state.activeAppInfo?.bundleId === bundleId && state.appState === 4) return state
     const remaining = deadline - Date.now()

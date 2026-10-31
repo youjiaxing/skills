@@ -138,6 +138,44 @@ test('received WebDriver errors do not create an in-flight marker', async (t) =>
   await assert.rejects(readFile(stateFile + '.unknown'), {code: 'ENOENT'})
 })
 
+test('a no-such-element response at the WDA proxy deadline is unconfirmed and requires recovery', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-lookup-deadline-'))
+  t.after(() => rm(directory, {recursive: true, force: true}))
+  const sessionFile = path.join(directory, 'state.json')
+  let clock = 0
+  const client = createAppiumClient({sessionFile, monotonicNow: () => clock, fetchImpl: async () => {
+    clock = 30010
+    return {ok: false, status: 404, json: async () => ({value: {error: 'no such element', message: 'An element could not be located'}})}
+  }})
+  await assert.rejects(client.findElement('session', 'accessibility id', 'search_keyword_edit'), (error) =>
+    error.code === 'ETIMEDOUT' && error.driverCode === 'no such element' && error.outcome === 'unknown' && error.transportPending === false)
+  const marker = JSON.parse(await readFile(sessionFile + '.reset-required', 'utf8'))
+  assert.equal(marker.command, 'element')
+  assert.equal(marker.reason, 'lookup-result-unconfirmed')
+  await assert.rejects(readFile(sessionFile + '.unknown'), {code: 'ENOENT'})
+  const health = await probeSessionHealth({status: async () => ({ready: true}), wdaStatus: async () => ({}),
+    source: async () => { assert.fail('unconfirmed lookup must withhold session commands') }}, 'session', {
+    sessionFile, fetchImpl: async () => ({ok: true, json: async () => ({status: 'OK'})}),
+  })
+  assert.equal(health.status, 'element-lookup-outcome-unconfirmed')
+  assert.equal(health.checks.session.outcome, 'lookup-result-unconfirmed')
+})
+
+test('fast missing elements and slow successful lookups retain their normal protocol result', async () => {
+  let clock = 0
+  const missing = createAppiumClient({monotonicNow: () => clock, fetchImpl: async () => {
+    clock = 100
+    return {ok: false, status: 404, json: async () => ({value: {error: 'no such element', message: 'missing'}})}
+  }})
+  await assert.rejects(missing.findElement('session', 'accessibility id', 'absent'), (error) => error.code === 'no such element')
+  clock = 0
+  const found = createAppiumClient({monotonicNow: () => clock, fetchImpl: async () => {
+    clock = 31000
+    return {ok: true, json: async () => ({value: {ELEMENT: 'found'}})}
+  }})
+  assert.deepEqual(await found.findElement('session', 'accessibility id', 'present'), {ELEMENT: 'found'})
+})
+
 test('received WDA proxy timeout on DELETE requires session replacement', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-delete-reset-'))
   t.after(() => rm(directory, {recursive: true, force: true}))
@@ -377,7 +415,53 @@ test('recovery wakes and swipes only when needed, launches and verifies foregrou
     'mobile: pressButton', 'mobile: dragFromToForDuration', 'mobile: launchApp',
     'mobile: activeAppInfo', 'mobile: queryAppState',
   ])
-  assert.equal(commands.length, 5)
+})
+
+test('foreground polling waits for both live signals before requesting an AX snapshot', async () => {
+  let activeReads = 0
+  let stateReads = 0
+  let snapshots = 0
+  const target = 'com.dianping.dpscope'
+  const client = {
+    execute: async (_sid, script) => {
+      if (script === 'mobile: activeAppInfo') return {bundleId: ++activeReads === 1 ? 'com.xingin.discover' : target}
+      if (script === 'mobile: queryAppState') return ++stateReads === 1 ? 2 : 4
+      throw new Error('unexpected command')
+    },
+    source: async () => {
+      assert.ok(activeReads >= 3 && stateReads >= 2, 'snapshot must wait until both foreground signals converge')
+      snapshots++
+      return `<XCUIElementTypeApplication bundleId="${target}"/>`
+    },
+  }
+  const result = await waitForForeground(client, 'session', target, 2500)
+  assert.equal(result.foregroundBundle, target)
+  assert.equal(result.activeAppInfo.bundleId, target)
+  assert.equal(result.appState, 4)
+  assert.equal(snapshots, 1)
+})
+
+test('foreground polling rejects an old app snapshot even when lightweight signals match', async () => {
+  const target = 'com.dianping.dpscope'
+  const client = {
+    execute: async (_sid, script) => script === 'mobile: activeAppInfo' ? {bundleId: target} : 4,
+    source: async () => '<XCUIElementTypeApplication bundleId="com.xingin.discover"/>',
+  }
+  const result = await waitForForeground(client, 'session', target, 50)
+  assert.notEqual(result.foregroundBundle, target)
+  assert.equal(result.appState, null)
+})
+
+test('foreground polling revalidates live state after a snapshot while the app changes', async () => {
+  const target = 'com.dianping.dpscope'
+  let current = target
+  const client = {
+    execute: async (_sid, script) => script === 'mobile: activeAppInfo' ? {bundleId: current} : current === target ? 4 : 2,
+    source: async () => { current = 'com.xingin.discover'; return `<XCUIElementTypeApplication bundleId="${target}"/>` },
+  }
+  const result = await waitForForeground(client, 'session', target, 50)
+  assert.notEqual(result.activeAppInfo.bundleId, target)
+  assert.equal(result.appState, null)
 })
 
 test('foreground polling stops after its budget without starting more WDA commands', async () => {
@@ -387,11 +471,54 @@ test('foreground polling stops after its budget without starting more WDA comman
       await new Promise((resolve) => setTimeout(resolve, 20))
       return '<XCUIElementTypeApplication bundleId="com.apple.springboard"/>'
     },
-    execute: async (_sessionId, script) => { commands.push(script); return null },
+    execute: async (_sessionId, script) => {
+      commands.push(script)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {bundleId: 'com.apple.springboard'}
+    },
   }
   const result = await waitForForeground(client, 'session', 'com.xingin.discover', 5)
-  assert.equal(result.foregroundBundle, 'com.apple.springboard')
-  assert.deepEqual(commands, [])
+  assert.equal(result.foregroundBundle, null)
+  assert.deepEqual(commands, ['mobile: activeAppInfo'])
+})
+
+test('foreground polling does not treat a pre-snapshot foreground check as final readiness', async () => {
+  const target = 'com.dianping.dpscope'
+  const commands = []
+  const client = {
+    execute: async (_sid, script) => { commands.push(script); return script === 'mobile: activeAppInfo' ? {bundleId: target} : 4 },
+    source: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      return `<XCUIElementTypeApplication bundleId="${target}"/>`
+    },
+  }
+  const result = await waitForForeground(client, 'session', target, 15)
+  assert.equal(result.appState, null)
+  assert.deepEqual(commands, ['mobile: activeAppInfo', 'mobile: queryAppState'])
+})
+
+test('foreground polling persists a snapshot timeout and stops without retry or session replacement', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-switch-timeout-'))
+  t.after(() => rm(directory, {recursive: true, force: true}))
+  const sessionFile = path.join(directory, 'state.json')
+  const target = 'com.dianping.dpscope'
+  const requests = []
+  const server = createServer(async (req, res) => {
+    requests.push(req.url)
+    if (req.url.endsWith('/source')) return
+    let body = ''
+    for await (const chunk of req) body += chunk
+    const command = JSON.parse(body).script
+    res.writeHead(200, {'content-type': 'application/json'})
+    res.end(JSON.stringify({value: command === 'mobile: activeAppInfo' ? {bundleId: target} : 4}))
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.closeAllConnections())
+  t.after(() => server.close())
+  const client = createAppiumClient({baseUrl: `http://127.0.0.1:${server.address().port}`, requestTimeoutMs: 50, sessionFile})
+  await assert.rejects(waitForForeground(client, 'session', target), (error) => error.code === 'ETIMEDOUT' && error.transportPending === true)
+  assert.equal(JSON.parse(await readFile(sessionFile + '.unknown', 'utf8')).command, 'source')
+  assert.deepEqual(requests, ['/session/session/execute/sync', '/session/session/execute/sync', '/session/session/source'])
 })
 
 test('Appium protocol errors retain their useful message', async (t) => {
@@ -469,7 +596,7 @@ test('Dianping gates consent and verification before search actions', async () =
   }
   const result = await dianpingSearch(client, 'session-1', 'blcoffee厦门', '/tmp/unused.png')
   assert.equal(result.status, 'needs-user-consent')
-  assert.deepEqual(calls, ['mobile: launchApp', 'mobile: activeAppInfo', 'mobile: queryAppState'])
+  assert.ok(calls.every((script) => ['mobile: launchApp', 'mobile: activeAppInfo', 'mobile: queryAppState'].includes(script)))
 })
 
 

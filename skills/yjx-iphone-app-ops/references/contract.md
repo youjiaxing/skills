@@ -4,7 +4,7 @@
 
 Appium 与 RemoteXPC 隧道是共享运行服务。查询使用预安装 WDA，不在每轮重新构建或签名。首次 WDA 安装、Xcode 账户、开发者模式和 UI Automation 设置属于人工设备准备。
 
-当前 Appium 用户 LaunchAgent 和管理员隧道 LaunchDaemon 已安装并运行。Mac 重启后的实际冷恢复尚未验证。Mac 重启、用户登出或设备重启后的首次解锁不在当前自动恢复保证内；需要按人工恢复边界处理。
+当前 Appium 用户 LaunchAgent 和管理员隧道 LaunchDaemon 已安装，Mac 重启并登录后的自动启动已实测；iPhone 配对与隧道可用，预安装 WDA 可按需建立新 session。App 切换按[恢复流程](recovery.md)先等前台信号收敛，再以完整页面树和后置状态确认就绪；不能把服务就绪视为整轮查询成功，详见[验收记录](roadmap.md)。Mac 登录前运行、用户登出和 iPhone 自身重启后的首次解锁仍未验收。
 
 隧道迁移脚本（需管理员密码）是：
 
@@ -41,6 +41,8 @@ Appium 用户服务安装后用 `launchctl bootstrap gui/$(id -u) ~/Library/Laun
 
 - `doctor`：Appium 状态、指定设备行和隧道进程。
 - `session`：Appium session 创建或复用成功，WDA 页面树可读；默认 `newCommandTimeout=0`，由 CLI 明确管理 session 生命周期，不因 10 分钟空闲自动销毁。
+- 原生查找达到固定 WDA 代理期限后返回 miss 时，只能确认查找结果未确认；`wda-health` 显示 `element-lookup-outcome-unconfirmed`，不声称收到明确的 WDA timeout。该状态保留会话恢复标记并停止其他 session 命令。
+- Mac 重启后尚未建立 session 时，本机 WDA `8100` 可以没有监听；若设备、Appium 和隧道正常且没有未知请求标记，按标准流程运行 `session` 再验证，不据此重新签名或重启共享服务。
 - `wda-health`：分别探测 Appium、RemoteXPC 隧道 registry、配置的本机 WDA `/status` 端点和现有 session 页面树；没有持久化未知请求时，页面树失败再单独请求 activeAppInfo 区分完整 AX 快照与命令通道问题；有未知请求标记时跳过所有 session 命令。锁屏页面树可读是健康结果。默认 WDA 本机端口为 `8100`，多会话或端口变化时设置 `IOS_WDA_LOCAL_PORT`。
 - `recover`：目标 bundle 是页面树根应用。
 - `element read/click/set-value`：动作前目标 bundle、active app 和 `queryAppState=4` 一致；动作后页面树可再次读取。

@@ -16,7 +16,8 @@
 3. 仅在页面树显示锁屏时发送 Home 唤醒；未锁屏直接启动目标 App。
 4. 仍为锁屏且无密码提示时，从底部短上滑一次；不调用曾超时的 `mobile: unlock`。出现密码输入即停止。
 5. 调用 `mobile: launchApp` 启动目标 bundle。
-6. 启动后以 8 秒为轮询预算；只在页面树根 bundle 已匹配时再读取 `activeAppInfo` 和 `queryAppState`。预算到期后不再发送新命令，已在途的单条 WDA 请求仍受 45 秒传输 deadline 约束，超时按 unknown 处理。页面树根 bundle、active bundle 都匹配目标且状态为 `4` 才算 `app-ready`。
+6. 启动后以 8 秒为轮询预算，先读取 `activeAppInfo`，其 bundle 匹配后再读 `queryAppState`。两者均确认目标在前台时才取完整页面树；根 bundle 匹配后再回读一次 active bundle 和运行状态。仅后置检查也匹配且状态为 `4` 才算 `app-ready`。前置状态不能代替页面树或后置检查，旧应用的树不算恢复成功。
+7. 预算到期后不再发送新命令；已在途的单条 WDA 请求仍受 45 秒传输 deadline 约束，超时按 unknown 处理，不能为赶预算重叠发送页面读取。后置校验未完成时保持未就绪。
 
 一次 XS Max、iOS 18.7.10 的实测中，`isLocked` 返回了陈旧 `false`，`mobile: lock` 超时；锁屏后通过唤醒和启动目标 App，最终确认小红书位于前台。该实测不证明其他 iOS 版本、重启后的首次解锁或有密码设备可无人值守恢复。
 
@@ -29,6 +30,7 @@
 | `devicectl device info apps` 报未配对 | 保留现有 WDA 会话验证证据；下次冷连接前在手机上重新信任/配对，不重复建会话 |
 | WDA 未安装或无法启动 | 报告一次性签名/授权准备缺失，不在查询中改签名 |
 | `invalid session id` / `session-missing-or-expired` | 删除过期状态文件并只创建一次新 session；其他超时保留 session 状态并用 `wda-health` 分层检查 |
+| `element-lookup-outcome-unconfirmed` | 原生查找到 30 秒代理期限才返回 no such element，可能是被驱动掩盖的错误；保留原始 driverCode，不当成普通元素缺失，不继续点击/坐标回退，按匹配 session 的 reset-required 原因做有界恢复 |
 | `isLocked=false` 与页面树冲突 | 以页面树为准，执行唤醒和前台确认 |
 | `mobile: lock` 超时 | 不用它作为锁屏或恢复前置；通过真实系统自动锁屏或用户侧键测试 |
 | 目标 App 未到前台 | 检查错误、页面树及截图；最多重试一次启动，不连续重放写操作 |
@@ -49,6 +51,6 @@ CLI 锁文件记录 PID 与随机 owner 标识，不按持续时间抢锁。死�
 
 若连续读取与 Home 命令超时，而 WDA status、设备配对和隧道仍正常，先确认本轮独占设备、等待在途命令结束。允许人工诊断下关闭本轮持有的 session 并创建一次新 session；保留共享 Appium 和 tunnel，不把这项诊断自动放入每轮重试。2026-10-27 曾用此方式恢复 WDA 页面读取。关闭结果未知时保留状态并报告，不能循环建会话。
 
-2026-10-27 的连续实测还出现过 session 运行一段时间后 UI 命令无响应；只读 status 仍可能正常。当前尚未确定根因，也未完成长时间无人值守稳定性验收。会话重建能恢复不等于根因修复；不以一次成功把该限制移除。二维码的只读像素路径可避免不必要的深度 AX 快照，但不能承诺修复 XCTest 连接失效。
+2026-10-27 的连续实测出现过 session 运行一段时间后 UI 命令无响应；只读 status 仍可能正常。2026-10-31 的重启验收先复现了切换后的 30 秒 source 超时，随后对照实验发现 launch 返回时 AX 当前应用仍可能是旧应用。直接取树会读到旧 bundle 或阻塞；修正为上述先等待状态收敛、再取树并做后置核验后，连续切换回归通过，详见[验收记录](roadmap.md)。这修复了本次复现的切换竞态，不代表所有 XCTest 无响应都由同一原因引起；其他超时继续保留原有分流与恢复保护。
 
-2026-10-27 探针结果：锁屏页面树读取约 5.9 秒成功；一次自然 4 分钟空闲后设备已锁屏，页面树约 5.8 秒仍成功。旧 session 的历史日志显示 Appium 明确等待 600 秒后结束 session；这与 30 秒 WDA proxy timeout 是不同故障。旧 CLI 20 秒 abort 早于 driver 30 秒 proxy timeout，可能留下服务端在途请求并让紧随操作排队，因此现提高客户端默认 deadline 到至少 35 秒（默认 45 秒），并将 GET 超时也标为 unknown。新 session 已设置 `newCommandTimeout=0`；本轮实测创建后空闲超过 15 分钟，健康探针确认锁屏页面树可读，随后无需密码完成唤醒、上滑和小红书前台校验，并连续三次读取页面树成功。历史 30 秒 XCTest/WDA 无响应尚未再次复现，不能把风险控制说成根因已彻底消除。
+2026-10-27 探针结果：锁屏页面树读取约 5.9 秒成功；一次自然 4 分钟空闲后设备已锁屏，页面树约 5.8 秒仍成功。旧 session 的历史日志显示 Appium 明确等待 600 秒后结束 session；这与 30 秒 WDA proxy timeout 是不同故障。旧 CLI 20 秒 abort 早于 driver 30 秒 proxy timeout，可能留下服务端在途请求并让紧随操作排队，因此现提高客户端默认 deadline 到至少 35 秒（默认 45 秒），并将 GET 超时也标为 unknown。新 session 已设置 `newCommandTimeout=0`；当日实测创建后空闲超过 15 分钟，健康探针确认锁屏页面树可读，随后无需密码完成唤醒、上滑和小红书前台校验，并连续三次读取页面树成功。该空闲验收不代表 App 切换后的页面读取稳定性已通过。
