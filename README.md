@@ -90,15 +90,11 @@ npx skills add youjiaxing/skills --skill yjx-grill
 ### 5. 本机钉钉只读解析
 
 - **`yjx-dingtalk`**：只在用户明确要求查询钉钉时手动调用。以共享只读方式读取本机客户端已缓存的数据库与 WAL，现场推导 V3 密钥且不落盘；副本默认存于 `~/.yjx-dingtalk/`。不关闭或重启钉钉，不注入、不读进程内存，不改钉钉数据。撤回消息只输出元数据。真实数据验证目前仅覆盖 Windows（钉钉 9.0.1），macOS/Linux 的客户端兼容性仍属验收工作。
-### 6. 跨 Agent GUI 验证
-
-- **`yjx-codex-cu`**：人工调用。把当前 Agent 无法等价完成的真实 GUI 验证交给 Codex CLI 的 Computer Use；实现和缺陷修复仍由当前 Agent 负责。
-
-### 7. 会话后的 Skill 复盘
+### 6. 会话后的 Skill 复盘
 
 - **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据当前上下文或原始会话记录复盘整个任务过程与用户每一次纠正，向已用/未调用 Skill 优化、新建或拆分 Skill 提议（输出概要卡片）、项目文档/Spec 及项目/用户级 `AGENTS.md` 四层去特例化分流。当前上下文完整时由主代理单代理直读，已压缩或跨会话时委派隔离子代理取证；默认只提建议不直接修改或创建 skill。
 
-### 8. 飞书 Agent 桥接
+### 7. 飞书 Agent 桥接
 
 - **[`yjx-feishu-agent`](skills/yjx-feishu-agent/SKILL.md)**：提供飞书群与 Codex 已有聊天的双向桥接，支持白名单、多群绑定、独立接收器、归档保护及重新绑定；可主动发送带图卡片、更新原卡片并发送变化提醒。已完成实群验收，Desktop 专属工具兼容性需另行验证。
 
