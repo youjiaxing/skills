@@ -11,7 +11,7 @@ import { privateRoot, atomicJson, safeFile, acquireLock } from '../scripts/stora
 
 const cli = fileURLToPath(new URL('../scripts/hub.mjs', import.meta.url));
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yjx-task-hub-ipc-test-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'yjx-task-hub-ipc-test-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = { ...process.env, YJX_TASK_HUB_HOME: root };
   const run = (args, data) => {
