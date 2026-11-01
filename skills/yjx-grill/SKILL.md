@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # yjx-grill
 
-在为执行对齐方案前，先理解用户需要解决的问题。自主调查事实，将用户提出的补救方案与期望结果对照测试，只询问尚未解决的核心意图或有后果的人类判断。结果要匹配实际利害关系，而不是是否提出了问题。
+在为执行对齐方案前，先理解用户需要解决的问题。自主调查事实，将用户提出的补救方案与期望结果对照测试，询问尚未解决的核心意图、有后果的人类判断及项目明确要求用户参与的决定。结果要匹配实际利害关系，而不是是否提出了问题。
 
 评审或修改本 skill 前阅读 [MAINTENANCE.md](MAINTENANCE.md)；普通执行不需要读取它。
 
@@ -36,6 +36,14 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 ## 1. 理解问题并测试前提
 
+先定位本次任务所属项目根，读取适用的项目协作规则，并检查根目录的 `GRILL.md`。从子目录开展任务时仍读取所属项目根的一份，不分层合并子目录文件，也不跨入其他项目寻找约定。没有仓库的任务使用已明确的项目工作目录；根目录含义不清且影响约定适用范围时，先查明或澄清边界，不能盲用多项目工作区或用户主目录。
+
+`GRILL.md` 是可选的项目参与约定：存在就读取，缺失时按已有项目规则与当前明确要求继续，不要求先完成配置。存在但读取失败时，说明未读到的约定及对当前范围的影响，不能当作不存在而默认放权；可继续不依赖未读约定的部分。它可以引用已有设计规范，按任务读取有关部分；不替代通用项目治理。与其他适用要求存在无法调和的冲突时，明确提出受影响的部分。
+
+从这些来源识别哪些设计由用户保留判断、哪些已明确委托，以及仍有效的既有结论。参与深度依据当前项目与明确要求，不按编程语言、前后端或“内部细节”等标签推断。没有书面参与约定也可以依据当前明确共识推进，不把全部细节默认交给用户。
+
+当用户表达长期参与要求、反复补充同类要求或纠正漏讨论，或阶段收敛出可复用协作约定时，在自然节点简短建议创建或更新根 `GRILL.md`。文件缺失本身不触发提醒；一次性选择不自动变成长期规则。提醒后继续当前讨论，用户暂不需要时不在本轮反复追问。创建或更新文件交给另行授权的文档编辑步骤，不在对齐时擅自写入。
+
 区分用户观察到的困难、用户对原因的解释，以及用户提出的补救方案或目标。用户要求某个具体方案时，表达的可能是表面问题，而不是期望结果。从具体经历出发，逐步明确实际困难和用户需要的变化，再用该结果测试候选方案。
 
 不清楚时，询问最近发生的实例、用户当时想完成什么、遇到了什么阻碍，或问题解决后会有什么不同。当选项会过早限定答案时，使用聚焦但开放的问题。不要要求用户诊断或准确命名底层问题。
@@ -58,6 +66,8 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 把独立结果拆成连贯的能力切片，并完成一个切片后再打开下一个。把切片视为独立前先识别共享前置条件。在第 4 节 coverage record 中跟踪所有范围内建议、其决策和依赖；接受一项建议只关闭它实际解决的决策。
 
+依据实际任务和现状主动识别本次适用的设计决定，包括用户保留的事项。开始讨论或范围发生实质变化时，简短展示可纠正的范围总览，然后直接进入 ready 事项，不增加独立的范围确认门禁。用户无需预先列尽所有问题；后续发现新事项继续补入，用户没有指出遗漏也不能作为覆盖完整的证明。
+
 问题只有在事实和决策前置条件都确定后才 ready。进行中的调查属于未确定前置条件：继续处理 ready 分支，但等待依赖其结果的分支。即使无论答案如何都需要某问题，只要另一个答案会改变它的前提、可行选项或建议，该问题仍未 ready。
 
 ## 3. 按意图与后果设置问题门禁
@@ -66,14 +76,17 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
   - **Core intent gap**：缺失的意图会改变成功结果的定义、预期用途或由人类负责的优先级。即使结果容易撤销，也要提问。
   - **Consequential judgment**：成本、保证、所有权、权限或整体策略的接受仍属于人类判断。这也包括只有一个已知可行方案，但其后果或条件需要用户判断的情况；不要求硬凑多个替代方案。
+  - **Project-reserved decision**：用户或项目明确保留了参与判断的事项，且尚无有效确认或明确委托覆盖。即使它是局部、可逆或内部结构，也要按约定讨论，不能仅以“实现细节”跳过。
 
-推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问。工具障碍、缺少权限和推测性原因不是决策选项。
+在没有被用户或项目保留判断的范围内，推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问。工具障碍、缺少权限和推测性原因不是决策选项。
 
 按实际影响评估后果：数据丢失或迁移、权限、外部承诺、不可逆资源使用、结构重设计，以及实质不同的补救策略。一行改动也可能有不可逆后果。未知影响需要调查，不能直接归类为低风险。如果无法获得必要证据，报告具体 blocker，并保持该分支未解决。
 
 重要的既定事实可能需要清晰解释，但不需要再次提问。询问未解决的意图、可接受性或条件，不要只为让用户确认 Agent 已验证的事实。
 
 问题门禁和交付形式彼此独立：澄清一个可逆的核心意图，不会自动要求 formal contract。
+
+保留事项产生的是讨论和覆盖义务，不自动产生 Formal Contract。交付形式仍按本节、第 6 节及项目明确审批要求选择；Direct Result 同样要满足适用的讨论和确认要求，不能借低风险默认绕过。浅参与的项目约定也不豁免本节对重大风险和已确认需求变更的判断。
 
 需要有后果的人类判断时，立即为该切片记录 `contract required`。解决该判断（包括接受唯一已知可行方案，或选择保持当前行为）会确定选择，但不会消除评审和批准义务。
 
@@ -83,6 +96,8 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 - **Provenance**: each material claim has exactly one source and its evidence location or corresponding user expression: `需求` (explicit requirement), `事实` (verified state), `决策` (user-confirmed choice), or `推断` (agent proposal or default).
 - **Coverage**: `pending evidence`, `pending human`, `resolved`, or `pruned`, with prerequisites and a reason. Give each recommendation a disposition: established requirement/evidence, low-risk default, human decision needed, evidence needed, or excluded with a reason. A recommendation with unresolved material choices remains pending. For resolved nodes, record whether a requirement, fact, user choice, low-risk inference, or concrete acceptance/review constraint resolves them; for pruned nodes, record the verified evidence or explicit scoped decision that closes the branch. Apply section 3 before treating a choice as a low-risk default; this inventory does not create one question per recommendation.
+
+将本次适用的用户保留事项纳入同一台账，不另建状态机或强制大表。复用确认或委托时保留其实际事项范围与来源，只沿用明确覆盖且仍有效的部分；局部同意不能扩为整类永久放权。对“不适用”的判断保留与当前任务有关的依据，避免遗漏适用项或盘问无关类别。
 
 未回答的问题和进行中的调查可以合法保持 pending。问题被提出、列出或分配测试，并不代表它已解决。评审或验收覆盖必须建立边界，不能把未知选择推迟了事。重要新证据会使相关 resolution 和依赖推断失效，并将它们退回 pending。
 
@@ -138,6 +153,8 @@ If a new answer invalidates an earlier branch, discard dependent inferences and 
 
 声明切片完成前，检查 coverage record：每个范围内建议和重大选择都已解决或带有依据充分的 disposition 并被裁剪，没有把有后果的成本或行为隐藏在默认值中，所有必要评审或批准都已完成。变化的触发条件、转换、权限、失败策略和保证都必须有依据。ready frontier 为空但仍有 pending 节点时，表示等待或阻塞，不是完成。
 
+对两种交付形式，都要核查适用的保留事项已按约定讨论/确认，或有仍有效的既有依据、明确委托或有据的不适用结论。未确认的保留决定保持 pending，不能写成实施自由度；这项覆盖核查也应进入独立评审的材料。
+
 选择两种交付形式之一：
 
 - **Direct Result**: no consequential human judgment required formal approval, including cases where only low-risk core intent needed clarification. Use natural prose, not a mandatory contract or a repeat approval request. When all in-scope slices have converged, any required review is complete, no alignment blocker remains, and the current session can implement the result directly but still lacks an explicit execution instruction (and the user did not ask for planning-only), end with two brief numbered execution-intent options (`1. 按此方案开始实施（推荐）` and `2. 仅保留对齐结论，暂不实施`, inviting adjustment if needed) so the user can direct execution in one reply without a separate "开始实施" turn.
@@ -177,6 +194,8 @@ Start each Reviewer task by stating that the recipient is already the independen
 已批准行为或边界发生重大变化时，需要重新对齐、必要评审和批准；有条件批准属于调整，不是对未修订 contract 的批准。批准不会验证不确定事实，也不能替代 coverage 或 review。
 
 Before handoff, match the actual execution instruction to the current aligned and authorized behaviors, including the reviewed contract where required, and check that unresolved work does not block that scope. An instruction limited to an old plan does not transfer to a materially changed plan; if withdrawn, invalidated, or unclear in scope, obtain a new instruction. A still-valid earlier instruction or one in the approval reply needs no repetition.
+
+任何形式的实施交接都要携带适用的项目参与约定指针、已选决定的实际确认范围与必要精确结构，以及仍待确认的边界。明确相关部分编码前还需要达成哪些一致，不能把未决保留事项交给执行者自行补定。
 
 A request to execute only an approved subset may be handed off only when it does not depend on unresolved work; retain the remaining alignment items. Calling workflows may require confirmation of their own conclusion, but that does not turn a Direct Result into a Formal Contract or expand implementation authority. Keep sources, reviewed scope, approval, and pending boundaries distinguishable in the handoff.
 

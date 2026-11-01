@@ -2,19 +2,11 @@
 
 链路为 `Agent → CLI → Appium 4723 → XCUITest Driver → RemoteXPC 隧道 → iPhone 上的签名 WDA Runner → 原生 App`。
 
-Appium 与 RemoteXPC 隧道是共享运行服务。查询使用预安装 WDA，不在每轮重新构建或签名。首次 WDA 安装、Xcode 账户、开发者模式和 UI Automation 设置属于人工设备准备。
+Appium 与 RemoteXPC 隧道是共享运行服务。查询使用预安装 WDA，不在每轮重新构建或签名。控制环境的首次部署、WDA 签名安装和后续维护由本 skill 组织，见[控制环境维护](environment.md)。Xcode 账户、管理员密码、开发者模式/信任等需要本人完成的步骤单独交接。
 
 当前 Appium 用户 LaunchAgent 和管理员隧道 LaunchDaemon 已安装，Mac 重启并登录后的自动启动已实测；iPhone 配对与隧道可用，预安装 WDA 可按需建立新 session。App 切换按[恢复流程](recovery.md)先等前台信号收敛，再以完整页面树和后置状态确认就绪；不能把服务就绪视为整轮查询成功，详见[验收记录](roadmap.md)。Mac 登录前运行、用户登出和 iPhone 自身重启后的首次解锁仍未验收。
 
-隧道迁移脚本（需管理员密码）是：
-
-```bash
-zsh skills/yjx-iphone-app-ops/launchd/install-root-tunnel.sh
-```
-
-脚本只有在 `http://127.0.0.1:42314/remotexpc/tunnels/<UDID>` 返回 `status=OK` 时才报告成功；root 进程存在但 `activeTunnels=0` 仍视为失败。
-
-Appium 用户服务安装后用 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.yjx.iphone-appium.plist` 加载。加载前先停止占用 4723 的旧 Appium 进程，避免两套实例竞争端口。
+本机配置和参数化模板由 `scripts/iphone-environment.mjs` 管理，安装/启动命令见[控制环境维护](environment.md)。健康服务复用，维护时先确认唯一 owner、服务与配置归属和无在途请求；端口占用不能作为停止进程的依据。未知归属时保留现场并报告具体接管动作。隧道须以目标设备 registry 返回 OK 验证，进程存在不算就绪。
 
 一台物理设备只允许一个自动化租约。CLI 自己的命令通过临时锁串行化，但无法发现另一个 Appium 项目持有的 session；多个项目必须约定唯一 owner 或使用不同设备/端口。当前 Appium 版本的 session 列表端点不可用，因此状态文件不是设备租约的唯一证明。
 
@@ -25,10 +17,10 @@ Appium 用户服务安装后用 `launchctl bootstrap gui/$(id -u) ~/Library/Laun
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
 | `APPIUM_URL` | Appium 服务地址 | `http://127.0.0.1:4723` |
-| `IOS_DEVICE_UDID` | 目标设备 | 当前 XS Max UDID |
-| `IOS_DEVICE_NAME` | 设备名 | `iPhone XS Max` |
-| `IOS_PLATFORM_VERSION` | iOS 主版本 | `18.7` |
-| `IOS_WDA_BUNDLE_ID` | 已安装 WDA 基础 bundle ID | 当前已签名 WDA ID |
+| `IOS_DEVICE_UDID` | 目标设备 | 本机配置，或显式指定 |
+| `IOS_DEVICE_NAME` | 设备名 | 本机配置，默认 `iPhone` |
+| `IOS_PLATFORM_VERSION` | iOS 主版本 | 本机配置，未设则由驱动发现 |
+| `IOS_WDA_BUNDLE_ID` | 已安装 WDA 基础 bundle ID | 本机配置，或显式指定 |
 | `IOS_WDA_LOCAL_PORT` | 当前 Appium session 所属 WDA 本机状态端口，供 `wda-health` 诊断 | `8100` |
 | `IPHONE_OPS_SESSION_FILE` | session 状态文件路径 | 系统临时目录下按设备区分 |
 | `IPHONE_OPS_TIMEOUT_MS` | Appium 请求 deadline；至少 `35000` 且默认 45 秒，高于当前 XCUITest 30 秒 WDA proxy deadline | `45000` |
@@ -51,3 +43,7 @@ Appium 用户服务安装后用 `launchctl bootstrap gui/$(id -u) ~/Library/Laun
 
 
 大众点评分页、产物、schema 和停止状态见[查询契约](query-contract.md)。
+
+## 通用操作结果
+
+观察、等待、断言、WebView 和手势见[通用操作与验证](operations.md)。新结果在原字段外独立表达 `operation.outcome` 和 `verification.status`；原 `ok` 或 `action` 仅有原命令含义。专用查询 schema 和 `factStatus` 保持原语义。

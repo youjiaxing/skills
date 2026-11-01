@@ -1,0 +1,5 @@
+interface:
+  display_name: "YJX Prototype"
+  short_description: "通过可交互原型比较视觉方案、预览产品效果与探索逻辑状态"
+policy:
+  allow_implicit_invocation: true

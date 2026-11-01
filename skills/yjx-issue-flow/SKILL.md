@@ -19,7 +19,7 @@ disable-model-invocation: true
 - **单票自动降级**：能在当前会话直接完成的单个普通实施 issue 不走编排；除非用户明确要求新启动独立 worker，否则直接转入项目正常实施流程（如 `yjx-implement`）。
 - **尊重项目真源与范围**：不写死 GitHub、Local Markdown 或其它 tracker，也不把编排运行清单写入项目仓库；不为了填补拆分缺口而擅自新建子 issue（剩余要求由父级承接）。
 - **参考文件触发指针**：
-  - 分类目标、解析范围、处理 Wayfinder/HIL 边界、选择 handler skill、执行 `local` / `worktree` 双轨集成或恢复受阻运行时，读取 [flow-rules.md](references/flow-rules.md)。
+  - 分类目标、解析范围、处理 Wayfinder/HIL 边界、选择 handler skill、等待 worker 与判断协调续接、执行 `local` / `worktree` 双轨集成或恢复受阻运行时，读取 [flow-rules.md](references/flow-rules.md)。
   - 创建、恢复或替换 worker，以及组织指针交接和核对完成报告状态时，读取 [worker-contract.md](references/worker-contract.md)。
 
 ## 执行流水线
@@ -43,7 +43,7 @@ disable-model-invocation: true
 
 ### Phase 3：运行与分轨集成
 
-1. 使用事件驱动或长间隔等待监控运行中的 worker，只响应有意义的状态变化，禁止短周期轮询。
+1. 按 [flow-rules.md 第 6 节](references/flow-rules.md#6-协调续接故障恢复与状态分离)保持协调续接，等待 worker 的有意义状态变化，再按以下对应步骤处理；派发成功只代表实施已启动。
 2. Worker 异常中断或失败时，优先重连并恢复原独立会话/任务；仅在原会话确认无法继续时创建替代 worker。限制重试次数，失败或触发 HIL 的 issue 仅阻塞自身及其下游，独立分支继续。
 3. 若回退到禁止嵌套子代理的受限宿主，当 worker 返回 `Result: needs-coordinator-review` 时，由协调器代为启动独立评审子代理（`Start every subagent with a fresh context window (do not fork the current conversation).`），通过后再推进集成，发现阻塞问题则交回该 worker 修复。
 4. 按选定的工作区轨道（`local` 原地完成，或 `worktree` 分支预同步后由协调器主工作区合入与清理）执行集成与 tracker 关票。

@@ -75,3 +75,18 @@ Use these examples for static semantic review of the instructions and available 
 | Bodies contain every blocker but the authoritative relation readback is empty or fails | Report missing or unverified relationships and incomplete publication, not success. |
 | A project uses body-based relationships and every readiness/execution consumer supports that protocol | Allow that representation; do not impose GitHub-native requirements on other trackers. |
 | A necessary change touches an unlisted helper while another proposal changes unrelated behavior in a listed module | Do not treat the helper's location as a scope violation; reject the unrelated behavior expansion. Preserve existing explicit project restrictions. |
+
+## 上游来源与更新记录
+
+来源：[Matt Pocock / skills 的 `to-tickets`](https://github.com/mattpocock/skills/tree/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d/skills/engineering/to-tickets)，上游路径为 `skills/engineering/to-tickets/`。本 skill 为其概念与工作流的个人演进/替换版；此记录不声明存在 Git fork 或可直接文本合并的关系。
+
+- **最初参考版本：未知，未钉版本。** 仓库演进映射及引入历史能支持来源关系，不能确定当时参考的上游提交；不使用当前版本倒填历史。
+- **本次对照快照（2026-11-01）：** 上游提交 `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`，本路径目录 Git tree `2dee20ad722a31c04ededf9f2d83842473573045`。通过 GitHub Git Tree API 核实；这只是今后的可复现对照点，不是最初派生基线。
+- **最近行为增量评估：尚未建立。** 本次核对来源与路径/目录指纹，没有将当前上游全文与本地逐项比较，也没有据此吸收新行为。
+- **本地演化依据：** 本文件原有设计理由、维护检查与本仓库 Git 历史；来源补齐不改写这些既有取舍。
+
+后续维护时，固定待比较的上游提交，核查相关变化与本地取舍，再记录日期、版本、核查范围、采用内容和理由、暂缓/不采用原因及验证限制。分别维护已核查和已吸收的范围；未知历史保持未知，不直接覆盖本地工作流。
+
+| 日期 | 核查范围与版本 | 实际吸收 |
+| --- | --- | --- |
+| 2026-11-01 | 来源、路径及上述对照快照的目录指纹；未做行为增量评估 | 仅补来源维护记录，未吸收上游行为变更 |

@@ -82,3 +82,20 @@ Before modifying or reviewing this skill, verify that the proposed changes satis
 - [ ] **Lightweight Concurrency**: Preserves parallel independent sessions and explicit best-effort limits without a new coordinator or tracker protocol.
 - [ ] **Owned Research**: Every launched task has a real collection path; persistent pointers are not mistaken for persistent execution.
 - [ ] **Preserves Closeout Synthesis**: Checks all work, actual dispositions, coverage, and consistency before producing the cohesive destination artifact.
+
+## 上游来源与更新记录
+
+来源：[Matt Pocock / skills 的 `wayfinder`](https://github.com/mattpocock/skills/tree/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d/skills/engineering/wayfinder)，上游路径为 `skills/engineering/wayfinder/`。本 skill 为其概念与工作流的个人演进/替换版；此记录不声明存在 Git fork 或可直接文本合并的关系。
+
+- **最初参考版本：未知，未钉版本。** 仓库演进映射及引入历史能支持来源关系，不能确定当时参考的上游提交；不使用当前版本倒填历史。
+- **本次对照快照（2026-11-01）：** 上游提交 `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`，本路径目录 Git tree `25da74eadc3e388b2f2a2cc716f3d44b2fb9dfe0`。通过 GitHub Git Tree API 核实；这只是今后的可复现对照点，不是最初派生基线。
+- **最近行为增量评估：尚未建立。** 本次核对来源与路径/目录指纹，没有将当前上游全文与本地逐项比较，也没有据此吸收新行为。
+- **本地演化依据：** 本文件原有设计理由、维护检查与本仓库 Git 历史；来源补齐不改写这些既有取舍。
+
+后续维护时，固定待比较的上游提交，核查相关变化与本地取舍，再记录日期、版本、核查范围、采用内容和理由、暂缓/不采用原因及验证限制。分别维护已核查和已吸收的范围；未知历史保持未知，不直接覆盖本地工作流。
+
+| 日期 | 核查范围与版本 | 实际吸收 |
+| --- | --- | --- |
+| 2026-11-01 | 来源、路径及上述对照快照的目录指纹；未做行为增量评估 | 仅补来源维护记录，未吸收上游行为变更 |
+
+同日的本地委托入口调整：适用的原型票优先使用已安装的 `yjx-prototype`，保留上游 `prototype` 可用时的兜底。票据类型、HITL 确认与规划/实施授权边界保持原语义；此项属于本地已对齐改进，不记为上游吸收。

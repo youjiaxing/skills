@@ -1,86 +1,58 @@
 ---
 name: yjx-iphone-app-ops
-description: 在网页入口受限、缺少关键功能或需要真实原生 App 页面时，通过已授权的 macOS、Appium、XCUITest 与 WebDriverAgent 链路操作 iPhone；触发于小红书、大众点评等原生 App 查询、页面读取和锁屏恢复。
+description: 直接操作 iPhone App 并验证给定目标，包括查询、授权写入、功能与视觉测试；负责 Appium、XCUITest、WDA 和隧道控制环境的部署、诊断及恢复。
 ---
 
-# iPhone 原生 App 操作
+# iPhone App 操作与验证
 
-把 iPhone 当作受控查询终端。此 skill 负责设备预检、会话、页面操作和恢复；来源可信度、事实核验、推荐和结果交付由调用方负责。
+根据给定目标和授权，维护可用的控制链路，观察并直接操作 App，验证目标结果并交付证据。业务 App 的构建、签名、安装、发布和项目测试体系由调用方负责；控制工具 WDA 自身的部署属于本 skill。
 
-## 预检
+维护本 skill、扩展能力或调整边界时，先读 [MAINTENANCE.md](MAINTENANCE.md)。具体已验范围和缺口见[验收记录](references/roadmap.md)。
 
-先读[运行契约](references/contract.md)，需要查询小红书或大众点评时再读[已验证 App 配置](references/apps.md)，然后检查设备与服务：
+## 开始任务
 
-`<skill-dir>` 是本 `SKILL.md` 所在目录。
+1. 读取[运行契约](references/contract.md)，明确目标 App、目标结果及授权范围。按目标自主探索页面，无需用户预写点击步骤；只有影响授权或判定的关键条件缺失才补问。
+2. 检查设备和共享服务。环境缺失、配置迁移或需要 WDA 签名安装时，按[控制环境维护](references/environment.md)负责部署/修复；仅将密码、设备信任等本人步骤交接给用户。
+3. 复用有效 session；恢复目标 App，确认实际前台状态后开始操作。
 
-```bash
-node <skill-dir>/scripts/iphone-app-ops.mjs doctor
-node <skill-dir>/scripts/iphone-app-ops.mjs wda-health
-```
-
-`doctor` 检查设备、Appium、隧道和 WDA 安装；`wda-health` 区分 Appium 状态、RemoteXPC registry、本机 WDA 端点、session、AX 页面树与自然锁屏。锁屏下页面树可读算 WDA 健康，之后再执行恢复。`devicectl` 显示 `available` 不是会话可用的充分证据。
-
-## 会话
-
-复用仍有效的会话；失效时以预安装 WDA 建立新会话：
+`<skill-dir>` 为本目录；从该目录执行：
 
 ```bash
-node <skill-dir>/scripts/iphone-app-ops.mjs session
+node scripts/iphone-app-ops.mjs doctor
+node scripts/iphone-app-ops.mjs wda-health
+node scripts/iphone-app-ops.mjs session
+node scripts/iphone-app-ops.mjs recover --bundle-id <bundle-id>
 ```
 
-CLI 将非敏感 session ID 存在系统临时目录，权限为当前用户可读写。正常查询完成后保留 Appium 和隧道服务；不为单次任务重建 WDA 或停止共享服务。
+分层诊断分别证明服务、设备、WDA 和页面状态；进程存在、安装成功或 HTTP 成功不能单独证明控制链路可用。修复后重新做实际命令和目标 App 状态核验。
 
-Session 默认不因空闲自动超时，由 CLI 复用并恢复；客户端命令期限至少 35 秒，默认 45 秒，高于当前 XCUITest WDA 30 秒代理期限。超时的动作结果视为未知；先运行 `wda-health`，它不会在未知结果后向同一 session 发送重叠命令。
+## 观察、操作和验证
 
-本机已安装 Appium LaunchAgent 与管理员隧道 LaunchDaemon，Mac 重启并登录后的服务自动启动已实测。切换 App 时先等前台信号收敛再取页面树；验收范围与结果见[实施目标与验收记录](references/roadmap.md)。
+通用观察、原生元素、WebView、手势、等待、断言及证据命令见[通用操作与验证](references/operations.md)。
 
-仓库提供 `launchd/` 配置模板。Appium 可安装为当前用户的 LaunchAgent；XCUITest 隧道官方脚本要求 root，首次迁移时由用户运行 `zsh <skill-dir>/launchd/install-root-tunnel.sh` 并在 sudo 提示输入管理员密码。脚本不会保存密码或修改 sudoers。
+- 信息查询优先读取必要文字/字段；原生或可检查 DOM 足够时直接使用，缺失时按需补本机 OCR。
+- 视觉表现任务主动截图并让模型查看。即使元素和文字完整，布局、颜色、间距、遮挡、图表等仍需图像证据；OCR 不能替代视觉判断。
+- 混合任务组合使用：例如元素点击后，截图判断弹层表现。只保留目标所需观察，减少重复图像和无关页面树。
+- 点击输入优先稳定语义，目标须唯一且作用明确；可检查 WebView 确认 owner 后使用 DOM。必要坐标/手势以当前已确认画面为依据。
+- 输入替换需确认实际清空，再输入并回读完整值；无法确认时停止后续输入/提交。
+- 点击成功只表示动作已发送。按目标等待状态并核验足以支持目标的后置条件；真实发送、付款等检查对应记录、对象和金额。
 
-可用 `source` 读取脱敏状态摘要，`source --output <path>` 显式保存页面树，`screenshot --output <path>` 显式保存当前截图；本轮设备操作结束且确认不会影响共享任务时，才用 `close` 关闭 session。
+## 专用内容适配
 
-## 恢复并打开 App
+小红书、大众点评等需要专用提取时，按需读取[已验证 App 配置](references/apps.md)。点评搜索先读[查询契约](references/query-contract.md)，详情、分享和小红书搜索读[原生内容操作](references/native-content.md)。通用操作不预加载这些 App 规则。
 
-```bash
-node <skill-dir>/scripts/iphone-app-ops.mjs recover --bundle-id <bundle-id>
-```
+原生树为空、需要选择 OCR/DOM 或评估读取路径时，见[读取方式](references/reading-methods.md)。提取结果是平台观察，来源事实核验、研究和推荐由调用方负责。
 
-按[恢复流程](references/recovery.md)读取页面树，仅在锁屏时唤醒并按需短上滑，启动目标 App，并等待页面树、active bundle 和前台状态一致。`mobile: isLocked` 仅作辅助信号，三者一致才是完成标准。
+## 授权与失败处理
 
-页面操作优先用 accessibility id、iOS predicate 或稳定语义；WebView 再使用已验证的 DOM 标识。截图用于视觉确认和故障诊断，不将坐标作为普通按钮的默认定位方式。原生树为空或评估读取效率时，读[读取路径与依据](references/reading-methods.md)。
+- 明确交办的保存、发送、发布、下单、付款、删除等动作在具体授权范围内执行；“测试 App”不隐含支付或对外发送授权。身份/作用不明时先观察消歧，关键条件仍不明才询问。
+- 登录凭据、验证码、设备密码及安全验证由用户处理；不保存或传输凭据，不绕过验证。
+- 动作发出后不自动重试。结果未知时按[恢复流程](references/recovery.md)先处理在途状态，等待、断言、截图和 finally 清理均不得发送重叠命令。恢复后重新观察再决定下一步。
+- 测试产生的数据仅按任务中的清理授权删除/恢复；不擅自回滚既有数据。
+- 维护共享服务前确认归属、独占与无未决请求；仅维护明确归属的服务，不按端口或进程名批量停止。普通任务结束保留共享 Appium 和隧道。
 
-大众点评查询先读[分页、证据与停止契约](references/query-contract.md)，使用结构化输出：
+## 完成标准
 
-```bash
-node <skill-dir>/scripts/iphone-app-ops.mjs dianping-search \
-  --query '<query>' --max-pages 3 \
-  --extract-output /tmp/dianping-new-run.json
-```
+给定目标有充分观察证据才报告通过；正常观察下条件不满足为失败，前置条件不足为受阻，效果不能确认则为未知。输出目标、实际动作、关键观察、验证结论及证据；失败保留最后确认阶段、恢复结果和具体接管动作。取证失败不能覆盖原错误。
 
-默认最多读取 3 屏，原生文本优先，本机 Vision OCR 兜底；图片默认不落盘。输出 schemaVersion 2，含屏幕覆盖、停止原因、逐字段证据和复核状态，事实仍为未核实。消费方先处理失败/部分结果，再核查候选。出现登录、协议或验证时按契约停止；需要诊断时才显式保存截图或页面树。
-
-需要门店详情、真实分享入口或小红书专用搜索时，读取[原生内容操作](references/native-content.md)。
-
-元素操作使用 CLI 的受限入口：
-
-```bash
-node <skill-dir>/scripts/iphone-app-ops.mjs element read --bundle-id <bundle-id> --using accessibility-id --selector <id>
-node <skill-dir>/scripts/iphone-app-ops.mjs element click --bundle-id <bundle-id> --using accessibility-id --selector <id>
-printf '%s' '<query>' | node <skill-dir>/scripts/iphone-app-ops.mjs element set-value --bundle-id <bundle-id> --using accessibility-id --selector <id>
-```
-
-支持 `accessibility-id`、`predicate` 和 `class-chain`。点击或输入请求发出后不自动重试；先重新读取页面树、前台 bundle 和目标页面状态，再决定是否继续。
-
-## 操作边界
-
-- 默认进行页面读取、搜索、滚动、打开页面和输入查询词。
-- 仅在用户明确授权时执行收藏、关注等可撤销轻量写入，并回读确认结果。
-- 遇到登录凭据、验证码、付款、下单、发布、私信、不可逆删除或敏感权限提示时停止并交给用户处理。
-- 不记录或传输 Apple ID、设备密码、App 密码、验证码和 Cookie；不绕过风控或安全验证。
-- 输出保留平台、查询词、读取时间、页面状态和未核实字段。读取成功不代表事实已核实。
-
-## 完成与失败
-
-普通页面操作需确认设备、WDA 会话、页面树、目标 App 前台四个阶段。二维码只读观察按原生内容规则，用前后 App 状态和同屏像素文字确认；该路径不执行页面写入。失败时报告最后通过阶段和错误类别；HTTP 成功、进程存在或 unlock 返回成功都不能单独证明已恢复。按[故障分流](references/recovery.md)处理，不重放具有外部副作用的写操作。
-
-
-维护、解释进度或继续建设时，读取[实施目标与验收记录](references/roadmap.md)。
+查询读取成功不等于事实已核实；视觉截图生成不等于模型已经完成视觉判断。二维码等只读观察按专用规则交付，不升级为写操作验证。

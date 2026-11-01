@@ -55,7 +55,14 @@ export async function runDianpingShare(client, sid, {from, output}, deps) {
     }
     phase = 'read-merchant-qr'
     // Force local Vision here: native text cannot expose QR payloads.
-    if (!qrAlreadyVisible) page = await readAppPixels(client, sid, DIANPING_BUNDLE, deps)
+    if (!qrAlreadyVisible) {
+      page = await readAppPixels(client, sid, DIANPING_BUNDLE, deps)
+      // The share card can appear before its title and QR image finish rendering.
+      if (!/商户二维码/.test(page.text) || !useful(page.text) || platformUrls(page.qrPayloads).length !== 1) {
+        await (deps.sleep || pause)(1000)
+        page = await readAppPixels(client, sid, DIANPING_BUNDLE, deps)
+      }
+    }
     if (!/商户二维码/.test(page.text) || !useful(page.text)) throw new AppStop('qr-merchant-identity-unverified')
     const urls = platformUrls(page.qrPayloads)
     if (urls.length !== 1) throw new AppStop('share-link-not-uniquely-exposed')

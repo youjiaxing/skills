@@ -16,7 +16,7 @@
 3. 仅在页面树显示锁屏时发送 Home 唤醒；未锁屏直接启动目标 App。
 4. 仍为锁屏且无密码提示时，从底部短上滑一次；不调用曾超时的 `mobile: unlock`。出现密码输入即停止。
 5. 调用 `mobile: launchApp` 启动目标 bundle。
-6. 启动后以 8 秒为轮询预算，先读取 `activeAppInfo`，其 bundle 匹配后再读 `queryAppState`。两者均确认目标在前台时才取完整页面树；根 bundle 匹配后再回读一次 active bundle 和运行状态。仅后置检查也匹配且状态为 `4` 才算 `app-ready`。前置状态不能代替页面树或后置检查，旧应用的树不算恢复成功。
+6. 启动后以 45 秒为轮询预算，先读取 `activeAppInfo`，其 bundle 匹配后再读 `queryAppState`。两者均确认目标在前台时才取完整页面树；根 bundle 匹配后再回读一次 active bundle 和运行状态。仅后置检查也匹配且状态为 `4` 才算 `app-ready`。前置状态不能代替页面树或后置检查，旧应用的树不算恢复成功。
 7. 预算到期后不再发送新命令；已在途的单条 WDA 请求仍受 45 秒传输 deadline 约束，超时按 unknown 处理，不能为赶预算重叠发送页面读取。后置校验未完成时保持未就绪。
 
 一次 XS Max、iOS 18.7.10 的实测中，`isLocked` 返回了陈旧 `false`，`mobile: lock` 超时；锁屏后通过唤醒和启动目标 App，最终确认小红书位于前台。该实测不证明其他 iOS 版本、重启后的首次解锁或有密码设备可无人值守恢复。

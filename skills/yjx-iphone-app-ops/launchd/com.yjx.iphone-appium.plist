@@ -3,27 +3,27 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.yjx.iphone-appium</string>
+  <string>{{label}}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin/node</string>
-    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/lib/node_modules/appium/build/lib/main.js</string>
+    <string>{{nodePath}}</string>
+    <string>{{appiumScript}}</string>
     <string>--address</string>
     <string>127.0.0.1</string>
     <string>--port</string>
-    <string>4723</string>
+    <string>{{appiumPort}}</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>/Users/youjiaxing</string>
+    <string>{{home}}</string>
     <key>APPIUM_HOME</key>
-    <string>/Users/youjiaxing/.appium</string>
+    <string>{{appiumHome}}</string>
     <key>PATH</key>
-    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin:/usr/bin:/bin</string>
+    <string>{{commandPath}}</string>
   </dict>
   <key>WorkingDirectory</key>
-  <string>/Users/youjiaxing/Code/youjiaxing/skills</string>
+  <string>{{workingDirectory}}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -33,8 +33,8 @@
   <key>ProcessType</key>
   <string>Interactive</string>
   <key>StandardOutPath</key>
-  <string>/Users/youjiaxing/Library/Logs/yjx-iphone-appium.log</string>
+  <string>{{stdout}}</string>
   <key>StandardErrorPath</key>
-  <string>/Users/youjiaxing/Library/Logs/yjx-iphone-appium.error.log</string>
+  <string>{{stderr}}</string>
 </dict>
 </plist>

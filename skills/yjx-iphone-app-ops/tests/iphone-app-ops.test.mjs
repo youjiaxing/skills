@@ -85,14 +85,14 @@ test('unknown request marker survives CLI exit and blocks overlapping session re
   const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-unknown-request-'))
   t.after(() => rm(directory, {recursive: true, force: true}))
   const stateFile = path.join(directory, 'state.json')
-  await writeFile(stateFile, JSON.stringify({sessionId: 'session-1', udid: '00008020-000B25990204002E'}))
+  await writeFile(stateFile, JSON.stringify({sessionId: 'session-1', udid: 'test-device'}))
   const server = createServer(() => {})
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.closeAllConnections())
   t.after(() => server.close())
   const client = createAppiumClient({baseUrl: `http://127.0.0.1:${server.address().port}`, requestTimeoutMs: 25, sessionFile: stateFile})
   await assert.rejects(client.source('session-1'), (error) => error.code === 'ETIMEDOUT' && error.outcome === 'unknown')
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   const {stdout} = await promisify(execFile)(process.execPath, [script, 'wda-health'], options)
   const health = JSON.parse(stdout)
@@ -237,8 +237,8 @@ test('expired Appium session is replaced once and the new WDA session is validat
   t.after(() => server.closeAllConnections())
   t.after(() => server.close())
   const stateFile = path.join(directory, 'state.json')
-  await writeFile(stateFile, JSON.stringify({sessionId: 'stale', udid: '00008020-000B25990204002E'}))
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
+  await writeFile(stateFile, JSON.stringify({sessionId: 'stale', udid: 'test-device'}))
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   const {stdout} = await promisify(execFile)(process.execPath, [script, 'session'], options)
   assert.equal(JSON.parse(stdout).reused, false)
@@ -266,7 +266,7 @@ test('confirmed invalid session cleanup removes the creation marker', async (t) 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.closeAllConnections())
   t.after(() => server.close())
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   const first = await promisify(execFile)(process.execPath, [script, 'session'], options).then(() => null, (error) => error)
   assert.match(JSON.parse(first.stdout).error, /session expired/)
@@ -295,9 +295,9 @@ test('completed proxy timeout marker replaces only its matching cached session',
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.closeAllConnections())
   t.after(() => server.close())
-  await writeFile(stateFile, JSON.stringify({sessionId: 'stale', udid: '00008020-000B25990204002E'}))
+  await writeFile(stateFile, JSON.stringify({sessionId: 'stale', udid: 'test-device'}))
   await writeFile(stateFile + '.reset-required', JSON.stringify({sessionId: 'stale', command: 'source'}))
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   const {stdout} = await promisify(execFile)(process.execPath, [script, 'session'], options)
   assert.equal(JSON.parse(stdout).sessionId, 'renewed')
@@ -310,13 +310,13 @@ test('a live unknown-command marker blocks a new CLI session request', async (t)
   const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-unknown-cooldown-'))
   t.after(() => rm(directory, {recursive: true, force: true}))
   const stateFile = path.join(directory, 'state.json')
-  await writeFile(stateFile, JSON.stringify({sessionId: 'session-1', udid: '00008020-000B25990204002E'}))
+  await writeFile(stateFile, JSON.stringify({sessionId: 'session-1', udid: 'test-device'}))
   await writeFile(stateFile + '.unknown', JSON.stringify({sessionId: 'session-1', at: Date.now(), command: 'source'}))
   let requests = 0
   const server = createServer((_req, res) => { requests++; res.writeHead(500).end() })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.close())
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   const error = await promisify(execFile)(process.execPath, [script, 'session'], options).then(() => null, (caught) => caught)
   assert.match(JSON.parse(error.stdout).error, /outcome is unknown/)
@@ -330,15 +330,15 @@ test('a valid cached session clears an orphaned creation marker', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-creating-recovery-'))
   t.after(() => rm(directory, {recursive: true, force: true}))
   const stateFile = path.join(directory, 'state.json')
-  await writeFile(stateFile, JSON.stringify({sessionId: 'live-session', udid: '00008020-000B25990204002E'}))
-  await writeFile(stateFile + '.creating', JSON.stringify({at: new Date().toISOString(), udid: '00008020-000B25990204002E'}))
+  await writeFile(stateFile, JSON.stringify({sessionId: 'live-session', udid: 'test-device'}))
+  await writeFile(stateFile + '.creating', JSON.stringify({at: new Date().toISOString(), udid: 'test-device'}))
   const server = createServer((req, res) => {
     res.writeHead(200, {'content-type': 'application/json'})
     res.end(JSON.stringify({value: '<XCUIElementTypeApplication bundleId="com.apple.springboard"/>'}))
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.close())
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   const {stdout} = await promisify(execFile)(process.execPath, [script, 'session'], options)
   assert.equal(JSON.parse(stdout).reused, true)
@@ -349,14 +349,14 @@ test('failed close response preserves the cached Appium session', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-close-state-'))
   t.after(() => rm(directory, {recursive: true, force: true}))
   const stateFile = path.join(directory, 'state.json')
-  await writeFile(stateFile, JSON.stringify({sessionId: 'live-session', udid: '00008020-000B25990204002E'}))
+  await writeFile(stateFile, JSON.stringify({sessionId: 'live-session', udid: 'test-device'}))
   const server = createServer((_req, res) => {
     res.writeHead(500, {'content-type': 'application/json'})
     res.end(JSON.stringify({value: {error: 'unknown error', message: 'delete failed'}}))
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.close())
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: stateFile}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   const error = await promisify(execFile)(process.execPath, [script, 'close'], options).then(() => null, (caught) => caught)
   assert.match(JSON.parse(error.stdout).error, /delete failed/)
@@ -381,6 +381,7 @@ test('recovery wakes and swipes only when needed, launches and verifies foregrou
   let sourceReads = 0
   const server = createServer(async (req, res) => {
     const send = (value) => { res.writeHead(200, {'content-type': 'application/json'}); res.end(JSON.stringify({value})) }
+    if (req.url.endsWith('/context')) return send('NATIVE_APP')
     if (req.url.endsWith('/source')) {
       sourceReads++
       return send(sourceReads < 5
@@ -565,7 +566,10 @@ test('element actions verify foreground and do not retry a sent click', async ()
   const client = {
     source: async () => '<XCUIElementTypeApplication bundleId="com.xingin.discover"/>',
     execute: async (_sessionId, script) => script === 'mobile: activeAppInfo' ? {bundleId: 'com.xingin.discover'} : 4,
-    findElement: async (_sessionId, using, value) => { calls.push(['find', using, value]); return {'element-6066-11e4-a52e-4f735466cecf': 'element-1'} },
+    getContext: async () => 'NATIVE_APP',
+    elementAttribute: async () => null,
+    elementDisplayed: async () => true, elementEnabled: async () => true,
+    findElements: async (_sessionId, using, value) => { calls.push(['find', using, value]); return [{'element-6066-11e4-a52e-4f735466cecf': 'element-1'}] },
     clickElement: async () => { calls.push(['click']) },
   }
   const result = await elementAction(client, 'session-1', 'click', 'com.xingin.discover', 'accessibility-id', 'search')
@@ -627,9 +631,9 @@ test('an ambiguous session POST failure keeps its marker and prevents a second c
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.close())
   const state = path.join(directory, 'state.json')
-  const options = {env: {...process.env, APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: state}}
+  const options = {env: {...process.env, IPHONE_OPS_CONFIG: path.join(directory, 'no-profile.json'), IOS_DEVICE_UDID: 'test-device', IOS_WDA_BUNDLE_ID: 'test.WebDriverAgentRunner', APPIUM_URL: `http://127.0.0.1:${server.address().port}`, IPHONE_OPS_SESSION_FILE: state}}
   const script = new URL('../scripts/iphone-app-ops.mjs', import.meta.url).pathname
   for (let i = 0; i < 2; i++) await assert.rejects(promisify(execFile)(process.execPath, [script, 'session'], options))
   assert.equal(creates, 1)
-  assert.equal(JSON.parse(await readFile(state + '.creating', 'utf8')).udid, '00008020-000B25990204002E')
+  assert.equal(JSON.parse(await readFile(state + '.creating', 'utf8')).udid, 'test-device')
 })

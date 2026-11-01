@@ -29,6 +29,29 @@ The follow-up retrospective exposed interrupted next-step guidance: a decision a
 
 The travel-guide session exposed a second routing failure after alignment: the user asked for a real, usable guide and explicitly directed continued delivery, but repeated clarification checkpoints replaced handoff to completed work. Section 8 now requires a directed implementation request to move into the execution workflow, where the deliverable and its verification are completed. This preserves the alignment-only boundary while preventing clarification from substituting for authorized execution; new intent, consequential judgment, review, and permissions still use their existing gates.
 
+## Project Participation and Optional GRILL.md
+
+Different projects reserve different design decisions for the human. A project may delegate ordinary implementation details while another reserves detailed protocol or domain decisions. Requiring the user to restate these boundaries on every invocation creates avoidable work; calling a decision an internal or reversible detail must not erase an explicit participation requirement. This is a locally aligned extension, not a claim that the upstream `grilling` already supports this file or that the cause of an unavailable historical session has been proven.
+
+`SKILL.md` section 1 owns discovery, loading and reminders. One optional `GRILL.md` belongs at the actual project root; starting in a subdirectory still reaches that file. Non-repository work uses its established project directory. No directory-layer merge, new configuration system or cross-project policy inheritance is introduced. Missing and unreadable are different outcomes: absence permits normal alignment, while an existing unreadable file requires an honest limitation and no inferred increase in agent discretion.
+
+The file contains durable participation boundaries, areas explicitly delegated to the agent, and pointers to existing design references. It need not follow a fixed template and should not duplicate complete protocols or model definitions. It complements general project governance. Stable conventions can be suggested for persistence at natural milestones; absence alone is not a reminder trigger. One-task choices remain task-local, and creating or editing project files needs its own authorization rather than happening as a side effect of alignment.
+
+Section 2 owns the brief, correctable overview and continuing discovery. It is navigation, not a scope-signoff gate. Section 3 adds explicit reserved decisions to the question gate without forcing every such question into a Formal Contract; the existing consequence/approval criteria still choose the delivery form. Sections 4 and 6 account for applicable reserved decisions using the existing coverage/provenance record. Confirmation and delegation retain real scope and source, so neither broad assent nor a shallow-participation default becomes permanent blanket authority. Section 8 owns handoff for both delivery forms; the contract reference adds its composition needs without redefining the shared protocol.
+
+Static review should establish that:
+
+- a root file is read when present even from a subdirectory; absence neither blocks work nor triggers repetitive setup prompts;
+- an unreadable file, ambiguous project root or unresolved governance conflict is not silently converted into implementation discretion;
+- actual task impact determines which participation categories apply; the user need not supply an exhaustive checklist or review every unrelated field;
+- a brief overview goes straight into ready discussion, with later discoveries incorporated and no new scope-signoff checkpoint;
+- reserved decisions have an evidenced disposition before closure, even on the Direct Result path, without automatically creating a Formal Contract;
+- confirmed or delegated choices are reused only within their supported scope; remaining reserved decisions are visible before the affected implementation;
+- reminders are conditional, brief and nonblocking; no project document is created, migrated or edited during alignment without separate authority;
+- the skill remains domain-neutral, and source maintenance, static verification and real-use observations are not confused with a guarantee of zero omissions.
+
+Only this skill's runtime, rationale and contract reference change for this mechanism. Downstream workflows already consume project constraints and aligned contracts; their rules and invocation policies are not rewritten as a precaution. Existing project instructions stay in place, and unavailable projects are not claimed to have been configured.
+
 ## Failure Modes and Rationale
 
 - **Over-questioning and silent intent substitution:** use the dual-entry gate, not "ask everything" or "guess anything reversible."
@@ -77,3 +100,18 @@ When changing the skill, verify that:
 
 Follow the repository [Skill verification policy](../../AGENTS.md#skill-verification). Use static checks for packaging, links, and document consistency; retrospect on actual user interactions when evidence exists. These checks do not prove reliable model behavior.
 
+
+## 上游来源与更新记录
+
+来源：[Matt Pocock / skills 的 `grilling`](https://github.com/mattpocock/skills/tree/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d/skills/productivity/grilling)，上游路径为 `skills/productivity/grilling/`。本 skill 为其概念与工作流的个人演进/替换版；此记录不声明存在 Git fork 或可直接文本合并的关系。
+
+- **最初参考版本：未知，未钉版本。** 仓库演进映射及引入历史能支持来源关系，不能确定当时参考的上游提交；不使用当前版本倒填历史。
+- **本次对照快照（2026-11-01）：** 上游提交 `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`，本路径目录 Git tree `f551b6e0d219fdda0b6abf277f8f915b3127d1e9`。通过 GitHub Git Tree API 核实；这只是今后的可复现对照点，不是最初派生基线。
+- **最近行为增量评估：尚未建立。** 本次核对来源与路径/目录指纹，没有将当前上游全文与本地逐项比较，也没有据此吸收新行为。
+- **本地演化依据：** 本文件原有设计理由、维护检查与本仓库 Git 历史；来源补齐不改写这些既有取舍。
+
+后续维护时，固定待比较的上游提交，核查相关变化与本地取舍，再记录日期、版本、核查范围、采用内容和理由、暂缓/不采用原因及验证限制。分别维护已核查和已吸收的范围；未知历史保持未知，不直接覆盖本地工作流。
+
+| 日期 | 核查范围与版本 | 实际吸收 |
+| --- | --- | --- |
+| 2026-11-01 | 来源、路径及上述对照快照的目录指纹；未做行为增量评估 | 仅补来源维护记录，未吸收上游行为变更 |

@@ -3,25 +3,33 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.yjx.iphone-tunnel</string>
+  <string>{{label}}</string>
   <key>UserName</key>
   <string>root</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin/node</string>
-    <string>/Users/youjiaxing/.appium/node_modules/appium-xcuitest-driver/scripts/tunnel-creation.mjs</string>
+    <string>{{nodePath}}</string>
+    <string>{{tunnelScript}}</string>
+    <string>--udid</string>
+    <string>{{udid}}</string>
+    <string>--tunnel-registry-port</string>
+    <string>{{registryPort}}</string>
+    <string>--disconnect-retry-max-attempts</string>
+    <string>0</string>
+    <string>--disconnect-retry-strategy</string>
+    <string>exponential</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>/Users/youjiaxing</string>
+    <string>{{home}}</string>
     <key>APPIUM_HOME</key>
-    <string>/Users/youjiaxing/.appium</string>
+    <string>{{appiumHome}}</string>
     <key>PATH</key>
-    <string>/Users/youjiaxing/.nvm/versions/node/v22.18.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>{{commandPath}}</string>
   </dict>
   <key>WorkingDirectory</key>
-  <string>/Users/youjiaxing/Code/youjiaxing/skills</string>
+  <string>{{workingDirectory}}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -29,8 +37,8 @@
   <key>ThrottleInterval</key>
   <integer>10</integer>
   <key>StandardOutPath</key>
-  <string>/var/log/yjx-iphone-tunnel.log</string>
+  <string>{{stdout}}</string>
   <key>StandardErrorPath</key>
-  <string>/var/log/yjx-iphone-tunnel.error.log</string>
+  <string>{{stderr}}</string>
 </dict>
 </plist>

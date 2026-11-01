@@ -13,8 +13,16 @@ export function extractDetailFields(page) {
     observationIds: selected.map((row) => row.id), evidence: selected.map((row) => row.text),
     confidence: selected.some((row) => row.confidence === null) ? null : Math.min(...selected.map((row) => row.confidence)),
     factStatus: 'unverified'} : null
-  const address = rows.find((row) => /(?:路|街|巷).{0,20}\d+号|\d+号[-—]\d+/.test(row.text) && !/榜|名|券/.test(row.text))
-  const addressRows = address ? [address] : []
+  let address = rows.find((row) => /(?:路|街|巷).{0,20}\d+号|\d+号[-—]\d+/.test(row.text) && !/榜|名|券/.test(row.text))
+  let continuation = null
+  if (!address) {
+    address = rows.find((row) => /(?:路|街|巷|大道).{0,30}\d+(?:幢|栋|楼)$/.test(row.text) && !/榜|名|券/.test(row.text) &&
+      rows.some((next) => next.y > row.y + row.height && next.y < row.y + row.height + 0.03 &&
+        Math.abs(next.x - row.x) < 0.06 && /^\d+号/.test(next.text)))
+    if (address) continuation = rows.find((next) => next.y > address.y + address.height && next.y < address.y + address.height + 0.03 &&
+      Math.abs(next.x - address.x) < 0.06 && /^\d+号/.test(next.text))
+  }
+  const addressRows = address ? [address, ...(continuation ? [continuation] : [])] : []
   if (address && /[（(][^）)]*$/.test(address.text)) {
     const next = rows.find((row) => row.y > address.y + address.height && row.y < address.y + address.height + 0.03
       && Math.abs(row.x - address.x) < 0.06 && /[）)]/.test(row.text))
@@ -27,7 +35,7 @@ export function extractDetailFields(page) {
     hoursScope: hours.length ? 'current-page-summary; weekly rules not expanded' : null}
 }
 
-export async function runDianpingDetail(client, sid, {from, candidateId, output, current = false}, deps) {
+export async function runDianpingDetail(client, sid, {from, candidateId, output, current = false, expectedName = null}, deps) {
   const artifacts = []
   let phase = 'validate-candidate'
   try {
@@ -35,7 +43,10 @@ export async function runDianpingDetail(client, sid, {from, candidateId, output,
     const source = JSON.parse(await readFile(from, 'utf8'))
     if (source.schemaVersion !== 2 || source.bundleId !== DIANPING_BUNDLE || source.platform !== 'dianping') throw new AppStop('invalid-candidate-source')
     const candidate = source.businesses?.find((item) => item.id === candidateId)
-    if (!candidate || !candidate.name?.value || candidate.reviewReasons?.includes('name-truncated')) throw new AppStop('candidate-identity-incomplete')
+    if (!candidate || !candidate.name?.value) throw new AppStop('candidate-identity-incomplete')
+    const truncated = candidate.reviewReasons?.includes('name-truncated')
+    if (truncated && (!expectedName || !canonicalText(expectedName).startsWith(canonicalText(candidate.name.value)) ||
+        canonicalText(expectedName) === canonicalText(candidate.name.value))) throw new AppStop('candidate-identity-incomplete')
     const age = Date.now() - Date.parse(source.finishedAt)
     if (!Number.isFinite(age) || age < 0 || (!current && age > 10 * 60 * 1000)) throw new AppStop('candidate-observation-stale')
     let listName = candidate.name
@@ -45,7 +56,7 @@ export async function runDianpingDetail(client, sid, {from, candidateId, output,
       const header = list.observations.filter((row) => row.y < 0.15).map((row) => row.text).join('')
       if (!canonicalText(header).includes(canonicalText(source.query)) || !/地图/.test(list.text) || !/商户/.test(list.text)) throw new AppStop('query-or-result-scope-unverified')
       const matches = groupBusinesses(list.observations).businesses.filter((item) => canonicalText(item.name.value) === canonicalText(candidate.name.value))
-      if (matches.length !== 1 || matches[0].reviewReasons.includes('name-truncated') ||
+      if (matches.length !== 1 || (matches[0].reviewReasons.includes('name-truncated') && !truncated) ||
           (matches[0].name.confidence !== null && matches[0].name.confidence < 0.6)) throw new AppStop('candidate-not-uniquely-visible')
       for (const key of ['reviewCount', 'pricePerPerson', 'area']) {
         if (candidate[key] && matches[0][key] && JSON.stringify(candidate[key].value) !== JSON.stringify(matches[0][key].value)) throw new AppStop('candidate-fields-changed')
@@ -59,11 +70,12 @@ export async function runDianpingDetail(client, sid, {from, candidateId, output,
       listName = matches[0].name
     }
     phase = 'read-detail'
-    const detail = await readAppPage(client, sid, DIANPING_BUNDLE, deps, {useful: (text) => text.includes(candidate.name.value) && /地址|营业|电话/.test(text)})
-    if (!canonicalText(detail.text).includes(canonicalText(candidate.name.value)) || !/地址|营业|电话|路线/.test(detail.text)) throw new AppStop('detail-identity-unverified')
+    const detailName = truncated ? expectedName : candidate.name.value
+    const detail = await readAppPage(client, sid, DIANPING_BUNDLE, deps, {useful: (text) => canonicalText(text).includes(canonicalText(detailName)) && /地址|营业|电话/.test(text)})
+    if (!canonicalText(detail.text).includes(canonicalText(detailName)) || !/地址|营业|电话|路线/.test(detail.text)) throw new AppStop('detail-identity-unverified')
     const fields = extractDetailFields(detail)
     const result = {schemaVersion: 1, documentType: 'place-detail-v1', runId: randomUUID(), platform: 'dianping', bundleId: DIANPING_BUNDLE,
-      query: source.query, candidateId, name: candidate.name.value, readAt: detail.readAt, factStatus: 'unverified',
+      query: source.query, candidateId, name: detailName, readAt: detail.readAt, factStatus: 'unverified',
       status: 'detail-observed', identity: {listName, sourceRunId: source.runId || null, searchReadAt: source.readAt, acquisition: current ? 'current-detail-read-only' : 'visible-list-card'},
       page: detail, fields,
       links: detail.observations.flatMap((item) => (item.text.match(/https?:\/\/[^\s<>"）)]+/g) || []).map((url) => ({url, observationId: item.id, status: 'observed-unopened'}))),

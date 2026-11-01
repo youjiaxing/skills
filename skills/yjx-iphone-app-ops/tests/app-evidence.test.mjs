@@ -29,6 +29,16 @@ test('detail hours remain with shop state; address continuation keeps original c
   assert.deepEqual(result.address.observationIds, [26, 27])
 })
 
+test('split building and unit lines retain a bounded address for branch verification', () => {
+  const row = (id, text, y, x = 0.03) => ({id, text, y, x, height: 0.018, confidence: 1})
+  const first = row(1, '角美镇文圃大道温泉花园7幢', 0.35)
+  const second = row(2, '1号店面＞', 0.374)
+  const found = extractDetailFields({observations: [first, second]})
+  assert.equal(found.address.value, '角美镇文圃大道温泉花园7幢1号店面＞')
+  assert.deepEqual(found.address.observationIds, [1, 2])
+  assert.equal(extractDetailFields({observations: [first, row(2, '1号店面', 0.45)]}).address, null)
+})
+
 test('XHS reacquires the editor after focus changes its identity and verifies input before submit', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xhs-editor-'))
   t.after(() => rm(directory, {recursive: true, force: true}))
@@ -127,4 +137,48 @@ test('current detail mode reads fresh fields without using old list coordinates 
   assert.equal(saved.identity.acquisition, 'current-detail-read-only')
   assert.ok(Date.parse(saved.readAt) > Date.parse(historical))
   assert.match(saved.fields.address.value, /300号-1/)
+})
+
+test('truncated result requires an expected full name and confirms it after opening', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'detail-truncated-'))
+  t.after(() => rm(directory, {recursive: true, force: true}))
+  const from = path.join(directory, 'search.json')
+  const prefix = '红军原味牛肉面（漳州台商投资区新农贸市场'
+  const full = `${prefix}店）`
+  const now = new Date().toISOString()
+  await writeFile(from, JSON.stringify({schemaVersion: 2, platform: 'dianping', bundleId: 'com.dianping.dpscope',
+    query: '红军原味牛肉面', readAt: now, finishedAt: now,
+    businesses: [{id: 'candidate-1', name: {value: prefix, confidence: 1}, reviewReasons: ['name-truncated']}]}))
+  let opened = false, otherBranch = false, taps = 0
+  const rect = (x, y, width, height) => ({x, y, width, height})
+  const list = [
+    {text: '红军原味牛肉面', rect: rect(50, 60, 100, 20)},
+    {text: '地图 商户', rect: rect(230, 70, 80, 20)},
+    {text: prefix, rect: rect(110, 200, 290, 20)},
+    {text: '68条 ¥15/人', rect: rect(200, 230, 120, 20)},
+  ]
+  const client = {source: async () => '<XCUIElementTypeApplication width="414" height="896"/>',
+    execute: async () => ({}), screenshot: async () => Buffer.from('pixels').toString('base64'),
+    tap: async () => { taps++; opened = true }}
+  const deps = {requireForeground: async () => {}, sleep: async () => {},
+    sourceText: () => opened ? [{text: otherBranch ? '红军原味牛肉面（其他店）' : full, rect: rect(30, 180, 340, 20)},
+      {text: '地址 营业 电话', rect: rect(30, 240, 160, 20)}] : list,
+    ocr: async () => ({observations: [
+      {text: '红军原味牛肉面（其他店）', confidence: 1, x: 0.1, y: 0.7, width: 0.8, height: 0.03},
+      {text: '地址 营业 电话', confidence: 1, x: 0.1, y: 0.6, width: 0.5, height: 0.03}]})}
+  const run = (name, expectedName) => runDianpingDetail(client, 'sid', {from, candidateId: 'candidate-1',
+    output: path.join(directory, name), expectedName}, deps)
+  assert.equal((await run('missing.json', null)).status, 'candidate-identity-incomplete')
+  assert.equal(taps, 0)
+  assert.equal((await run('mismatch.json', '另一家店')).status, 'candidate-identity-incomplete')
+  assert.equal(taps, 0)
+  otherBranch = true
+  assert.equal((await run('wrong-branch.json', full)).status, 'detail-identity-unverified')
+  assert.equal(taps, 1)
+  opened = false; otherBranch = false
+  const result = await run('success.json', full)
+  assert.equal(result.ok, true)
+  const saved = JSON.parse(await readFile(path.join(directory, 'success.json'), 'utf8'))
+  assert.equal(saved.name, full)
+  assert.equal(saved.identity.listName.value, prefix)
 })

@@ -2,8 +2,7 @@
 
 import {execFileSync} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
-import {mkdir, open, readFile, rename, rm, stat, writeFile} from 'node:fs/promises'
-import os from 'node:os'
+import {readFile, rename, rm, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import {fileURLToPath} from 'node:url'
@@ -13,15 +12,12 @@ import {runDianpingDetail} from './dianping-detail.mjs'
 import {runDianpingShare} from './dianping-share.mjs'
 import {runXiaohongshuQuery} from './xiaohongshu-query.mjs'
 import {isProxyTimeout} from './app-pages.mjs'
+import {loadConfig, requireDevice, assertSessionReady} from './local-config.mjs'
+import {createOperations, failureResult, annotateTarget} from './app-operations.mjs'
+import {withFileLock} from './device-lock.mjs'
+export {withFileLock} from './device-lock.mjs'
 
-const config = {
-  appiumUrl: process.env.APPIUM_URL || 'http://127.0.0.1:4723',
-  udid: process.env.IOS_DEVICE_UDID || '00008020-000B25990204002E',
-  deviceName: process.env.IOS_DEVICE_NAME || 'iPhone XS Max',
-  platformVersion: process.env.IOS_PLATFORM_VERSION || '18.7',
-  wdaBundleId: process.env.IOS_WDA_BUNDLE_ID || 'com.youjiaxing.familyhealth.WebDriverAgentRunner',
-  sessionFile: process.env.IPHONE_OPS_SESSION_FILE || path.join(os.tmpdir(), `yjx-iphone-app-ops-${process.env.IOS_DEVICE_UDID || 'xsmax'}.json`),
-}
+const config = await loadConfig()
 
 const timeoutMs = Number(process.env.IPHONE_OPS_TIMEOUT_MS || 45000)
 const WDA_PROXY_TIMEOUT_MS = 30000
@@ -51,7 +47,7 @@ export function parseDeviceLine(output, udid = config.udid) {
   return {raw: line.trim(), state: columns.find((value) => /connected|available|unavailable|offline/i.test(value)) || 'unknown'}
 }
 
-export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetch, requestTimeoutMs = timeoutMs, sessionFile = null,
+export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetch, requestTimeoutMs = timeoutMs, sessionFile = null, deviceConfig = config,
   monotonicNow = () => performance.now()} = {}) {
   const endpoint = new URL(baseUrl)
   if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(endpoint.hostname)) {
@@ -112,7 +108,7 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
   return {
     status: () => request('/status', {timeoutMs: 5000}),
     wdaStatus: async () => {
-      const port = process.env.IOS_WDA_LOCAL_PORT || '8100'
+      const port = config.wdaLocalPort
       const response = await fetchImpl(`http://127.0.0.1:${port}/status`, {signal: AbortSignal.timeout(5000)})
       const body = await response.json()
       if (!response.ok || body.value?.ready !== true) throw new Error('WDA status is not ready')
@@ -125,11 +121,12 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
       body: JSON.stringify({capabilities: {alwaysMatch: {
         platformName: 'iOS',
         'appium:automationName': 'XCUITest',
-        'appium:udid': config.udid,
-        'appium:deviceName': config.deviceName,
-        'appium:platformVersion': config.platformVersion,
+        'appium:udid': deviceConfig.udid,
+        'appium:deviceName': deviceConfig.deviceName,
+        'appium:platformVersion': deviceConfig.platformVersion,
         'appium:usePreinstalledWDA': true,
-        'appium:updatedWDABundleId': config.wdaBundleId,
+        'appium:updatedWDABundleId': deviceConfig.wdaBundleId,
+        'appium:wdaLocalPort': config.wdaLocalPort,
         'appium:autoLaunch': false,
         // Keep the shared WDA session alive; the CLI owns explicit recovery.
         'appium:newCommandTimeout': newCommandTimeoutSeconds,
@@ -138,6 +135,18 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
       }, firstMatch: [{}]}}),
     }),
     source: (sessionId) => request(`/session/${sessionId}/source`),
+    getContext: (sessionId) => request(`/session/${sessionId}/context`),
+    setContext: (sessionId, name) => request(`/session/${sessionId}/context`, {
+      method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({name}),
+    }),
+    findElements: (sessionId, using, value) => request(`/session/${sessionId}/elements`, {
+      method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({using, value}),
+    }),
+    elementDisplayed: (sessionId, id) => request(`/session/${sessionId}/element/${encodeURIComponent(id)}/displayed`),
+    elementEnabled: (sessionId, id) => request(`/session/${sessionId}/element/${encodeURIComponent(id)}/enabled`),
+    performActions: (sessionId, actions) => request(`/session/${sessionId}/actions`, {
+      method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({actions}),
+    }),
     findElement: (sessionId, using, value) => request(`/session/${sessionId}/element`, {
       method: 'POST',
       headers: {'content-type': 'application/json'},
@@ -232,41 +241,6 @@ async function loadResetRequired(sessionFile = config.sessionFile) {
   catch { return null }
 }
 
-export async function withFileLock(lockPath, action) {
-  await mkdir(path.dirname(lockPath), {recursive: true})
-  let handle
-  const nonce = randomUUID()
-  for (let attempt = 0; attempt < 600; attempt++) {
-    try {
-      handle = await open(lockPath, 'wx', 0o600)
-      await handle.writeFile(JSON.stringify({pid: process.pid, at: Date.now(), nonce}))
-      break
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error
-      let owner
-      try { owner = JSON.parse(await readFile(lockPath, 'utf8')) } catch {}
-      let alive = true
-      if (owner?.pid && Number.isInteger(owner.pid) && owner.pid > 0) {
-        try { process.kill(owner.pid, 0) } catch (probeError) { alive = probeError.code === 'EPERM' }
-      } else {
-        try { alive = Date.now() - (await stat(lockPath)).mtimeMs < 30000 } catch { alive = false }
-      }
-      if (!alive) {
-        throw new Error('stale device lock; verify no owner is using the phone before removing ' + lockPath)
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-  if (!handle) throw new Error('another iPhone operation is still active')
-  try {
-    return await action()
-  } finally {
-    await handle.close()
-    let owner
-    try { owner = JSON.parse(await readFile(lockPath, 'utf8')) } catch {}
-    if (owner?.nonce === nonce) await rm(lockPath, {force: true})
-  }
-}
 
 async function withDeviceLock(action) {
   return withFileLock(sessionLockPath(), action)
@@ -310,34 +284,33 @@ async function recoverWithKnownProxyReset(client, sessionId, bundleId) {
   }
 }
 
-export async function doctor(client = createAppiumClient()) {
-  const appium = await client.status()
-  const devices = run('xcrun', ['devicectl', 'list', 'devices'])
-  const device = parseDeviceLine(devices)
-  let wdaInstalled = null
-  let deviceAppsError = null
-  try {
-    const installedApps = run('xcrun', ['devicectl', 'device', 'info', 'apps', '--device', config.udid])
-    wdaInstalled = installedApps.includes(`${config.wdaBundleId}.xctrunner`)
-  } catch (error) {
-    deviceAppsError = error.message
+export async function doctor(client = createAppiumClient(), {runCmd = run, fetchImpl = fetch} = {}) {
+  const checks = {}
+  const inspect = async (name, action) => {
+    try { const value = await action(); checks[name] = {ok: true}; return value }
+    catch (error) { checks[name] = {ok: false, error: error.message}; return null }
   }
-  const appiumPort = new URL(config.appiumUrl).port || '4723'
-  const listeners = run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'])
-  const appiumListeners = listeners.split('\n').filter((line) => line.includes(`:${appiumPort}`))
-  const appiumLoopbackOnly = appiumListeners.length > 0 && appiumListeners.every((line) => /127\.0\.0\.1|\[::1\]/.test(line))
-  let tunnel = false
-  try {
-    run('pgrep', ['-f', 'tunnel-creation'])
-    tunnel = true
-  } catch {}
-  let tunnelReady = false
-  try {
-    const tunnel = await fetch(`http://127.0.0.1:42314/remotexpc/tunnels/${config.udid}?waitMs=1000`, {signal: AbortSignal.timeout(5000)})
-    const body = await tunnel.json()
-    tunnelReady = body.status === 'OK'
-  } catch {}
-  return {ok: Boolean(device && tunnel && tunnelReady && wdaInstalled && appiumLoopbackOnly), appium: {ready: true, loopbackOnly: appiumLoopbackOnly, version: appium.build?.version}, device, wdaInstalled, deviceAppsError, tunnel, tunnelReady, udid: config.udid}
+  const appium = await inspect('appium', () => client.status())
+  const devices = await inspect('devices', () => runCmd('xcrun', ['devicectl', 'list', 'devices']))
+  const device = config.udid && devices ? parseDeviceLine(devices) : null
+  const apps = config.udid ? await inspect('installedApps', () => runCmd('xcrun', ['devicectl', 'device', 'info', 'apps', '--device', config.udid])) : null
+  const wdaInstalled = Boolean(config.wdaBundleId && apps?.includes(`${config.wdaBundleId}.xctrunner`))
+  const listeners = await inspect('listeners', () => runCmd('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN']))
+  const port = new URL(config.appiumUrl).port || '4723'
+  const rows = listeners?.split('\n').filter((line) => line.includes(`:${port}`)) || []
+  const appiumLoopbackOnly = rows.length > 0 && rows.every((line) => /127\.0\.0\.1|\[::1\]/.test(line))
+  const tunnel = Boolean(await inspect('tunnelProcess', () => runCmd('pgrep', ['-f', 'tunnel-creation'])))
+  const registry = config.udid ? await inspect('tunnelRegistry', async () => {
+    const response = await fetchImpl(`http://127.0.0.1:${config.tunnelRegistryPort}/remotexpc/tunnels/${config.udid}?waitMs=1000`, {signal: AbortSignal.timeout(5000)})
+    if (!response.ok) throw new Error(`registry HTTP ${response.status}`)
+    return response.json()
+  }) : null
+  const tunnelReady = registry?.status === 'OK'
+  return {ok: Boolean(appium?.ready && device && tunnelReady && wdaInstalled && appiumLoopbackOnly),
+    appium: {ready: appium?.ready === true, loopbackOnly: appiumLoopbackOnly, version: appium?.build?.version},
+    device, wdaInstalled, deviceAppsError: checks.installedApps?.error || null, tunnel, tunnelReady, udid: config.udid,
+    checks, configured: Boolean(config.udid && config.wdaBundleId),
+    next: config.udid && config.wdaBundleId ? 'Use wda-health/session/recover for command and App readiness' : 'Run iphone-environment.mjs discover and review the local configuration'}
 }
 
 export function classifyWdaHealth({appium = false, tunnel = false, wda = false, session = false, source = false,
@@ -360,7 +333,7 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
     source: false, active: false, locked: null, checks: {}}
   const checks = await Promise.allSettled([
     client.status(),
-    fetchImpl(`http://127.0.0.1:42314/remotexpc/tunnels/${udid}?waitMs=0`, {signal: AbortSignal.timeout(5000)})
+    fetchImpl(`http://127.0.0.1:${config.tunnelRegistryPort}/remotexpc/tunnels/${udid}?waitMs=0`, {signal: AbortSignal.timeout(5000)})
       .then(async (response) => ({response, body: await response.json()})),
     client.wdaStatus(),
   ])
@@ -371,7 +344,7 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
   result.checks.appium = result.appium ? {ok: true} : {ok: false, error: appium.reason?.code || appium.reason?.message}
   result.checks.tunnel = result.tunnel ? {ok: true} : {ok: false,
     error: tunnel.reason?.code || tunnel.reason?.message || tunnel.value?.body?.status || 'not-ready'}
-  result.checks.wda = result.wda ? {ok: true, port: process.env.IOS_WDA_LOCAL_PORT || 8100}
+  result.checks.wda = result.wda ? {ok: true, port: config.wdaLocalPort}
     : {ok: false, error: wda.reason?.code || wda.reason?.message}
   const storedUnknown = await loadUnknownRequest(sessionFile)
   let unknown = storedUnknown && (!sessionId || storedUnknown.sessionId === sessionId) ? storedUnknown : null
@@ -417,6 +390,10 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
 }
 
 export async function recover(client, sessionId, bundleId) {
+  if (client.getContext) {
+    await assertSessionReady(config.sessionFile)
+    if (await client.getContext(sessionId) !== 'NATIVE_APP') await client.setContext(sessionId, 'NATIVE_APP')
+  }
   let page = await client.source(sessionId)
   const steps = [{name: 'read-source', ok: true, lockScreen: isLockScreenSource(page)}]
   if (requiresCredential(page)) {
@@ -448,7 +425,7 @@ export async function recover(client, sessionId, bundleId) {
   return {ok: appReady, sessionId, bundleId, foregroundBundle, activeBundle, appState, steps, appReady, lockScreenAfter: isLockScreenSource(page)}
 }
 
-export async function waitForForeground(client, sessionId, bundleId, timeout = 8000) {
+export async function waitForForeground(client, sessionId, bundleId, timeout = 45000) {
   const deadline = Date.now() + timeout
   let state = {page: '', activeAppInfo: null, appState: null, foregroundBundle: null}
   while (Date.now() < deadline) {
@@ -497,33 +474,17 @@ function elementId(response) {
   return id
 }
 
-export async function elementAction(client, sessionId, method, bundleId, using, selector, {readInput = readStdin} = {}) {
-  const locatorStrategies = {
-    'accessibility-id': 'accessibility id',
-    predicate: '-ios predicate string',
-    'class-chain': '-ios class chain',
-  }
-  const strategy = locatorStrategies[using]
-  if (!strategy || !selector || selector.length > 512) throw new Error('use a supported locator and a non-empty selector up to 512 characters')
-  await requireForeground(client, sessionId, bundleId)
-  const found = await client.findElement(sessionId, strategy, selector)
-  const id = elementId(found)
-  let result
-  if (method === 'read') {
-    result = {text: await client.elementText(sessionId, id), label: await client.elementAttribute(sessionId, id, 'label'), value: await client.elementAttribute(sessionId, id, 'value')}
-  } else if (method === 'click') {
-    await client.clickElement(sessionId, id)
-    result = {action: 'click-sent', outcome: 'inspect-current-state-before-any-retry'}
-  } else if (method === 'set-value') {
-    const text = await readInput()
-    await client.clearElement(sessionId, id)
-    await client.setElementValue(sessionId, id, text)
-    result = {action: 'set-value-sent', characters: Array.from(text).length, outcome: 'inspect-current-state-before-any-retry'}
-  } else {
-    throw new Error(`unsupported element action: ${method}`)
-  }
-  const page = await client.source(sessionId)
-  return {ok: true, bundleId, foregroundBundle: extractForegroundBundle(page), pageBytes: Buffer.byteLength(page), ...result}
+function operations(client, sid, bundleId) {
+  return createOperations(client, sid, {bundleId, checkReady: () => assertSessionReady(config.sessionFile), ocr: runVisionOcr,
+    guardApp: async (activeClient, sessionId, target) => {
+      const page = await activeClient.source(sessionId)
+      await requireForeground(activeClient, sessionId, target, page)
+      return page
+    }})
+}
+
+export async function elementAction(client, sessionId, method, bundleId, using, selector, {readInput = readStdin, context} = {}) {
+  return operations(client, sessionId, bundleId).element(method, {using, selector, context}, readInput)
 }
 
 export function isDianpingConsentSource(source) {
@@ -665,6 +626,12 @@ async function main() {
   const [command, ...args] = process.argv.slice(2)
   const client = createAppiumClient({sessionFile: config.sessionFile})
   if (command === 'doctor') return print(await doctor(client))
+  if (command === 'target') {
+    const option = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined }
+    const [x, y, width, height] = String(option('--rect')).split(',').map(Number)
+    return print(await annotateTarget(option('--observation'), {label: option('--label'), rect: {x, y, width, height}, outputPath: option('--output')}))
+  }
+  requireDevice(config)
   if (command === 'wda-health') {
     return print(await withDeviceLock(async () => {
       const state = await loadSession()
@@ -686,21 +653,35 @@ async function main() {
       return recoverWithKnownProxyReset(client, session.sessionId, bundleId)
     }))
   }
-  if (command === 'element') {
-    const [method, ...options] = args
-    const option = (name) => {
-      const index = options.indexOf(name)
-      return index >= 0 ? options[index + 1] : null
-    }
-    const bundleId = option('--bundle-id')
-    const using = option('--using')
-    const selector = option('--selector')
-    if (!bundleId || !using || !selector) throw new Error('element requires --bundle-id, --using and --selector')
-    if (!['read', 'click', 'set-value'].includes(method)) throw new Error('element action must be read, click or set-value')
-    return print(await withDeviceLock(async () => {
-      const session = await ensureSession(client)
-      return elementAction(client, session.sessionId, method, bundleId, using, selector)
-    }))
+  if (['observe', 'element', 'context', 'gesture', 'app'].includes(command)) {
+    const option = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined }
+    const bundleId = option('--bundle-id') || process.env.IOS_APP_BUNDLE_ID
+    if (!bundleId) throw new Error('--bundle-id is required')
+    // Recovery is explicit for the new API. A wait/assert must not silently replace
+    // an uncertain session or send its validation read before this gate.
+    await assertSessionReady(config.sessionFile)
+    return withDeviceLock(async () => {
+      await assertSessionReady(config.sessionFile)
+      const session = await ensureSession(client, {lightweight: true})
+      const ops = operations(client, session.sessionId, bundleId)
+      const paths = {screenshotPath: option('--screenshot-output'), sourcePath: option('--source-output'), outputPath: option('--output')}
+      const loc = {using: option('--using'), selector: option('--selector'), context: option('--context')}
+      let result
+      try {
+        if (command === 'observe') result = await ops.observe({...paths, purpose: option('--purpose'), method: option('--method'),
+          contains: option('--contains'), limit: option('--limit') === undefined ? 80 : Number(option('--limit')), context: loc.context})
+        else if (command === 'context') result = await ops.contexts(args[0] === 'switch' ? loc.context || 'NATIVE_APP' : null)
+        else if (command === 'app') result = await ops.app(args[0])
+        else if (command === 'gesture') result = await ops.gesture({observationPath: option('--observation'), target: option('--target'), action: args[0],
+          x: Number(option('--x')), y: Number(option('--y')), toX: Number(option('--to-x')), toY: Number(option('--to-y')),
+          durationMs: option('--duration-ms') === undefined ? 300 : Number(option('--duration-ms'))})
+        else if (['wait', 'assert'].includes(args[0])) result = await ops.verify({...loc, condition: option('--condition'), expected: option('--expected'),
+          timeoutMs: Number(option('--timeout-ms') ?? (args[0] === 'wait' ? 15000 : 0))})
+        else result = await ops.element(args[0], loc, readStdin)
+      } catch (error) { result = failureResult(error) }
+      if (!result.ok) { await ops.captureFailure(result, paths); process.exitCode = 1 }
+      print(result)
+    })
   }
   if (command === 'dianping-search') {
     const option = (name) => {
@@ -732,10 +713,10 @@ async function main() {
     const from = option('--from')
     const candidateId = option('--candidate')
     const output = option('--extract-output')
-    if (!from || !candidateId || !output) throw new Error('dianping-detail requires --from, --candidate and --extract-output')
+    if (!from || !candidateId || !output) throw new Error('dianping-detail requires --from, --candidate and --extract-output; truncated names also require --expected-name')
     return print(await withDeviceLock(async () => {
       const session = await ensureSession(client)
-      return runDianpingDetail(client, session.sessionId, {from: path.resolve(from), candidateId, output: path.resolve(output), current: args.includes('--current')}, {
+      return runDianpingDetail(client, session.sessionId, {from: path.resolve(from), candidateId, output: path.resolve(output), current: args.includes('--current'), expectedName: option('--expected-name')}, {
         requireForeground, sourceText: collectSourceText, ocr: runVisionOcr,
       })
     }))
@@ -814,7 +795,7 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => {
-    print({ok: false, status: isProxyTimeout(error) ? 'protocol-timeout' : 'command-failed',
+    print({verification: {status: error.outcome === 'unknown' || isProxyTimeout(error) ? 'unknown' : 'blocked'}, ok: false, status: isProxyTimeout(error) ? 'protocol-timeout' : 'command-failed',
       phase: error.phase || null, outcome: error.outcome || 'unknown', retryable: false, error: error.message})
     process.exitCode = 1
   })

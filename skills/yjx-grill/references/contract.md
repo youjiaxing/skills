@@ -10,6 +10,8 @@ Give each semantic claim one primary home. Include only changes introduced by th
 
 Preserve the owner, source of truth, identities, interfaces/data shapes, lifecycle and state transitions, compatibility/migration, concurrency and failure guarantees, and strategic boundaries when they cannot be safely derived from observable behavior. When an entity, schema, enum, field, interface, or state machine is part of the decision, keep its shape concrete and copyable.
 
+Where the project reserves design decisions for the user, carry the applicable governance pointers (including the root `GRILL.md` when present), the actual scope and source of confirmation or delegation, and the selected structures precise enough for implementation. Preserve outstanding reserved decisions at their real scope under the entrypoint's coverage and handoff rules; a general approval does not silently settle unpresented details or authorize their implementation.
+
 Add acceptance conditions only when they introduce independently observable consequences, not paraphrases. Use a verification table only when it compresses at least three branching scenarios; do not repeat its rows in nearby prose. Diagrams or alternate forms earn their place only by adding a distinct boundary or observable consequence.
 
 Exclude routine mechanics, unaffected call-site inventories, local test filenames, shell commands, PR plans, and syntax-level advice unless the user's decision directly concerns them. Brevity must not remove implementation-critical meaning.
