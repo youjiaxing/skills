@@ -36,6 +36,8 @@ disable-model-invocation: true
 *Completion Criterion*: Requirements and execution boundaries established; verification approach identified; review and branch baselines recorded.
 
 ### Phase 2：实施
+During implementation, run type checks and individual relevant test files as useful to catch problems early. Choose a suitable point in the work; do not change planned later work or add temporary implementations merely to make an intermediate check pass.
+
 #### 仅呈现变更
 按实际影响分类变更，不要按是否编辑 CSS、DOM 或 frontend 文件分类。纯粹影响字体、颜色、间距、装饰和非功能布局的视觉变更，使用轻量呈现验证。记录 `Test admission not triggered` 及变更范围；该路径既不要求 red-green 或 refactor-green 证据，也不要求枚举候选测试或完整的 `No new test` 说明。
 
