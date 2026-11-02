@@ -169,6 +169,30 @@ test('refresh retries only when persisted binary is unavailable and uses the cur
   assert.equal(refreshed.status,'completed');assert.equal(refreshed.answer,'recovered');
 });
 
+test('Unicode separators in queued history do not block the next request or replay the old one', async t => {
+  const c = await context(t, 'unicode-history');
+  const original = await sendCodex({ ...c.input, waitMode: 'state' }, c.dependencies);
+  const answer = 'before\u2028between\u2029after';
+  const requestFile = path.join(c.input.stateDir, 'requests', original.requestId, 'record.json');
+  await writeFile(requestFile, JSON.stringify({ ...original, status: 'unconfirmed', route: 'queue',
+    turnId: null, baselineTurnId: 'baseline', answer: null, answers: [] }));
+  await writeFile(path.join(c.directory, 'turn.json'), JSON.stringify({ id: original.turnId,
+    status: 'completed', completedAt: 123, items: [
+      { type: 'userMessage', content: [{ type: 'text', text: original.marker }] },
+      { type: 'commandExecution', aggregatedOutput: 'x'.repeat(128 * 1024) },
+      { type: 'agentMessage', phase: 'final_answer', text: answer },
+    ] }));
+
+  const next = await sendCodex({ ...c.input, requestId: 'request-2', message: 'next payload',
+    waitMode: 'state' }, c.dependencies);
+  assert.equal(next.status, 'completed');
+  assert.equal((await requestStatus({ ...c.input, refresh: true }, c.dependencies)).answer, answer);
+  const calls = (await readFile(path.join(c.directory, 'calls.jsonl'), 'utf8'))
+    .trim().split('\n').map(JSON.parse);
+  assert.equal(calls.filter(call => call.method === 'turn/start').length, 2);
+  assert.equal(c.counts().queueCalls, 0);
+});
+
 test('refresh does not retry a configured binary that the caller explicitly selected',async t=>{
   const c=await context(t,'direct');
   const original=await sendCodex({...c.input,waitMode:'state',timeoutMs:1000},c.dependencies);

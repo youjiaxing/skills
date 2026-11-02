@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
-import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { resolveDesktopCodex } from './desktop-codex.mjs';
 
@@ -16,6 +15,36 @@ export function timeLeft(deadline) {
   const left = Math.ceil(deadline - performance.now());
   if (left <= 0) throw new Error('Deadline exceeded');
   return left;
+}
+
+function readJsonLines(input, receive) {
+  let fragments = [];
+  input.setEncoding('utf8');
+  const data = chunk => {
+    let start = 0;
+    let end;
+    while ((end = chunk.indexOf('\n', start)) !== -1) {
+      fragments.push(chunk.slice(start, end));
+      const line = fragments.length === 1 ? fragments[0] : fragments.join('');
+      fragments = [];
+      receive(line);
+      start = end + 1;
+    }
+    if (start < chunk.length) fragments.push(chunk.slice(start));
+  };
+  const end = () => {
+    if (fragments.length) receive(fragments.join(''));
+    fragments = [];
+  };
+  // JSONL frames end at LF. readline also splits valid JSON string characters
+  // U+2028/U+2029, corrupting responses that contain copied document text.
+  input.on('data', data);
+  input.on('end', end);
+  return { close() {
+    input.off('data', data);
+    input.off('end', end);
+    fragments = [];
+  } };
 }
 
 export async function resolveCodex(value, env = process.env) {
@@ -46,8 +75,7 @@ export class AppServer {
     this.child = spawn(binary, [...prefixArgs, 'app-server', '--stdio'], {
       cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], shell: false,
     });
-    this.lines = createInterface({ input: this.child.stdout });
-    this.lines.on('line', (line) => this.receive(line));
+    this.lines = readJsonLines(this.child.stdout, line => this.receive(line));
     // Drain diagnostics without copying credentials or unrelated logs to results.
     this.child.stderr.resume();
     this.child.stdin.on('error', (error) => this.fail(error));

@@ -9,7 +9,20 @@ const threadId = process.env.PEER_THREAD;
 let turn;
 let polls = 0;
 let restored = false;
-const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+const send = (message) => {
+  const text = JSON.stringify(message);
+  if (mode === 'unicode-history') {
+    const bytes = Buffer.from(`${text}\r\n`);
+    const separator = bytes.indexOf(Buffer.from('\u2028'));
+    if (separator >= 0) {
+      // Split a UTF-8 code point across writes as a real pipe can do.
+      process.stdout.write(bytes.subarray(0, separator + 1));
+      setImmediate(() => process.stdout.write(bytes.subarray(separator + 1)));
+      return;
+    }
+    process.stdout.write(bytes);
+  } else process.stdout.write(`${text}\n`);
+};
 const respond = (id, result) => send({ id, result });
 const log = (method) => appendFileSync(path.join(directory, 'calls.jsonl'), `${JSON.stringify({ method, at: Date.now() })}\n`);
 const user = (message) => ({ type: 'userMessage', content: [{ type: 'text', text: message }] });

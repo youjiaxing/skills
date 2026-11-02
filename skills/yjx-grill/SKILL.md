@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 ## 执行边界
 
-- 这是一个由用户调用的对齐 skill。在不修改仓库或外部系统的前提下调查；不要实施已对齐计划。执行属于另行授权的 implementation workflow。
+- 这是一个由用户调用的对齐 skill。对齐期间不实施业务代码或未经授权的项目治理文档修改；执行属于另行授权的 implementation workflow。当用户指定外部或本地契约/设计载体（如在线语雀设计文档、接口文档、`.proto` 服务端与客户端交互协议文件）作为对齐结论的持久化落地形式时，生成与更新该载体属于交付切片结论本身的必要步骤。
 - 面向用户的 labels 和 template keys 使用用户的沟通语言。
 - 按第 6 节为每个能力切片选择交付形式。独立切片不共享同一个批准。
 
@@ -54,7 +54,9 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 在依据该理解改变目标或范围前，让用户有机会纠正它。不要重复未变化的复述，也不要强加固定的发现问卷。
 
-使用工具获取客观事实：代码、schema、日志、任务文本、依赖、可用产物和当前状态。不要让用户查找 Agent 可以验证的事实，也不要仅从现有代码推断用户想要的结果。
+使用工具获取客观事实：代码、schema、日志、任务文本、依赖、可用产物和当前状态。不要让用户查找 Agent 可以验证的事实，也不要仅从现有代码推断用户想要的结果。核查既有行为时，从真实入口与当前配置值追踪实际命中的代码分支，不凭未命中的死分支断言现状；参考既有模块时，只提取与当前目标对应的结构，不将新需求未提及的旁路接口或旧特例默认带入新方案提问。
+
+当会话上下文已明确当前工作基线，或用户在实现中途针对特定局部问题重新调用本 skill 时，直接围绕目标问题讨论，不重复追问已有在途改动的去留。仅当工作区存在尚未经用户或当前会话确认归属、且与稳定基线或本次需求存在冲突的既有改动时，才清晰区分“稳定存量行为、当前分支既有改动、本次需求目标”，并按第 2 节处理其前置依赖。
 
 对于 defect，在提出补救前调查其因果链。必要时简要说明参与者的动作、可观察失败、最小因果机制以及已排除的伪原因。区分已验证事实和仍需调查的假设。
 
@@ -68,7 +70,7 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 依据实际任务和现状主动识别本次适用的设计决定，包括用户保留的事项。开始讨论或范围发生实质变化时，简短展示可纠正的范围总览，然后直接进入 ready 事项，不增加独立的范围确认门禁。用户无需预先列尽所有问题；后续发现新事项继续补入，用户没有指出遗漏也不能作为覆盖完整的证明。
 
-问题只有在事实和决策前置条件都确定后才 ready。进行中的调查属于未确定前置条件：继续处理 ready 分支，但等待依赖其结果的分支。即使无论答案如何都需要某问题，只要另一个答案会改变它的前提、可行选项或建议，该问题仍未 ready。
+问题只有在事实和决策前置条件都确定后才 ready。进行中的调查（包括已派发但尚未返回结果的子代理或工具取证）属于未确定前置条件：继续处理 ready 分支，但等待依赖其结果的分支，拿到结论前不提出依赖该事实的问题。对于第 1 节识别出的未经确认归属且与基线或需求冲突的既有改动，若“沿用修补该改动还是舍弃重做”会直接改变后续细节问题是否成立，将其作为上游前置决策优先确认，不在去留未定前围绕该改动的内部细节提问。即使无论答案如何都需要某问题，只要另一个答案会改变它的前提、可行选项或建议，该问题仍未 ready。
 
 ## 3. 按意图与后果设置问题门禁
 
@@ -78,7 +80,7 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
   - **Consequential judgment**：成本、保证、所有权、权限或整体策略的接受仍属于人类判断。这也包括只有一个已知可行方案，但其后果或条件需要用户判断的情况；不要求硬凑多个替代方案。
   - **Project-reserved decision**：用户或项目明确保留了参与判断的事项，且尚无有效确认或明确委托覆盖。即使它是局部、可逆或内部结构，也要按约定讨论，不能仅以“实现细节”跳过。
 
-在没有被用户或项目保留判断的范围内，推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问。工具障碍、缺少权限和推测性原因不是决策选项。
+在没有被用户或项目保留判断的范围内，推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问。构造失败处理或一致性问题前，先核实宿主现有的默认事务、原子回滚或事件保障机制；默认机制已能覆盖时不虚构额外补偿问题，确需提问时优先推荐遵循默认机制的最小方案。工具障碍、缺少权限和推测性原因不是决策选项。
 
 按实际影响评估后果：数据丢失或迁移、权限、外部承诺、不可逆资源使用、结构重设计，以及实质不同的补救策略。一行改动也可能有不可逆后果。未知影响需要调查，不能直接归类为低风险。如果无法获得必要证据，报告具体 blocker，并保持该分支未解决。
 
@@ -164,7 +166,7 @@ For either form, synthesize the result around the actual problem and intended ou
 
 If new evidence reveals consequential human judgment, record the obligation and address it. Risk-triggered review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
 
-Apply the collaborative-discussion rule before concluding either form. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. State whether alignment is complete, whether the relevant scope is ready for implementation, and whether existing authorization and execution intent allow handoff under section 8. Completing this workflow does not claim that any implementation occurred.
+Apply the collaborative-discussion rule before concluding either form. If the current slice has been persisted to a user-designated conclusion carrier (such as an online Yuque design/API doc or `.proto` protocol file), or subsequent discussion modifies, overturns, or supplements conclusions already written to that carrier, synchronously update the carrier before activating the next remaining slice. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. State whether alignment is complete, whether the relevant scope is ready for implementation, and whether existing authorization and execution intent allow handoff under section 8. Completing this workflow does not claim that any implementation occurred.
 
 ## 7. 按风险评审
 

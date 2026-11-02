@@ -47,7 +47,7 @@ Static review should establish that:
 - a brief overview goes straight into ready discussion, with later discoveries incorporated and no new scope-signoff checkpoint;
 - reserved decisions have an evidenced disposition before closure, even on the Direct Result path, without automatically creating a Formal Contract;
 - confirmed or delegated choices are reused only within their supported scope; remaining reserved decisions are visible before the affected implementation;
-- reminders are conditional, brief and nonblocking; no project document is created, migrated or edited during alignment without separate authority;
+- reminders are conditional, brief and nonblocking; no project governance document (`GRILL.md`, `AGENTS.md`, etc.) is created, migrated or edited during alignment without separate authority, while user-designated persistent conclusion carriers (such as Yuque design/API docs or `.proto` contracts) are updated synchronously before slice switches when their conclusions change;
 - the skill remains domain-neutral, and source maintenance, static verification and real-use observations are not confused with a guarantee of zero omissions.
 
 Only this skill's runtime, rationale and contract reference change for this mechanism. Downstream workflows already consume project constraints and aligned contracts; their rules and invocation policies are not rewritten as a precaution. Existing project instructions stay in place, and unavailable projects are not claimed to have been configured.
@@ -96,7 +96,8 @@ When changing the skill, verify that:
 - conclusions organize the understood problem and resulting solution by topic, lead converged rules with business conditions and observable behavior rather than raw internal function call chains, distinguish new proposals naturally, and scale down without empty sections or question-by-question replay;
 - formal details are discoverable through a mandatory pointer, with shared safety rules still on all execution paths;
 - full implementation-critical model shapes and guarantees survive compression, while empty fields and duplicate summaries do not return;
-- runtime text stays in English and user-facing text is localized; no repository or external mutation occurs during alignment.
+- user-facing text is localized; no business-code implementation or unauthorized governance mutation occurs during alignment, while user-designated persistent conclusion carriers are kept in sync before activating the next slice;
+- unconfirmed conflicting branch changes whose keep/discard disposition affects downstream questions are resolved as upstream prerequisites without re-prompting when the session baseline is already established or `yjx-grill` is re-invoked mid-implementation; pending subagent/tool investigations block dependent questions; existing behavior is traced from live entrypoints/config without carrying over unmentioned legacy bypasses; and failure/consistency questions check host default transaction/rollback guarantees first.
 
 Follow the repository [Skill verification policy](../../AGENTS.md#skill-verification). Use static checks for packaging, links, and document consistency; retrospect on actual user interactions when evidence exists. These checks do not prove reliable model behavior.
 

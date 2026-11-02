@@ -1,0 +1,5 @@
+interface:
+  display_name: "YJX Show Me"
+  short_description: "用调用树、真实代码缩写块、微型 diff 与图表直观解释逻辑或代码机制"
+policy:
+  allow_implicit_invocation: true
