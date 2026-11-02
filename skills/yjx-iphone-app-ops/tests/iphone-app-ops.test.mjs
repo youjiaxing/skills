@@ -202,7 +202,7 @@ test('source waits through a 30-second-style proxy delay when configured deadlin
   assert.equal(await client.source('session'), 'page')
 })
 
-test('session capability disables the idle expiry for unattended use', async (t) => {
+test('shared session disables idle expiry and discovers WebViews without pinning a business App', async (t) => {
   let capabilities
   const server = createServer(async (req, res) => {
     let body = ''
@@ -216,6 +216,8 @@ test('session capability disables the idle expiry for unattended use', async (t)
   const client = createAppiumClient({baseUrl: `http://127.0.0.1:${server.address().port}`, requestTimeoutMs: 150})
   await client.createSession()
   assert.equal(capabilities['appium:newCommandTimeout'], 0)
+  assert.deepEqual(capabilities['appium:additionalWebviewBundleIds'], ['*'])
+  assert.equal(capabilities['appium:bundleId'], undefined)
 })
 
 test('expired Appium session is replaced once and the new WDA session is validated', async (t) => {

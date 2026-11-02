@@ -118,7 +118,7 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
         observations: [{type: 'page-barrier', text: 'Credential/security controls are present; user handling is required'}],
         evidence: [], next: 'User completes the credential/verification step, then observe again'}
     }
-    let observations = [], selected = method, viewport = null, pixels = null
+    let observations = [], selected = method, viewport = null, pixels = null, sourcePartial = false
     const root = xml.match(/<XCUIElementTypeApplication\b[^>]*>/)?.[0] || ''
     const width = Number(root.match(/\bwidth="([\d.]+)"/)?.[1])
     const height = Number(root.match(/\bheight="([\d.]+)"/)?.[1])
@@ -129,7 +129,20 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
       await enter(context)
       let originalError
       try {
-        observations = await call('execute', `return Array.from(document.querySelectorAll('button,input,textarea,select,a,[role],h1,h2,h3,p,li,label')).filter(e => e.getBoundingClientRect().width && e.getBoundingClientRect().height).slice(0,1000).map(e => ({type:e.tagName, name:e.getAttribute('aria-label'),text:e.type==='password'?'[secure]':(e.innerText||e.value||''),rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}}));`, [])
+        const dom = await call('execute', `
+          const semantic = 'button,input,textarea,select,a,[role],h1,h2,h3,p,li,label';
+          const directText = e => Array.from(e.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').trim();
+          const elements = Array.from(document.querySelectorAll('*')).filter(e => {
+            const rect = e.getBoundingClientRect();
+            return rect.width && rect.height && getComputedStyle(e).visibility !== 'hidden' &&
+              !e.matches('script,style,noscript,template') && (e.matches(semantic) || directText(e));
+          });
+          return {partial:elements.length > 1000, observations:elements.slice(0,1000).map(e => ({type:e.tagName, name:e.getAttribute('aria-label'), id:e.id || null,
+            className:typeof e.className === 'string' ? e.className : null,
+            text:e.type==='password'?'[secure]':(e.matches(semantic) ? (e.innerText||e.value||'') : directText(e)),
+            rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height}}))};`, [])
+        observations = dom.observations
+        sourcePartial = dom.partial
       } catch (error) { originalError = error; throw error }
       finally {
         try { await restore() }
@@ -156,7 +169,7 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     const filtered = contains ? observations.filter((row) => String(row.text).includes(contains)) : observations
     const result = {schemaVersion: 1, documentType: 'app-observation-v1', runId: randomUUID(), bundleId, readAt,
       finishedAt: new Date(now()).toISOString(), purpose, method: selected, viewport,
-      observations: filtered.slice(0, limit), partial: filtered.length > limit,
+      observations: filtered.slice(0, limit), partial: sourcePartial || filtered.length > limit,
       observationCount: filtered.length, evidence: [],
       targets: [],
       snapshotNote: 'Sequential observations; image and accessibility data are not an atomic snapshot',

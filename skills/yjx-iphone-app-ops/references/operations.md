@@ -51,6 +51,12 @@ node scripts/iphone-app-ops.mjs element assert --bundle-id <bundle> --context '<
 
 使用 `mobile: getContexts` 返回的完整对象，以 `bundleId` 确认归属，不能用 `WEBVIEW_` 名字推断。原生元素是默认路径；DOM 操作显式指定 context。第三方发布版可能不可检查，无法取得 owner 的 context 不操作；可以回到原生/视觉观察，或明确报告阻塞。操作后恢复原生 context，未决请求时跳过恢复命令。
 
+DOM 观察采集语义元素及带直接文本的普通/自定义元素，并返回可用的 `id` / `className` 供定位参考；不依赖某个框架的标签名。传输最多 1000 项，源截断也会设置 `partial=true`；即使筛选后为空，也不能据此断言整个页面没有目标。文字不覆盖 Canvas 像素或布局效果，仍按任务选择截图。CSS 目标须通过当前内容确认身份和唯一性。
+
+仅返回 `NATIVE_APP` 只证明本次未发现可用页面，根因仍待诊断。先确认目标 App 在前台，再核查 iPhone“设置 → App → Safari 浏览器 → 高级 → 网页检查器”（旧系统位于设置中的 Safari）。开关关闭时，说明其调试作用后按环境维护授权开启并回读状态；不以“远程自动化”开关替代它。然后核对目标 WebView 的 `isInspectable`、原始 context 结果与 Appium 日志：完全未收到 App 报告、收到目标 App 却未匹配其 bundle、发现页面但 owner 不明是不同阶段。只有已取得证据的原因才能定论。
+
+本 skill 的共享 session 不绑定业务 App，以 `additionalWebviewBundleIds=['*']` 发现候选，再由上述 owner 门禁限制实际操作。旧 session 不会随代码更新获得新 capability；确认本轮独占且无未知/在途请求后，可显式 `close`、`session`、`recover` 一次应用新配置，保留共享服务。多个同属目标 App 的页面仍须结合当前原生页面、标题/URL 和 DOM 内容确认实际目标，不能默认选择第一个 context。[Appium 混合页面要求](https://appium.github.io/appium-xcuitest-driver/latest/guides/hybrid/)和[WebKit 检查开关说明](https://webkit.org/blog/13936/enabling-the-inspection-of-web-content-in-apps/)提供前置条件依据；业务 App 的修改、构建与安装仍由项目侧负责。
+
 ## 视觉手势
 
 先生成并查看视觉观察及 JSON，在图像中唯一确认目标后，标注其归一化区域，再使用该目标：

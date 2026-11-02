@@ -91,3 +91,27 @@ Mac 启动时间为 17:55:05（Asia/Shanghai）；本轮检查在启动约 5 小
 部署模板补齐断线重试。维护 CLI 在 `bootout` 后有界等指定服务确认移除再 `bootstrap`；其他读取错误或卸载结果未确认时停止，不将任意读取失败视为已卸载。协议时序回归先复现旧实现的 `Operation already in progress`，修复后通过；本轮专用功能测试 83/83、语法/plist/diff 检查通过，新增维护代码独立复核未发现阻塞缺陷。
 
 现场证据位于仓库忽略目录 `tmp/validation/tunnel-repair-20261101/`，目录日期沿用开始修复的 11 月 1 日，完成时已跨至 11 月 2 日（Asia/Shanghai）。本次未强制拔线或注入隧道故障，不声称已完成真机断线重连压力验收；通用 App 交互、视觉与 WebView 的既有验收缺口仍保留。
+
+## 真机通用能力续验（2026-11-02）
+
+隧道后续复查发现此前“隧道故障”的表述需要收窄：目标 registry 当前可返回 HTTP 200 / `OK`，并发布 80 项服务；累计日志记录过 `SSL read failed in device-to-tun loop`、native forwarder 被移除及后来重新建立的 tunnel，但跨服务生命周期的累计日志不足以证明同一 PID 内自动重连。当前链路正常，历史 SSL 断开的底层诱因仍未知；受控断线与自动重连尚未验收。
+
+通过本 skill 的 `4723` Appium 和 `8100` WDA 端口新建预安装 WDA session，`doctor` 与 `wda-health` 均通过；设备锁屏页面树可读，按恢复流程唤醒后简康记 `com.youjiaxing.familyhealth` 到达前台，`appState=4`。在“历史备份”页完成原生元素读取（标题、刷新）和左上返回元素点击，点击后读取到“iCloud 备份”页及“历史备份记录”，证明真实元素操作、状态观察和导航后置读取闭环成立。操作未触发备份、恢复、刷新、删除或其他业务写入。
+
+视觉验收实际查看了新截图：当前“历史备份”页的标题、备份卡片、状态信息、间距层级、安全区和底部说明可见，未观察到文字遮挡或裁切。截图证据、页面树和结构化观察位于 `/Users/youjiaxing/Code/youjiaxing/skills/tmp/validation/iphone-app-ops-20261102/`；这是本机临时验证目录，不作为跨机器永久证据。
+
+本节早期验收时 `mobile: getContexts` 仅返回 `NATIVE_APP`，WebView DOM 读取与操作当时受阻，后续修复见下节；原生树中的 `XCUIElementTypeWebView` 不等于可检查 DOM。未执行需要管理员权限的受控断线注入，也不以累计日志升级自动重连的验收结论。
+
+本轮还修复了 `iphone-app-ops.mjs` 通过 skill 软链接启动时的入口判定：主入口现在比较解析后的真实路径，避免 CLI 静默退出。修复后通过脚本语法检查、软链接路径下的 `doctor`/`wda-health` 回归，以及 iPhone skill 83/83 离线测试。
+
+## WebView 闭环修复与真机验收（2026-11-02）
+
+XS Max、iOS 18.7.11、简康记 1.0.0（108）的逐层诊断确认了多个独立问题：设备“网页检查器”关闭；通用 session 未提供非系统 App 的 WebView 发现范围；目标 SDK 根据调试基座身份将 `isInspectable` 设为 false；原 DOM 观察器只选择部分标准 HTML 标签，漏读自定义标签文字。不能把这些合并成“隧道故障”或直接认定 App / skill 单方无缺失。
+
+设备开关已开启并回读。通用 session 增加 `additionalWebviewBundleIds=['*']`，继续要求完整 owner bundle 匹配；DOM 观察改为框架无关的直接文本/语义元素采集，保留密码屏障、原生恢复、传输上限和截断信号。项目侧以内部调试门禁在页面生命周期调用公开检查属性，业务 App 源码、构建和覆盖安装仍由项目流程处理，通用 skill 不内置其 bundle、路径或业务规则。标准 Release 资源关闭调试门禁；本次没有完成签名 Release 的真机抽查。
+
+真机已验证：冷启动后发现 owner 明确的首页 WebView；DOM 读取“我的”并以 CSS 元素真实点击，等待“家庭成员管理”文字相等；从可见入口通过 DOM 点击“关于”，新建页面 context 可发现且 App 名称断言通过；读取版本文字后，通过 DOM 返回，缓存页面可见断言通过。每段操作后确认 `NATIVE_APP`，最终原生读取也成功。未卸载或清空 App，未执行健康记录修改、备份/恢复、删除或支付。
+
+本机证据位于仓库忽略目录 `tmp/validation/webview-20261102/`，包含开关前后截图、context、DOM 读取、点击与后置断言、Release 资源门禁核对和测试输出。通用 iPhone 功能测试为 85/85；项目局部功能测试为 14/14，应用类型检查通过。项目全量 Node 测试类型检查在未修改的既有测试文件报错，未将该检查记为通过。
+
+本次 Xcode 27.1 打包另遇旧 SDK fat 静态库对齐及已移除的 `UIAccelerometer` 链接问题。只在隔离构建副本使用字节相同的 arm64 库切片，并排除项目未使用的 Accelerometer 链接与注册；正常 Debug 资源已按项目脚本同步，但未改共享 SDK 或正式宿主工程配置。这是本轮设备验证的构建前提，常规工具链兼容修复不在此次 WebView 通过结论内。此次通过也不扩大为第三方不可检查发布包、Shadow DOM、所有框架页面或隧道受控重连的验收。

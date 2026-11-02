@@ -2,6 +2,7 @@
 
 import {execFileSync} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
+import {realpathSync} from 'node:fs'
 import {readFile, rename, rm, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
@@ -128,6 +129,10 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
         'appium:updatedWDABundleId': deviceConfig.wdaBundleId,
         'appium:wdaLocalPort': config.wdaLocalPort,
         'appium:autoLaunch': false,
+        // This reusable session has no default business App. Discover candidates
+        // across Apps; createOperations still verifies the exact bundleId before
+        // entering or operating any WebView.
+        'appium:additionalWebviewBundleIds': ['*'],
         // Keep the shared WDA session alive; the CLI owns explicit recovery.
         'appium:newCommandTimeout': newCommandTimeoutSeconds,
         'appium:wdaLaunchTimeout': 60000,
@@ -793,7 +798,10 @@ async function main() {
   throw new Error('usage: iphone-app-ops.mjs doctor | wda-health | session | recover --bundle-id <id> | element <read|click|set-value> --bundle-id <id> --using <accessibility-id|predicate|class-chain> --selector <value> | dianping-search --query <text> --extract-output <path> [--screenshot-output <path>] [--source-output <path>] [--max-pages 1..5] | dianping-detail --from <search.json> --candidate <id> --extract-output <new.json> | dianping-share --from-detail <detail.json> --extract-output <new.json> | xiaohongshu-search --query <text> --extract-output <new.json> [--max-pages 1..5] | source | screenshot --output <path> | close')
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const invokedScript = process.argv[1] ? realpathSync(process.argv[1]) : null
+const moduleScript = realpathSync(fileURLToPath(import.meta.url))
+
+if (invokedScript === moduleScript) {
   main().catch((error) => {
     print({verification: {status: error.outcome === 'unknown' || isProxyTimeout(error) ? 'unknown' : 'blocked'}, ok: false, status: isProxyTimeout(error) ? 'protocol-timeout' : 'command-failed',
       phase: error.phase || null, outcome: error.outcome || 'unknown', retryable: false, error: error.message})

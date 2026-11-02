@@ -101,6 +101,21 @@ test('WebView ownership is checked independently of its name', async () => {
   assert.deepEqual(f.calls, [])
 })
 
+test('cross-App discovery returns only verified owners and rejects missing ownership before switching', async () => {
+  const switches = []
+  const available = [{id: 'NATIVE_APP'}, {id: 'WEBVIEW_owned', bundleId},
+    {id: 'WEBVIEW_foreign', bundleId: 'org.example.other'}, {id: 'WEBVIEW_unknown'}]
+  const f = fixture({execute: async () => available, setContext: async (_, next) => switches.push(next)})
+  assert.deepEqual((await f.ops.contexts()).contexts, available.slice(0, 2))
+  for (const context of ['WEBVIEW_foreign', 'WEBVIEW_unknown']) {
+    const result = await f.ops.element('click', {using: 'css', selector: 'button', context})
+    assert.equal(result.status, 'context-owner-unverified')
+    assert.equal(result.operation.outcome, 'not-sent')
+  }
+  assert.deepEqual(switches, [])
+  assert.deepEqual(f.calls, [])
+})
+
 test('DOM observation preserves the primary error when context cleanup also fails', async () => {
   let current = 'NATIVE_APP', failed = false
   const f = fixture({getContext: async () => current, setContext: async (_, next) => {
@@ -113,6 +128,32 @@ test('DOM observation preserves the primary error when context cleanup also fail
   }})
   await assert.rejects(f.ops.observe({method: 'dom', context: 'WEBVIEW_1'}), (error) =>
     error.message === 'primary DOM failure' && error.contextCleanupFailure === 'cleanup failed')
+})
+
+test('DOM observation reads custom-element text and generic div text without exposing passwords', async () => {
+  const node = (tagName, text, extra = {}) => ({
+    tagName, childNodes: [{nodeType: 3, textContent: text}], innerText: text,
+    getBoundingClientRect: () => ({x: 0, y: 0, width: 100, height: 20}),
+    getAttribute: () => null,
+    matches: selector => selector.split(',').includes(tagName.toLowerCase()), ...extra,
+  })
+  const nodes = [node('CUSTOM-TEXT', 'About'), node('DIV', 'Visible plain text'),
+    node('INPUT', '', {type: 'password', value: 'secret'}),
+    node('CUSTOM-TEXT', 'Hidden', {hidden: true})]
+  const document = {querySelectorAll: selector => selector === '*' ? nodes : nodes.filter(n => n.matches(selector))}
+  const f = fixture({execute: async (_, script) => {
+    if (script === 'mobile: getContexts') return [{id: 'WEBVIEW_1', bundleId}]
+    return new Function('document', 'getComputedStyle', script)(document,
+      e => ({visibility: e.hidden ? 'hidden' : 'visible'}))
+  }})
+  const result = await f.ops.observe({method: 'dom', context: 'WEBVIEW_1'})
+  assert.deepEqual(result.observations.map(row => row.text), ['About', 'Visible plain text', '[secure]'])
+  assert.equal(result.method, 'dom')
+  assert.ok(!JSON.stringify(result).includes('secret'))
+  nodes.splice(0, nodes.length, ...Array.from({length: 1001}, (_, i) => node('CUSTOM-TEXT', String(i))))
+  const capped = await f.ops.observe({method: 'dom', context: 'WEBVIEW_1', limit: 500, contains: '1000'})
+  assert.equal(capped.partial, true, 'source truncation remains visible even if the requested text is beyond the cap')
+  assert.deepEqual(capped.observations, [])
 })
 
 test('information reads avoid screenshots; visual reads require pixels despite a complete tree', async (t) => {
