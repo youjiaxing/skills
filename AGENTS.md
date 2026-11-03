@@ -28,6 +28,27 @@ delegates to a subagent, explicitly include the instruction:
 at the subagent dispatch site so subagents never inherit the primary session
 context by default.
 
+## Cross-Skill Invocation
+
+Refer to another skill by its registered name and locate its installed entrypoint
+through the host's skill discovery mechanism. Resolve that skill's scripts and
+references from the returned installation location; do not assume sibling skill
+directories or machine-specific paths. Relative references within the same skill
+package remain valid. If a required skill is unavailable, report the missing
+dependency rather than guessing its path or copying its workflow.
+
+## Model Image Inputs
+
+When adding or changing a skill that asks a model to inspect images, screenshots
+or video frames, invoke the installed `yjx-image-reading` skill by name for input
+preparation and isolated visual observation, and declare that dependency at the
+read site. Keep source acquisition, action authority and task-specific state
+checks with the calling skill. Document supported exceptions or host limitations
+rather than silently returning images to a long-lived primary conversation. Reuse the shared
+implementation instead of duplicating compression or dispatch rules. This applies
+to future skills as well as existing integrations; forwarding an image without
+model inspection does not require a visual task.
+
 ## Temporary Research
 
 Treat exploratory reports, comparisons, and raw research notes as task-temporary

@@ -11,7 +11,7 @@ node scripts/iphone-app-ops.mjs observe --bundle-id <bundle> --purpose visual --
 
 信息任务默认原生文字，文字不足才用本机 OCR；`--method native|ocr|dom` 可明确路径，DOM 配合 `--context`。默认最多 80 项，可用 `--limit`（1–500）和 `--contains` 限定，`partial` 表示输出截断。需要更多内容时滚动或调整观察范围，不将截断输出当完整页面。
 
-视觉任务使用 `--purpose visual` 和新的 `--screenshot-output`，随后必须通过宿主图像工具实际查看该图片。输出一张截图不算视觉评审完成。布局、颜色、间距、遮挡、图表等由模型据实际图像判断，原生文字完整也不能省略截图。混合任务按目标组合路径。
+视觉任务使用 `--purpose visual` 和新的 `--screenshot-output`，随后通过 `yjx-image-reading` 准备输入，由独立视觉子任务实际查看图片并回传文字观察。输出一张截图不算视觉评审完成。布局、颜色、间距、遮挡、图表等由模型据实际图像判断，原生文字完整也不能省略截图。混合任务按目标组合路径；原控制代理继续持有设备命令和恢复状态。
 
 `--source-output` 显式保留 XML，`--output` 保存结构化观察。输出文件拒绝覆盖，截图、XML、文字包含各自观察阶段，不是原子快照。截图默认不落盘，视觉核验使用本轮新路径；保留与目标相关的范围，不保存或传递凭据。
 
@@ -58,6 +58,8 @@ DOM 观察采集语义元素及带直接文本的普通/自定义元素，并返
 本 skill 的共享 session 不绑定业务 App，以 `additionalWebviewBundleIds=['*']` 发现候选，再由上述 owner 门禁限制实际操作。旧 session 不会随代码更新获得新 capability；确认本轮独占且无未知/在途请求后，可显式 `close`、`session`、`recover` 一次应用新配置，保留共享服务。多个同属目标 App 的页面仍须结合当前原生页面、标题/URL 和 DOM 内容确认实际目标，不能默认选择第一个 context。[Appium 混合页面要求](https://appium.github.io/appium-xcuitest-driver/latest/guides/hybrid/)和[WebKit 检查开关说明](https://webkit.org/blog/13936/enabling-the-inspection-of-web-content-in-apps/)提供前置条件依据；业务 App 的修改、构建与安装仍由项目侧负责。
 
 ## 视觉手势
+
+截图先调用 `yjx-image-reading` 的手机画面适配分支识读；回传定位绑定源观察的原图 SHA，而不是压缩副本 SHA。观察过期时实际重新观察，只有 App、viewport 和原图 SHA 完全一致才可在新观察上复用已核目标；画面变化则重新确认，不改写旧观察时间或放宽下述 30 秒检查。
 
 先生成并查看视觉观察及 JSON，在图像中唯一确认目标后，标注其归一化区域，再使用该目标：
 

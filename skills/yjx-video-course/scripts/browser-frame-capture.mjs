@@ -21,6 +21,27 @@ export function decodeCanvasDataUrl(dataUrl) {
   return { contentType: match[1], bytes };
 }
 
+async function executeCapture(tab, capture, options) {
+  try {
+    const result = await tab.playwright?.evaluate(capture, options);
+    if (result?.dataUrl) return { ...result, executionBackend: 'page_evaluate' };
+  } catch {
+    // A host may expose only a restricted DOM scope, without media/canvas APIs.
+  }
+  let cdp;
+  try { cdp = await tab.capabilities?.get('cdp'); } catch { /* capability absent */ }
+  if (!cdp?.send) throw new Error('decoded-frame page execution capability unavailable');
+  const response = await cdp.send('Runtime.evaluate', {
+    expression: `(${capture.toString()})(${JSON.stringify(options)})`,
+    awaitPromise: true,
+    returnByValue: true,
+  }, { timeoutMs: Math.min(60000, options.seekTimeoutMs + options.settleMs + 2000) });
+  if (response.exceptionDetails || !response.result?.value?.dataUrl) {
+    throw new Error('decoded-frame capture did not complete in the bound page');
+  }
+  return { ...response.result.value, executionBackend: 'native_cdp' };
+}
+
 export async function captureDecodedVideoFrame(
   tab,
   {
@@ -30,15 +51,22 @@ export async function captureDecodedVideoFrame(
     settleMs = 200,
   },
 ) {
-  if (!tab?.playwright?.evaluate) throw new Error('captureDecodedVideoFrame requires a browser tab with playwright.evaluate');
+  if (!tab?.playwright?.evaluate && !tab?.capabilities?.get) throw new Error('captureDecodedVideoFrame requires a bound browser tab');
   if (!Number.isFinite(timeSeconds) || timeSeconds < 0) throw new Error('timeSeconds must be a non-negative finite number');
   if (typeof outputPath !== 'string' || outputPath.length === 0) throw new Error('outputPath is required');
+  if (!Number.isFinite(seekTimeoutMs) || seekTimeoutMs <= 0 || seekTimeoutMs > 55000
+      || !Number.isFinite(settleMs) || settleMs < 0 || settleMs > 2000) {
+    throw new Error('invalid frame capture wait budget');
+  }
 
-  const result = await tab.playwright.evaluate(
+  const result = await executeCapture(tab,
     async ({ timeSeconds: targetTime, seekTimeoutMs: timeout, settleMs: settle }) => {
       const video = document.querySelector('video');
       if (!video) throw new Error('no <video> element found on the page');
       if (!video.videoWidth || !video.videoHeight) throw new Error('video has no decoded dimensions yet');
+      if (typeof video.addEventListener !== 'function' || typeof document.createElement !== 'function') {
+        return {status: 'frame_capture_capability_unavailable'};
+      }
 
       const wasPaused = video.paused;
       if (!wasPaused) video.pause();
@@ -84,7 +112,7 @@ export async function captureDecodedVideoFrame(
 
   const { bytes, contentType } = decodeCanvasDataUrl(result.dataUrl);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, bytes);
+  await fs.writeFile(outputPath, bytes, {flag: 'wx', mode: 0o600});
 
   return {
     outputPath,
@@ -95,6 +123,7 @@ export async function captureDecodedVideoFrame(
     devicePixelRatio: result.devicePixelRatio,
     currentTime: result.currentTime,
     wasPaused: result.wasPaused,
+    executionBackend: result.executionBackend,
   };
 }
 

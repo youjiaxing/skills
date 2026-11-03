@@ -16,7 +16,7 @@
 
 引用中的 text/post/interactive 展开可读文字，单条引用文本最多4000字符并标记截断。当前富文本或引用里的图片通过消息资源接口下载到状态目录 `feishu/<app hash>/images`，一条请求最多4张、单张10MB；不遍历下载整个群的资源。已撤回/删除消息只返回状态，不展示正文或下载其图片。
 
-首次读取文字或图片失败时，入站上下文会提示 Agent 使用 `read-feishu.mjs message` / `image --chat SOURCE_CHAT` 按来源群、消息 ID 和图片 key 补读；能读多少用多少，仍无法读取时在回答中说明限制。路径会放入 Codex 请求作为图片查看工具的输入，不等于 App Server/queue 已收到多模态附件。当用户的问题涉及“这张图是什么”“图里有什么”“有没有漏题/已交”等视觉内容，或图片承载截止时间、名单状态、作业要求等行动依据时，Agent 必须用可用图片查看工具打开相关图片；多图按问题选择。只有图片与问题无关、已经撤回、无法取得或超出当前绑定可见范围时才能跳过，并在图片影响回答时说明限制。不能仅凭路径、图片 key、消息类型或 `not_downloaded` 状态声称看过。外部 Codex 缺少宿主工具时仍受 [Codex 限制](codex.md)约束。
+首次读取文字或图片失败时，入站上下文会提示 Agent 使用 `read-feishu.mjs message` / `image --chat SOURCE_CHAT` 按来源群、消息 ID 和图片 key 补读；能读多少用多少，仍无法读取时在回答中说明限制。路径会放入 Codex 请求作为待读图来源，不等于 App Server/queue 已收到多模态附件。当用户的问题涉及“这张图是什么”“图里有什么”“有没有漏题/已交”等视觉内容，或图片承载截止时间、名单状态、作业要求等行动依据时，按名称发现并调用已安装的 `yjx-image-reading` 准备输入，由独立视觉子任务实际打开相关图片；多图按问题选择。缺依赖时报告能力缺口。只有图片与问题无关、已经撤回、无法取得或超出当前绑定可见范围时才能跳过，并在图片影响回答时说明限制。不能仅凭路径、图片 key、消息类型或 `not_downloaded` 状态声称看过。外部 Codex 缺少宿主工具时仍受 [Codex 限制](codex.md)约束。
 
 ## 查询命令
 
@@ -38,7 +38,7 @@ node skills/yjx-feishu-agent/scripts/read-feishu.mjs image --chat oc_GROUP --mes
 
 history 每次1–50条，默认20条、按创建时间倒序，返回 hasMore/nextPageToken；要读完整范围需继续分页，不能把首屏当全群。时间参数为秒，消息创建时间为毫秒。普通群历史不含全部话题回复，需使用返回的 threadId 另查，话题容器不支持起止时间。查询仅覆盖平台对当前机器人可见的数据，群历史限制、入群时间和保密设置仍可能阻止读取。
 
-history/message 可加 `--concise` 返回精简 JSON，每条正文最多 2000 字符；默认最多 12000 字符。两种输出均保留查询 ID、`textLength/truncated`，API 实际提供时显示 `senderName` 和 `updateTime`，不额外查询通讯录。图片资源标记为 `not_downloaded`，不能据键名声称看过附件；当当前问题或明确引用依赖图片内容时，使用 `image` 子命令下载该消息的相关 key，再交给图片查看工具。history 的 `complete` 仅指当前容器与筛选条件下的分页结束，`completenessScope` 明示范围；`hasMore:true` 却缺 token 时给出 `pagination_incomplete`，不能报告完整。不会自动继续分页或批量下载全群资源；按需选择与问题相关的消息和图片。这些查询字段不自动附入 Codex 入站背景。
+history/message 可加 `--concise` 返回精简 JSON，每条正文最多 2000 字符；默认最多 12000 字符。两种输出均保留查询 ID、`textLength/truncated`，API 实际提供时显示 `senderName` 和 `updateTime`，不额外查询通讯录。图片资源标记为 `not_downloaded`，不能据键名声称看过附件；当当前问题或明确引用依赖图片内容时，使用 `image` 子命令下载该消息的相关 key，再沿上述共用读图入口识读。history 的 `complete` 仅指当前容器与筛选条件下的分页结束，`completenessScope` 明示范围；`hasMore:true` 却缺 token 时给出 `pagination_incomplete`，不能报告完整。不会自动继续分页或批量下载全群资源；按需选择与问题相关的消息和图片。这些查询字段不自动附入 Codex 入站背景。
 
 ## 权限核对
 

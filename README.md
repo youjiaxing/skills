@@ -2,7 +2,7 @@
 
 个人维护、面向开源社区与多 Agent 平台的通用 Skills 库。Skill 统一采用 `yjx-` 前缀以降低命名冲突。
 
-全库脚本均以 **Node.js 标准库**为主，无专有 SDK 或专有运行时依赖，兼容 Claude Code、Codex、Google Antigravity 等各类支持 Agent Skills 的平台。
+脚本以 **Node.js 标准库**为主；图片准备等能力按各 skill 声明 Python、Pillow 或编码工具依赖。工作流面向 Claude Code、Codex、Google Antigravity 等支持 Agent Skills 的平台，具体宿主能力按技能说明核验。
 
 ## 安装
 
@@ -118,6 +118,10 @@ npx skills add youjiaxing/skills --skill yjx-grill
 - **[`yjx-prototype`](skills/yjx-prototype/SKILL.md)**：在任务已包含或授权原型、视觉方案比较、交互或状态演示时可自动调用，也支持手动调用。探索时制作结构不同且可操作的方案，选定后补齐确认范围；根据需求决定沿用现有页面、局部调整或整体重构。演示机制与产品设计分离，原型确认不自动启动生产实施。
 - 原型制作与项目验证入口遵循目标项目规则；不要求安装上游 `prototype`。本仓库的 `yjx-wayfinder` 优先使用此 skill 处理适合的原型票。
 - 已有派生 skill 的来源、历史基线缺口、当前对照快照及后续选择吸收记录，维护在各自 `MAINTENANCE.md`；“已核对来源”与“已评估或吸收行为变化”分别记录。
+
+## 通用图片读取
+
+- **[`yjx-image-reading`](skills/yjx-image-reading/SKILL.md)**：需要模型理解图片、截图或视频帧时，准备保持分辨率的输入副本，并通过独立只读视觉子任务返回文字和来源索引。生活查询、旅行规划、视频课程、QQ、飞书和 iPhone 视觉观察引用同一入口；其他任务可按需选用，后续相关技能按仓库维护规则接入。依赖和隔离限制见技能说明。
 
 ## 个人全局提示词
 
