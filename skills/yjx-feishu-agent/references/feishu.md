@@ -74,13 +74,15 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs stop
 
 支持 `--state-dir PATH`。`start` 会等待心跳显示 `running` 且连接为 `connected` 才报告启动成功，随后仍须实群消息验收。`status` 区分运行、停止、死亡进程遗留锁、无 owner 的不完整锁以及未知状态；不能把一个残留 PID 文件当作接收器正在运行。`stop` 写入带当前实例 token 的停止请求，由接收器优雅关闭长连接、等待已接任务完成，再释放锁并退出；不会按 PID 强杀进程。
 
-Windows 使用原生 `schtasks.exe` 注册当前用户的任务：InteractiveToken、LeastPrivilege，当前用户登录时自动触发，不保存登录密码、不提升权限，执行时限设为无限，切换电池不停止。主任务保留失败后每分钟、最多3次的重启；另注册 `<主任务名>-watchdog`，每分钟执行一次 `receiver.mjs ensure`。恢复启用且接收器确认 stopped 时请求主任务启动，不因主任务耗尽重试而永久停止检查；running 不重复启动，stale_lock、incomplete_lock 和 unknown 记录 blocked，留待人工检查，不强杀或清理请求锁。注册后读回核对任务动作和触发配置。
+Windows 使用原生 `schtasks.exe` 注册当前用户的任务：InteractiveToken、LeastPrivilege，当前用户登录时自动触发，不保存登录密码、不提升权限，执行时限设为无限，切换电池不停止。首次失败后每分钟重试，最多再试3次；耗尽后停止并保留故障供排查，不注册周期巡检任务。注册后读回核对任务动作和触发配置。
 
-实际接收器由 Windows 任务服务启动，与 Desktop 终端生命周期分开；保持当前用户登录。`start` 启用本安装的自动恢复并可立即启动，Windows 重启后登录仍可触发；`stop` 先持久禁用恢复，再优雅停止，直到用户再次 `start`，登录及 watchdog 均不会重新拉起。受管 serve 在建立 receiver owner 时与 start/stop 共用生命周期锁并复核恢复意图，防止延迟启动绕过停止。若生命周期锁残留需人工检查，不自动抢占。删除安装时先 stop，再按 `task-registration.json` 和 `watchdog-registration.json` 删除两个任务。
+升级旧安装时，核对旧 `<主任务名>-watchdog` 的操作确为本技能 `receiver.mjs ensure` 且状态目录与安装记录一致后，删除该周期任务；保留主任务、请求记录及故障日志。新版本不提供 `ensure` 命令。
 
-macOS/Linux 使用 detached Node 进程，将标准输出记录在运行目录的 `receiver.log`；未做这两个平台的实机验收，也不安装 launchd/systemd 或定时 watchdog。`ensure` 可以单次检查，但不表示已安装调度。各平台的 `status.json` 保存实时心跳，`connection-events.ndjson` 保存连接状态变化，位于用户目录 `.yjx-feishu-agent-receivers/runtime/<app hash>`。`recovery.json` 保存启停意图，`watchdog-status.json` 保存最近检查结果，`last-failure.json` 与 `failures.ndjson` 保存故障阶段和允许的系统/API码，不保存原始异常、堆栈、消息正文或凭证。`receiver.mjs status` 一并显示恢复开关、最后检查及最近故障。心跳原子替换遇到短暂 EPERM/EACCES/EBUSY 时有限重试，持续失败仍保留错误。任务参数和日志不保存 App Secret；请求结果仍在原状态目录。
+实际接收器由 Windows 任务服务启动，与 Desktop 终端生命周期分开；保持当前用户登录。`start` 启用本安装的自动恢复并可立即启动，Windows 重启后登录仍可触发；`stop` 先持久禁用恢复，再优雅停止，直到用户再次 `start`，登录触发及失败重试均不会重新拉起。受管 serve 在建立 receiver owner 时与 start/stop 共用生命周期锁并复核恢复意图，防止延迟启动绕过停止。若生命周期锁残留需人工检查，不自动抢占。删除安装时先 stop，再按 `task-registration.json` 删除主任务。
 
-每个应用同一系统账户只允许一个接收器，锁在固定的用户目录 `.yjx-feishu-agent-receivers/locks/<app hash>`，与自定义状态目录无关。受管 `serve --managed` 在生命周期锁内先校验启用意图，再识别有效 owner 且确认 PID 已不存在的接收器锁，通过恢复互斥、二次 owner/token/PID 检查后回收，随后重新申请接收器锁。登录启动和任务失败重启因此可从上次进程突然退出恢复，不依赖周期 watchdog。独立 `serve` 和手动 `start` 遇到残留锁仍要求明确检查后执行：
+macOS/Linux 使用 detached Node 进程，将标准输出记录在运行目录的 `receiver.log`；未做这两个平台的实机验收，也不安装 launchd/systemd。各平台的 `status.json` 保存实时心跳，`connection-events.ndjson` 保存连接状态变化，位于用户目录 `.yjx-feishu-agent-receivers/runtime/<app hash>`。`recovery.json` 保存启停意图，`last-failure.json` 与 `failures.ndjson` 保存故障阶段和允许的系统/API码，不保存原始异常、堆栈、消息正文或凭证。`receiver.mjs status` 一并显示恢复开关及最近故障。心跳原子替换遇到短暂 EPERM/EACCES/EBUSY 时有限重试，持续失败仍保留错误。任务参数和日志不保存 App Secret；请求结果仍在原状态目录。
+
+每个应用同一系统账户只允许一个接收器，锁在固定的用户目录 `.yjx-feishu-agent-receivers/locks/<app hash>`，与自定义状态目录无关。受管 `serve --managed` 在生命周期锁内先校验启用意图，再识别有效 owner 且确认 PID 已不存在的接收器锁，通过恢复互斥、二次 owner/token/PID 检查后回收，随后重新申请接收器锁。登录启动和任务失败重启因此可从上次进程突然退出恢复。独立 `serve` 和手动 `start` 遇到残留锁仍要求明确检查后执行：
 
 ```sh
 node skills/yjx-feishu-agent/scripts/receiver.mjs recover-lock
@@ -88,7 +90,7 @@ node skills/yjx-feishu-agent/scripts/receiver.mjs recover-lock
 
 该命令串行核对 owner 和 PID，仅回收已确认不存在的接收器进程锁，不改 Codex sender locks 或请求日志。权限不足、PID 仍存在、owner 缺失都拒绝恢复；`incomplete_lock` 或恢复互斥目录遗留时需先检查相关进程和目录，不能直接按 PID 强杀或批量删状态。其他电脑或系统账户上的同应用实例也应关闭，飞书会在多个长连接间分发事件。
 
-状态文件、恢复意图和停止请求使用唯一排他临时文件，完成写入、`sync` 和关闭后再原子替换；锁 owner 写入也先 `sync`。这降低异常关机后出现全零文件的概率，不能保证硬件或目录元数据的断电持久性。`status.json`、watchdog 和故障快照损坏时报告 `unreadable`，不从损坏内容推断正在运行，也不让它遮蔽已死亡 owner；owner、恢复意图、停止控制及请求日志仍严格读取，损坏时不授予恢复权限。生命周期锁、恢复互斥锁、不完整 owner 的损坏仍保留人工检查边界。不要因本机曾有 watchdog 而重新开启已禁用任务。
+状态文件、恢复意图和停止请求使用唯一排他临时文件，完成写入、`sync` 和关闭后再原子替换；锁 owner 写入也先 `sync`。这降低异常关机后出现全零文件的概率，不能保证硬件或目录元数据的断电持久性。`status.json` 和故障快照损坏时报告 `unreadable`，不从损坏内容推断正在运行，也不让它遮蔽已死亡 owner；owner、恢复意图、停止控制及请求日志仍严格读取，损坏时不授予恢复权限。生命周期锁、恢复互斥锁、不完整 owner 的损坏仍保留人工检查边界。
 
 `feishu.mjs serve` 仍可用于独立终端前台调试，Ctrl+C 或 SIGTERM 优雅停止。若从 Codex Desktop 的工具终端启动，Desktop 退出可能连带停止它；日常使用应走上述管理命令。
 

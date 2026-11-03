@@ -46,12 +46,3 @@ export async function recordRuntimeFailure(paths, error, stage) {
   await appendFile(path.join(paths.runtime, 'failures.ndjson'), `${JSON.stringify(failure)}\n`, { mode: 0o600 });
   return failure;
 }
-
-// Invoked under the lifecycle lock. Never steal locks or replay admitted requests.
-export async function ensureReceiver({ enabled, status, start }) {
-  if (!enabled) return { recovery: 'disabled' };
-  if (status.state === 'running') return { recovery: 'already_running' };
-  if (status.state !== 'stopped') return { recovery: 'blocked', receiverState: status.state };
-  await start();
-  return { recovery: 'start_requested' };
-}

@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { defaultStateDir } from './codex.mjs';
 import { loadCredentials } from './feishu-credentials.mjs';
 import { receiverPaths, receiverStatus, recoverReceiverLock, readJson, readRuntimeSnapshot, atomicJson, processAlive } from './receiver-runtime.mjs';
-import { withReceiverControl, recoveryEnabled, setRecovery, ensureReceiver, recordRuntimeFailure } from './receiver-recovery.mjs';
+import { withReceiverControl, recoveryEnabled, setRecovery } from './receiver-recovery.mjs';
 
 const execute = promisify(execFile);
 const script = fileURLToPath(new URL('./feishu.mjs', import.meta.url));
@@ -40,11 +40,6 @@ export function legacyTaskDefinition({ sid, node, args, cwd }) {
 export function previousTaskDefinition({ sid, node, args, cwd }) {
   return taskDefinition({ sid, node, args, cwd })
     .replace('<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>', '');
-}
-
-export function watchdogDefinition(options) {
-  return taskDefinition(options)
-    .replace(/<Triggers>[\s\S]*?<\/Triggers>/, '<Triggers><TimeTrigger><Repetition><Interval>PT1M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>2026-01-01T00:00:00</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers>');
 }
 
 export function matchesTask(definition, expected, { logonUser } = {}) {
@@ -117,7 +112,7 @@ export function matchesTask(definition, expected, { logonUser } = {}) {
   });
 }
 
-async function startWindows(paths, stateDir, { installWatchdog = true } = {}) {
+async function startWindows(paths, stateDir) {
   const { stdout: identity } = await execute('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
   const sid = identity.match(/S-1-5-\d+(?:-\d+)+/)?.[0];
   const logonUser = identity.match(/^\s*"([^"]+)"/)?.[1];
@@ -146,7 +141,6 @@ async function startWindows(paths, stateDir, { installWatchdog = true } = {}) {
     await execute('schtasks.exe', ['/Create', '/TN', paths.taskName, '/XML', specFile], { windowsHide: true });
     await atomicJson(installation, { stateDir, taskName: paths.taskName });
   }
-  if (installWatchdog) await installWindowsWatchdog(paths, stateDir, sid);
   const verified = await execute('schtasks.exe', ['/Query', '/TN', paths.taskName, '/XML'], { windowsHide: true, encoding: 'buffer' });
   if (!matchesTask(decodeTask(verified.stdout), expected, { logonUser })) throw new Error('Receiver task read-back differs');
   await execute('schtasks.exe', ['/Run', '/TN', paths.taskName], { windowsHide: true });
@@ -154,33 +148,6 @@ async function startWindows(paths, stateDir, { installWatchdog = true } = {}) {
 
 function decodeTask(buffer) {
   return (buffer[0] === 0xff && buffer[1] === 0xfe) || buffer[1] === 0 ? buffer.toString('utf16le') : buffer.toString('utf8');
-}
-
-// A user-disabled watchdog is intentional; starting the receiver must preserve it.
-export function matchesWatchdogTask(definition, expected) {
-  const disabled = expected.replace(/<Settings>([\s\S]*?)<\/Settings>/, (_, settings) =>
-    `<Settings>${settings.replace('<Enabled>true</Enabled>', '<Enabled>false</Enabled>')}</Settings>`);
-  return matchesTask(definition, expected) || matchesTask(definition, disabled);
-}
-
-async function installWindowsWatchdog(paths, stateDir, sid) {
-  const taskName = `${paths.taskName}-watchdog`;
-  const installation = path.join(paths.runtime, 'watchdog-registration.json');
-  const args = [fileURLToPath(import.meta.url), 'ensure', '--state-dir', stateDir].map(windowsArgument).join(' ');
-  const expected = watchdogDefinition({ sid, node: process.execPath, args, cwd: path.dirname(script) });
-  const known = await readJson(installation);
-  if (known) {
-    if (known.stateDir !== stateDir || known.taskName !== taskName) throw new Error('Watchdog belongs to another installation');
-    const existing = await execute('schtasks.exe', ['/Query', '/TN', taskName, '/XML'], { windowsHide: true, encoding: 'buffer' });
-    if (!matchesWatchdogTask(decodeTask(existing.stdout), expected)) throw new Error('Watchdog task differs; refusing replacement');
-  } else {
-    const definition = path.join(paths.runtime, 'watchdog.xml');
-    await writeFile(definition, Buffer.from(`\ufeff${expected}`, 'utf16le'), { mode: 0o600 });
-    await execute('schtasks.exe', ['/Create', '/TN', taskName, '/XML', definition], { windowsHide: true });
-    await atomicJson(installation, { stateDir, taskName });
-  }
-  const verified = await execute('schtasks.exe', ['/Query', '/TN', taskName, '/XML'], { windowsHide: true, encoding: 'buffer' });
-  if (!matchesWatchdogTask(decodeTask(verified.stdout), expected)) throw new Error('Watchdog task read-back differs');
 }
 
 async function startPosix(paths, stateDir) {
@@ -197,10 +164,10 @@ async function startPosix(paths, stateDir) {
 export async function main(argv) {
   const [command, ...rest] = argv;
   if (!command || command === '--help') {
-    process.stdout.write('Usage: node receiver.mjs start|stop|status|recover-lock|ensure [--state-dir PATH]\nWindows: current-user logon task plus a one-minute recovery watchdog. stop disables managed auto-start until start.\nmacOS/Linux: detached Node process; ensure is a one-shot recovery check, no scheduler installed.\nrecover-lock is explicit and only removes a receiver lock whose PID is confirmed absent.\n');
+    process.stdout.write('Usage: node receiver.mjs start|stop|status|recover-lock [--state-dir PATH]\nWindows: current-user logon task with up to three failure retries. stop disables managed auto-start until start.\nmacOS/Linux: detached Node process; no scheduler installed.\nrecover-lock is explicit and only removes a receiver lock whose PID is confirmed absent.\n');
     return;
   }
-  if (!['start', 'stop', 'status', 'recover-lock', 'ensure'].includes(command) ||
+  if (!['start', 'stop', 'status', 'recover-lock'].includes(command) ||
       (rest.length && (rest.length !== 2 || rest[0] !== '--state-dir' || !rest[1]))) throw new Error('Invalid arguments');
   const stateDir = path.resolve(rest[1] ?? defaultStateDir());
   const { appId } = await loadCredentials(stateDir);
@@ -208,27 +175,13 @@ export async function main(argv) {
   const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
   const status = await receiverStatus(appId);
   if (command === 'status') {
-    const watchdog = await readRuntimeSnapshot(path.join(paths.runtime, 'watchdog-status.json'));
     const failure = await readRuntimeSnapshot(path.join(paths.runtime, 'last-failure.json'));
     print({ ...status, recovery: { enabled: await recoveryEnabled(paths, stateDir),
-      watchdog: watchdog.value, watchdogState: watchdog.state,
       lastFailure: failure.value, failureState: failure.state } });
     return;
   }
   if (command === 'recover-lock') {
     print({ recovered: await recoverReceiverLock(appId), ...await receiverStatus(appId) });
-    return;
-  }
-  if (command === 'ensure') {
-    try {
-      const result = await withReceiverControl(paths, async () => ensureReceiver({
-        enabled: await recoveryEnabled(paths, stateDir), status: await receiverStatus(appId),
-        start: () => process.platform === 'win32' ? startWindows(paths, stateDir, { installWatchdog: false }) : startPosix(paths, stateDir),
-      }));
-      await atomicJson(path.join(paths.runtime, 'watchdog-status.json'), { ...result, checkedAt: new Date().toISOString() });
-      print(result);
-      if (result.recovery === 'blocked') process.exitCode = 2;
-    } catch (error) { await recordRuntimeFailure(paths, error, 'watchdog'); throw error; }
     return;
   }
   if (command === 'stop') {
@@ -254,7 +207,6 @@ export async function main(argv) {
     if (!['running', 'stopped'].includes(current.state)) throw new Error('Receiver lock needs inspection; use status and explicit recover-lock for a dead owner');
     await setRecovery(paths, stateDir, true);
     await rm(path.join(paths.runtime, 'stop.json'), { force: true });
-    // Also register/verify the watchdog when the receiver is already running.
     if (process.platform === 'win32') await startWindows(paths, stateDir);
     else if (current.state !== 'running') await startPosix(paths, stateDir);
   });
