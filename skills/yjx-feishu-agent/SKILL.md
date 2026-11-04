@@ -1,11 +1,11 @@
 ---
 name: yjx-feishu-agent
-description: 飞书与本机 Codex 已有聊天的桥接：向接入群推送并支持引用回到发送会话、群绑定、白名单 @ 消息、接收器运行管理，以及持久投递、卡片更新与故障恢复。独立消息操作和群管理使用 lark-im。
+description: 飞书与本机 Codex / T3 Code 已有聊天的桥接：向接入群推送并支持引用回到发送会话、群绑定、白名单 @ 消息、接收器运行管理，以及持久投递、卡片更新与故障恢复。独立消息操作和群管理使用 lark-im。
 ---
 
 # 飞书 Agent 桥接
 
-负责 Codex 适配、群绑定与引用上下文、投递账本及接收器运行管理。任务入口按这条路径选择：已接入群推送读 [主动投递](references/outbound.md)，入站故障按消息 ID 读 [本地诊断](references/diagnostics.md)，群历史或附件按需读 [消息上下文](references/messages.md)，独立飞书操作使用 `lark-im`。已接入群推送必须登记实际来源会话，单向消息才使用 `oneWay:true`。身份与权限复用 `lark-shared`，对外报告状态按 [状态表述](references/status.md) 区分。职责边界见 [CLI 与外部 skills 分工](references/feishu-cli.md)。
+负责 Codex / T3 Code 适配、群绑定与引用上下文、投递账本及接收器运行管理。T3 会话承接、旧来源迁移和 T3 提交结果恢复见 [T3 接入](references/t3.md)。任务入口按这条路径选择：已接入群推送读 [主动投递](references/outbound.md)，入站故障按消息 ID 读 [本地诊断](references/diagnostics.md)，群历史或附件按需读 [消息上下文](references/messages.md)，独立飞书操作使用 `lark-im`。已接入群推送必须登记实际来源会话，单向消息才使用 `oneWay:true`。身份与权限复用 `lark-shared`，对外报告状态按 [状态表述](references/status.md) 区分。职责边界见 [CLI 与外部 skills 分工](references/feishu-cli.md)。
 
 准备凭证、诊断飞书访问、绑定群或启动接收时，阅读 [飞书接入](references/feishu.md)。跨平台 Node.js 录入脚本在用户自己的终端隐藏接收 App Secret，将未加密凭证保存到仓库外的用户目录；不要让用户把 Secret 发到聊天中。凭证保存完成不表示飞书收发已通过验收。
 

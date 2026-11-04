@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { lockThread } from './state.mjs';
 import { validateThreadId } from './codex.mjs';
+import { targetFor } from './agent-targets.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 export function routeFile(stateDir, appId, chatId) {
@@ -49,7 +50,11 @@ export function checkRoute(route) {
 
 export function createMessageRouter(options) {
   return {
-    async admit(item, persist) {
+    async admit(item, saveAdmission) {
+      const persist=choice => {
+        const target=targetFor(item.binding,choice.threadId);
+        return saveAdmission({...choice,...(target ? {agentTarget:target}: {})});
+      };
       const useDefault=routeMode => item.binding.threadId
         ? {threadId:item.binding.threadId,autoUnarchive:false,routeMode}
         : {code:'DEFAULT_UNCONFIGURED',routeMode:'blocked',

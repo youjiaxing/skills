@@ -52,6 +52,8 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-
 
 图片路径相对输入 JSON 解析；单图非空且不超过10MB。摘要和上传使用同一份字节。已有飞书图片标识可直接填入，不必再上传；无图则省略 images。首发与更新自动显式设置 `config.update_multi:true`，拒绝独享卡片。文本用 `msgType:text`、`content:{"text":"提醒正文"}`；富文本按官方 post 结构提供。
 
+图片映射名与 `local:` 引用使用相同名称，可包含字母、数字、下划线、连字符和扩展名点号，例如 `notice-photo.jpg`；名称不能作为目录路径。它与图片文件的实际存放路径是两个独立字段。
+
 已接入群的新 send/update 必须显式提供 `sourceThreadId`（当前已授权的本机 Codex 聊天 UUID），或以 `oneWay:true` 明确只需单向发送；二者互斥，`oneWay:false` 不豁免来源要求。缺少来源返回 `SOURCE_REQUIRED`，在上传和消息写入之前阻断。update 根据原卡片账本中的群判断，不继承旧卡片来源。未接入群的独立投递保持兼容。
 
 调用方从实际当前会话标识（如该会话进程的 `CODEX_THREAD_ID`）取得来源，不从群默认绑定或最近聊天猜测；仅校验 UUID 形态不代表已验证目标存在。字段随输入生成后固定，消费已有输入不补环境变量，不因换会话而更改旧指纹。已有请求仍按原输入去重，status/recheck/reconcile 不要求补来源。来源在本地成功记账后生效，结果未知时暂停新引用；恢复只补原请求的元数据，不换编号重发。单向更新会清除该版本的有效来源，详见 [引用路由](routing.md)。

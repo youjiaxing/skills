@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { sendCodex, requestStatus } from './codex.mjs';
+import { sendCodex, requestStatus, defaultStateDir } from './codex.mjs';
+import { readRecord } from './state.mjs';
+import { requestT3Status } from './t3.mjs';
 
 const HELP = `Usage:
   node agent.mjs send --thread UUID [--message TEXT] [options]
@@ -61,7 +63,13 @@ export async function main(argv) {
     options.message = '';
     for await (const chunk of process.stdin) options.message += chunk;
   }
-  const record = options.command === 'send' ? await sendCodex(options) : await requestStatus(options);
+  let record;
+  if(options.command==='send') record=await sendCodex(options);
+  else {
+    const stateDir=options.stateDir ?? defaultStateDir();
+    const saved=await readRecord(stateDir,options.requestId);
+    record=saved.agent==='t3' ? await requestT3Status({...options,stateDir}) : await requestStatus(options);
+  }
   process.stdout.write(`${JSON.stringify(record)}\n`);
   if (options.command === 'status' || record.status === 'completed') return 0;
   return ['blocked', 'failed', 'interrupted'].includes(record.status) ? 2 : 3;

@@ -54,7 +54,10 @@ export async function prepareContent(input, directory = process.cwd()) {
   if (input.msgType === 'interactive') validateCard(content);
   const images = {};
   for (const [name, file] of Object.entries(input.images ?? {})) {
-    if (!/^[a-zA-Z0-9_-]+$/.test(name) || typeof file !== 'string') throw new Error('Invalid image mapping');
+    // Aliases are dictionary keys, not paths. Preserve filename extensions while
+    // excluding path components and JavaScript object prototype properties.
+    if (!/^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*$/.test(name) ||
+        ['__proto__','constructor','prototype'].includes(name) || typeof file !== 'string') throw new Error('Invalid image mapping');
     const bytes = await readFile(path.resolve(directory, file));
     if (!bytes.length || bytes.length > 10 * 1024 * 1024) throw new Error('Images must contain 1 byte to 10 MB');
     images[name] = { bytes, digest: hash(bytes) };

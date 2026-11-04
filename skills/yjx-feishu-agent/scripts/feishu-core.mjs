@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, rename, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { sendCodex, validateThreadId } from './codex.mjs';
+import { validateThreadId } from './codex.mjs';
+import { sendAgent, validateAgentTargets } from './agent-targets.mjs';
 import { bodyText, decodeBody } from './feishu-content.mjs';
 import { recordAdmission, safeFailure } from './message-diagnostics.mjs';
 
@@ -40,6 +41,7 @@ export function validateBindings(config) {
     config.codexTimeoutMs<60000 || config.codexTimeoutMs>3600000)) throw new Error('codexTimeoutMs must be 60000–3600000');
   if (config.codexRpcTimeoutMs !== undefined && (!Number.isSafeInteger(config.codexRpcTimeoutMs) ||
     config.codexRpcTimeoutMs<1000 || config.codexRpcTimeoutMs>120000)) throw new Error('codexRpcTimeoutMs must be 1000–120000');
+  validateAgentTargets(config);
   const groups = new Set();
   for (const binding of config.bindings) {
     if (!/^oc_[\w]+$/.test(binding.chatId) || groups.has(binding.chatId)) throw new Error('Invalid or duplicate group binding');
@@ -94,7 +96,7 @@ export async function writeJournal(file, record) {
 
 // Single receiver owns this directory. ACK waits for admission to be persisted,
 // not for the Codex turn. Interrupted journals are retained for human recovery.
-export function createReceiver({ appId, botId, config, stateDir, reply, send = sendCodex, context = async item => item.text,
+export function createReceiver({ appId, botId, config, stateDir, reply, send = sendAgent, context = async item => item.text,
   admitRoute = async (item,persist) => persist({threadId:item.binding.threadId,autoUnarchive:false}),
   confirmReply = async () => {}, prepareReply = answer => ({msgType:'text',content:{text:answer},mode:'text'}),
   feedback = { update() {} }, log = () => {} }) {
@@ -103,6 +105,9 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
   const active = new Map();
   const concurrency = config.maxConcurrentThreads ?? 2;
   let accepting = true;
+  const queueKey=job => job.record.agentTarget
+    ? `${job.record.agentTarget.kind}:${job.record.agentTarget.threadId}`
+    : job.record.threadId ?? job.record.requestId;
   let admission = Promise.resolve();
   let pendingAdmissions = 0;
   async function processJob({record,file,item}) {
@@ -120,6 +125,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       stage = 'codex'; record.stage = stage;
       await writeJournal(file,record);
       const result = record.routeError ? {status:'blocked',submitted:false} : await send({ threadId: record.threadId, message: text, requestId: record.requestId,
+        agentTarget:record.agentTarget, t3Command:config.t3Command,t3BaseDir:config.t3BaseDir,
         autoUnarchive:record.autoUnarchive, stateDir, codex: config.codex, cwd: config.cwd,
         waitMode:'state',timeoutMs:record.codexRpcTimeoutMs });
       record.codexStatus = result.status;
@@ -183,9 +189,9 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
 
   function pump() {
     while (active.size < concurrency) {
-      const index=queue.findIndex(job => !active.has(job.record.threadId ?? job.record.requestId));
+      const index=queue.findIndex(job => !active.has(queueKey(job)));
       if(index<0) break;
-      const [job]=queue.splice(index,1),key=job.record.threadId ?? job.record.requestId;
+      const [job]=queue.splice(index,1),key=queueKey(job);
       const task=processJob(job).finally(()=>{active.delete(key);pump();});
       active.set(key,task);
     }
@@ -218,6 +224,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       messageType:item.source.message_type, status: 'accepted', createdAt: new Date().toISOString() };
     await admitRoute(item, async route => {
       record.threadId = route.threadId ?? null;
+      if (route.agentTarget) record.agentTarget = structuredClone(route.agentTarget);
       record.autoUnarchive = route.autoUnarchive === true;
       if (route.error) record.routeError = route.error;
       if (route.code) record.routeCode = route.code;

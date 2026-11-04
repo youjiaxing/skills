@@ -9,6 +9,35 @@ import { deliver, outboundStatus, prepareContent, outboundPaths, validateCard,
 import { parseArgs, main, preflight } from '../scripts/outbound.mjs';
 
 const card = text => ({ header: { title: { tag: 'plain_text', content: text } }, elements: [] });
+
+test('filename image aliases survive send/update and keep image bytes in the fingerprint', async t => {
+  const c=await setup(t),name='abcdef123456.jpg';
+  await writeFile(path.join(c.stateDir,'photo.jpg'),'original image');
+  const input={...c.initial,images:{[name]:'photo.jpg'},content:{elements:[{tag:'img',img_key:`local:${name}`}]}};
+  const sent=await deliver(input,c.options);
+  assert.equal(sent.status,'sent');
+  assert.equal(sent.content.elements[0].img_key,'img_test');
+  assert.equal((await deliver(input,c.options)).deduplicated,true);
+  const update={...c.update,images:input.images,content:input.content};
+  const updated=await deliver(update,c.options);
+  assert.equal(updated.status,'sent');
+  assert.equal(updated.revision,2);
+  assert.equal(updated.messageId,sent.messageId);
+  await writeFile(path.join(c.stateDir,'photo.jpg'),'changed image');
+  await assert.rejects(deliver(input,c.options),/different input/);
+  await assert.rejects(deliver(update,c.options),/different input/);
+  assert.deepEqual(c.calls.map(x=>x[0]),['upload','send','upload','update']);
+});
+
+test('image aliases reject path separators and object prototype keys before transport', async t => {
+  const c=await setup(t);
+  await writeFile(path.join(c.stateDir,'photo.jpg'),'image');
+  for(const name of ['../photo.jpg','folder/photo.jpg','folder\\photo.jpg','__proto__','constructor','prototype']) {
+    const images=Object.fromEntries([[name,'photo.jpg']]);
+    await assert.rejects(deliver({...c.initial,images,content:{elements:[{tag:'img',img_key:`local:${name}`}] }},c.options),/Invalid image mapping/);
+  }
+  assert.deepEqual(c.calls,[]);
+});
 async function setup(t) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), 'feishu-outbound-'));
   t.after(() => rm(stateDir, { recursive: true, force: true }));

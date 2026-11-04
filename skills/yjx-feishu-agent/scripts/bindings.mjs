@@ -9,7 +9,7 @@ import { loadCredentials } from './feishu-credentials.mjs';
 import { defaultStateDir, validateThreadId } from './codex.mjs';
 import { lockThread } from './state.mjs';
 import { validateBindings, writeJournal, digest } from './feishu-core.mjs';
-import { inspectTarget } from './target.mjs';
+import { inspectAgentTarget, targetFor } from './agent-targets.mjs';
 
 export async function rebind(config, { chatId, expectedThread, threadId }, check) {
   validateBindings(config);
@@ -57,7 +57,7 @@ export async function main(argv) {
     if (!selected.length) throw new Error('Group not bound');
     const rows = [];
     for (const binding of selected) rows.push({ ...binding, ...(command === 'check' ? {
-      target: binding.threadId ? await inspectTarget({ threadId: binding.threadId, codex: config.codex ?? 'codex', cwd: config.cwd ?? process.cwd() })
+      target: binding.threadId ? await inspectAgentTarget({ threadId: binding.threadId, agentTarget:targetFor(binding,binding.threadId),t3Command:config.t3Command,t3BaseDir:config.t3BaseDir,codex: config.codex ?? 'codex', cwd: config.cwd ?? process.cwd() })
         : {state:'unconfigured',reason:'quote_only_group'} } : {}) });
     console.log(JSON.stringify({ bindings: rows }));
     return;
@@ -67,7 +67,7 @@ export async function main(argv) {
   if (!release) throw new Error('Stop receiver and inspect leftover lock first');
   try {
     const config = JSON.parse(await readFile(file, 'utf8'));
-    const next = command==='rebind' ? await rebind(config, options, inspectTarget) : setQuoteRouting(config,options);
+    const next = command==='rebind' ? await rebind(config, options, params=>inspectAgentTarget({...params,agentTarget:targetFor(config.bindings.find(b=>b.chatId===options.chatId),params.threadId),t3Command:config.t3Command,t3BaseDir:config.t3BaseDir})) : setQuoteRouting(config,options);
     const history = path.join(stateDir, 'feishu', 'binding-history');
     await mkdir(history, { recursive: true, mode: 0o700 });
     const backup = path.join(history, `${Date.now()}-${randomUUID()}.json`);
