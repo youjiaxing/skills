@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { readJson, atomicJson, validateConfig } from './storage.mjs';
 import { taskKey, normalizePageId, normalizeExternalPage, indexPages, candidateTasks, planTask, planPersonal, verifyPage } from './engine.mjs';
 
@@ -91,7 +92,7 @@ export class Coordinator {
       }
       case 'configure': {
         if (input.confirmed !== true) throw new Error('配置变更需用户明确指令');
-        if (!input.patch || Object.keys(input.patch).some(x => !['watchedTasks', 'ignoredTaskIds', 'activeWindowDays'].includes(x))) throw new Error('此入口只修改跟进/忽略名单与活跃窗口；数据源/账号绑定需单独迁移');
+        if (!input.patch || Object.keys(input.patch).some(x => !['watchedTasks', 'ignoredTaskIds', 'activeWindowDays', 'autoCompleteOnTbEnd'].includes(x))) throw new Error('配置字段不受支持；数据源/账号绑定需单独迁移');
         if (this.pending().length) throw new Error('先对账未决操作再更改跟进配置');
         const config = validateConfig({ ...this.config, ...input.patch });
         atomicJson(this.root, 'config.json', config);
@@ -124,7 +125,9 @@ export class Coordinator {
             normalizePageId(existing.pageId) !== normalizePageId(page.pageId) ||
             existing.trackingMode !== plan.next.trackingMode ||
             existing.lastKnownExecutorId !== plan.next.lastKnownExecutorId ||
-            existing.autoCompletedByReassign !== plan.next.autoCompletedByReassign;
+            existing.autoCompletedByReassign !== plan.next.autoCompletedByReassign ||
+            existing.autoCompletedByTbEnd !== plan.next.autoCompletedByTbEnd ||
+            existing.tbEndManualOverride !== plan.next.tbEndManualOverride;
           if (needStore) {
             this.storeEntry(key, { ...plan.next, pageId: page.pageId, pendingOp: null });
           }
@@ -166,11 +169,12 @@ export class Coordinator {
         const op = entry.pendingOp;
         if (op.phase !== 'prepared') throw new Error('请求已经派发或结果未知，禁止重发');
         if (op.pageId) {
+          if (['auto_complete', 'auto_reopen'].includes(op.type) && input.currentPage == null) throw new Error('自动状态变更需重新读取当前页面');
           const targetId = normalizePageId(op.pageId);
           const page = input.currentPage != null
             ? normalizeExternalPage(input.currentPage)
             : this.inventory?.find(p => normalizePageId(p.pageId) === targetId);
-          if (!page || normalizePageId(page.pageId) !== targetId || JSON.stringify(page.properties) !== JSON.stringify(op.before)) {
+          if (!page || normalizePageId(page.pageId) !== targetId || !isDeepStrictEqual(page.properties, op.before)) {
             throw new Error('派发前页面有变化，请取消 prepared 后重读/重算');
           }
         } else {
@@ -251,7 +255,8 @@ export class Coordinator {
             this.assertPageIdAvailable(key, resolvedPage.pageId, resolvedPage.pageId);
             if (!(input.currentExecutorId === null || /^[a-f0-9]{24}$/.test(input.currentExecutorId))) throw new Error('需核实当前负责人');
             const trackingMode = this.config.watchedTasks.includes(key.slice(3)) ? 'watched' : input.currentExecutorId === this.config.tbUserId ? 'executor' : 'inactive';
-            next = { ...op.next, trackingMode, pageId: resolvedPage.pageId, autoCompletedByReassign: false, lastKnownExecutorId: input.currentExecutorId, pendingOp: null };
+            const manualReopen = resolvedPage.properties['个人状态'] !== '已完成' && (op.next.autoCompletedByTbEnd || op.priorEntry?.autoCompletedByTbEnd);
+            next = { ...op.next, trackingMode, pageId: resolvedPage.pageId, autoCompletedByReassign: false, autoCompletedByTbEnd: manualReopen ? false : op.next.autoCompletedByTbEnd, tbEndManualOverride: manualReopen || op.next.tbEndManualOverride, lastKnownExecutorId: input.currentExecutorId, pendingOp: null };
           }
         } else throw new Error('outcome 仅支持 adopt/user_state/not_applied，未确认则保持阻断');
         this.storeEntry(key, next);

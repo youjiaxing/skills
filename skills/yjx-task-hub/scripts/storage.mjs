@@ -74,6 +74,7 @@ export function atomicJson(root, name, value) {
 export function validateConfig(c) {
   if (!c || c.version !== 1 || !/^[a-f0-9-]{32,36}$/i.test(c.notionDatabaseId) || !/^collection:\/\/[a-f0-9-]{36}$/i.test(c.notionDataSourceId) || !/^[a-f0-9]{24}$/.test(c.tbUserId)) throw new Error('配置缺少已核实的 Notion/TB 绑定');
   if (!Number.isInteger(c.activeWindowDays) || c.activeWindowDays < 1) throw new Error('activeWindowDays 必须为正整数');
+  if (c.autoCompleteOnTbEnd !== undefined && typeof c.autoCompleteOnTbEnd !== 'boolean') throw new Error('autoCompleteOnTbEnd 必须为布尔值');
   for (const name of ['watchedTasks', 'ignoredTaskIds']) if (!Array.isArray(c[name]) || c[name].some(x => !/^[a-f0-9]{24}$/.test(x))) throw new Error(`${name} 必须是 taskId 数组`);
   if (c.watchedTasks.some(x => c.ignoredTaskIds.includes(x))) throw new Error('显式跟进不能同时被忽略');
   return c;

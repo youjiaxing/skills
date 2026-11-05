@@ -101,6 +101,12 @@ export function planTask(task, page, previous, config) {
   if (!statuses.includes(personal)) throw new Error('个人状态不受支持');
   if (page && page.properties['来源标识'] !== key) throw new Error('页面来源与任务不一致');
   if (next.autoCompletedByReassign && personal !== '已完成') next.autoCompletedByReassign = false;
+  const sourceEnded = task.isDone || task.isArchived;
+  if (next.autoCompletedByTbEnd && personal !== '已完成') {
+    next.autoCompletedByTbEnd = false;
+    next.tbEndManualOverride = true;
+  }
+  if (!sourceEnded) next.tbEndManualOverride = false;
   let prevExecutor = next.lastKnownExecutorId;
   if (watched) {
     if (next.trackingMode !== 'watched') next.autoCompletedByReassign = false;
@@ -126,7 +132,18 @@ export function planTask(task, page, previous, config) {
       notices.push('转回自己，自动重开为待安排');
     }
   }
-  if ((watched || task.executorId === me) && (task.isDone || task.isArchived) && personal !== '已完成') notices.push('TB 已完结/归档，个人后续动作请确认收尾');
+  if (page && config.autoCompleteOnTbEnd === true && task.executorId === me) {
+    if (sourceEnded && personal !== '已完成') {
+      if (next.tbEndManualOverride) notices.push('TB 已完结/归档，保留手动重开的个人状态');
+      else {
+        type = 'auto_complete'; to = '已完成'; next.autoCompletedByTbEnd = true;
+        notices.push('TB 已完结/归档，自动完成个人任务');
+      }
+    } else if (!sourceEnded && personal === '已完成' && next.autoCompletedByTbEnd) {
+      type = 'auto_reopen'; to = '待安排'; next.autoCompletedByTbEnd = false;
+      notices.push('TB 已恢复，自动重开为待安排');
+    }
+  } else if ((watched || task.executorId === me) && sourceEnded && personal !== '已完成') notices.push('TB 已完结/归档，个人后续动作请确认收尾');
   if (previous?.trackingMode === 'inactive' && next.trackingMode === 'executor' && personal === '已完成' && !task.isDone && !task.isArchived) notices.push('任务现指派给自己，是否重开由用户决定');
   next.lastKnownExecutorId = task.executorId;
   const properties = { '来源状态': snapshot, '来源链接': `https://www.teambition.com/task/${task.id}` };
@@ -157,7 +174,11 @@ export function planPersonal(page, properties, previous, existingKey) {
   const key = existingKey || page?.properties['来源标识'] || `MANUAL:${page?.pageId ?? randomUUID()}`;
   if (previous?.pendingOp) throw new Error('先处理未决操作');
   const next = structuredClone(previous ?? { trackingMode: 'inactive', lastKnownExecutorId: null, autoCompletedByReassign: false });
-  if ('个人状态' in properties) next.autoCompletedByReassign = false;
+  if ('个人状态' in properties) {
+    next.autoCompletedByReassign = false;
+    if (next.autoCompletedByTbEnd && properties['个人状态'] !== '已完成') next.tbEndManualOverride = true;
+    next.autoCompletedByTbEnd = false;
+  }
   return { planId: randomUUID(), key, pageId: page?.pageId ?? null, type: page ? 'personal_edit' : 'create', unchanged: false, properties: { ...properties, ...(!page ? { '个人状态': properties['个人状态'] ?? '待安排' } : {}) }, before: page?.properties ?? null, next, notices: [] };
 }
 

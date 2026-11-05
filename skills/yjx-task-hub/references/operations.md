@@ -49,7 +49,7 @@ node <skill-dir>/scripts/hub.mjs stop --session <token>
 | --- | --- | --- |
 | inventory | complete:true、pages | 单次解码受控字段，返回条数/重复冲突/未决；重置覆盖率并失效旧计划 |
 | candidates | complete:true、tasks | 返回候选、autoIntakeIds、decisionGroups、老单 ID、时间未知项；置 `candidatesChecked: true` |
-| configure | confirmed:true、patch | 仅修改 watchedTasks/ignoredTaskIds/activeWindowDays；要求全局无未决，传完整新值 |
+| configure | confirmed:true、patch | 修改 watchedTasks/ignoredTaskIds/activeWindowDays/autoCompleteOnTbEnd；要求全局无未决，传完整新值 |
 | plan | task | 读取标准化 TB 详情并记入 `plannedKeys`；若已跟踪且无实质变化，直接返回 `unchanged:true, committed:true` 免除外部写入，否则返回 planId/key/type/properties/notices |
 | plan-personal | pageId（编辑时）、properties | 新人工事项或个人安排生成计划；个人顺序须有用户确认 |
 | prepare | planId、confirmed:true（创建/个人编辑必需） | 持久化 prepared 意图，返回 opId |
@@ -66,7 +66,7 @@ node <skill-dir>/scripts/hub.mjs stop --session <token>
 
 1. `plan` 或 `plan-personal` 生成计划。若 `plan` 返回 `unchanged: true`（`committed: true`），说明 Notion 当前页面属性与最新 TB 快照完全一致且本地基线已对齐，**直接结束该条，不发任何外部 Notion 写入请求**。个人编辑传用户要求的最小 patch；暂停/等待他人要连同恢复位置写入 `下一步动作`，内容缺失先询问或从实际进度取证，不编造。
 2. 需要写入的计划调用 `prepare`；`prepare` 成功前不发外部请求。
-3. 调用 `dispatch` 取得派发许可（`permitted: true`）；协调器默认基于本轮已锁定的完整 `inventory` 快照校验更新前状态与创建去重，无需写前额外调用单页 `notion.fetch` 或第二次单库查询。
+3. 自动修改个人状态（`auto_complete`、`auto_reopen`）时先单页重读，按 inventory 的字段形状传 `currentPage` 给 `dispatch`。读取失败或页面变化时取消 prepared 并报告该条；已 dispatched 的结果未知不得取消。其他更新可基于本轮 inventory；创建校验来源唯一性。重读与外部写入之间仍有竞态。
 4. 只有 `dispatch` 返回 `permitted: true`，才调用 Notion `create_pages` 或 `update_page`，目标固定为配置数据源/返回 `pageId`、`properties` 固定为派发结果。不执行 TB 写回。
 5. 当 Notion `create_pages` 或 `update_page` 明确返回成功（返回创建的 `pages[].id` 或更新的 `page_id`，且无 `isError`）时，直接调用 `commit`（传入 `apiSucceeded: true` 与返回的 `pageId`），**无需写后再调用 `notion.fetch` 回读页面**。协调器校验 `pageId` 身份无冲突后合成更新内存 `inventory` 并原子提交 `state.json` 基线。本地基线代表“基于本轮初始 `inventory` 快照与 API 明确成功响应确认的拟写结果”，实际落盘与跨会话并发修改留待下轮全表读取发现。
 6. TB 同步轮次先用 `action:status` 检查遗漏并补齐，随后调用 `stop --session <token>` 释放锁，核对返回的 `syncCoverage.unplannedTrackedKeys` 为空且 `candidatesChecked === true`，随后报告实际结果与候选。诊断只统计成功判定与候选计算，不证明分页真实完整、迭代已核实或所有写入已提交；还需检查未决与实际写入结果。读取受阻时照常 stop 释放锁，报告部分完成及遗漏；个人编辑会话不要求 TB 覆盖。

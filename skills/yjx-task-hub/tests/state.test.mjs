@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Coordinator } from '../scripts/coordinator.mjs';
-import { planTask, candidateTasks } from '../scripts/engine.mjs';
+import { planTask, planPersonal, candidateTasks } from '../scripts/engine.mjs';
 import { atomicJson, privateRoot, readJson } from '../scripts/storage.mjs';
 
 const me = 'aaaaaaaaaaaaaaaaaaaaaaaa', other = 'cccccccccccccccccccccccc', id = 'bbbbbbbbbbbbbbbbbbbbbbbb';
@@ -89,7 +89,8 @@ test('simplified dispatch and commit synthesize inventory without extra page fet
   await hub.handle({ action: 'inventory', complete: true, pages: [page('进行中')] });
   const updatePlan = await hub.handle({ action: 'plan', task: task({ executorId: other, executorName: '示例乙', statusName: '已修复', iteration: '3.5.1_hotfix_2026.10.29' }) });
   const updateOp = await hub.handle({ action: 'prepare', planId: updatePlan.planId });
-  const dispatched = await hub.handle({ action: 'dispatch', opId: updateOp.opId });
+  await assert.rejects(hub.handle({ action: 'dispatch', opId: updateOp.opId }), /重新读取/);
+  const dispatched = await hub.handle({ action: 'dispatch', opId: updateOp.opId, currentPage: page('进行中') });
   assert.equal(dispatched.permitted, true);
   await assert.rejects(hub.handle({ action: 'commit', opId: updateOp.opId, apiSucceeded: true, pageId: '44444444-4444-4444-8444-444444444444' }), /目标页面不一致/);
   await assert.rejects(hub.handle({ action: 'commit', opId: updateOp.opId, apiSucceeded: true, pageId: 'invalid-uuid' }), /页面 ID/);
@@ -107,6 +108,45 @@ test('simplified dispatch and commit synthesize inventory without extra page fet
   await assert.rejects(hub.handle({ action: 'commit', opId: createOp.opId, apiSucceeded: true, pageId: '33333333-3333-4333-8333-333333333333' }), /占用/);
   await hub.handle({ action: 'commit', opId: createOp.opId, apiSucceeded: true, pageId: '55555555-5555-4555-8555-555555555555' });
   assert.equal(hub.state.entries[`TB:${newId}`].pageId, '55555555-5555-4555-8555-555555555555');
+});
+
+test('TB end policy completes, preserves manual reopening and resets after source resumes', () => {
+  const enabled = { ...config, autoCompleteOnTbEnd: true, watchedTasks: [id] };
+  for (const change of [{ isDone: true }, { isArchived: true }]) {
+    const completed = planTask(task(change), page('进行中'), entry(), enabled);
+    assert.equal(completed.properties['个人状态'], '已完成');
+    assert.equal(completed.next.autoCompletedByTbEnd, true);
+    const overridden = planTask(task(change), page('进行中'), completed.next, enabled);
+    assert.equal(overridden.next.tbEndManualOverride, true);
+    assert.equal(overridden.properties['个人状态'], undefined);
+    const active = planTask(task(), page('进行中'), overridden.next, enabled);
+    assert.equal(active.next.tbEndManualOverride, false);
+    assert.equal(planTask(task(change), page('进行中'), active.next, enabled).properties['个人状态'], '已完成');
+    const reopened = planTask(task(), page('已完成'), completed.next, enabled);
+    assert.equal(reopened.properties['个人状态'], '待安排');
+  }
+  assert.equal(planTask(task({ executorId: other, isDone: true }), page('进行中'), entry(), enabled).properties['个人状态'], undefined);
+  const manualComplete = planPersonal(page('已完成'), { '个人状态': '已完成' }, entry({ autoCompletedByTbEnd: true }));
+  assert.equal(manualComplete.next.autoCompletedByTbEnd, false);
+  assert.equal(planTask(task(), page('已完成'), manualComplete.next, enabled).type, 'snapshot');
+  const keepOverride = planPersonal(page('进行中'), { '个人状态': '已完成' }, entry({ tbEndManualOverride: true }));
+  const manualReopen = planPersonal(page('已完成'), { '个人状态': '进行中' }, keepOverride.next);
+  assert.equal(manualReopen.next.tbEndManualOverride, true);
+  assert.equal(planTask(task({ isDone: true }), page('进行中'), manualReopen.next, enabled).properties['个人状态'], undefined);
+});
+
+test('automatic status changes require matching fresh page and leave conflicts prepared for cancellation', async t => {
+  const { hub } = fixture(t);
+  hub.config.autoCompleteOnTbEnd = true;
+  await hub.handle({ action: 'inventory', complete: true, pages: [page('进行中')] });
+  const plan = await hub.handle({ action: 'plan', task: task({ isDone: true }) });
+  const op = await hub.handle({ action: 'prepare', planId: plan.planId });
+  await assert.rejects(hub.handle({ action: 'dispatch', opId: op.opId }), /重新读取/);
+  await assert.rejects(hub.handle({ action: 'dispatch', opId: op.opId, currentPage: page('暂停') }), /页面有变化/);
+  assert.equal(hub.pending()[0].phase, 'prepared');
+  const reordered = page('进行中');
+  reordered.properties = Object.fromEntries(Object.entries(reordered.properties).reverse());
+  assert.equal((await hub.handle({ action: 'dispatch', opId: op.opId, currentPage: reordered })).permitted, true);
 });
 
 test('syncCoverage tracks planned tracked items and candidate checks accurately', async t => {
