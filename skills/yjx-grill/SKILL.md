@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 ## 执行边界
 
-- 这是一个由用户调用的对齐 skill。对齐期间不实施业务代码或未经授权的项目治理文档修改；执行属于另行授权的 implementation workflow。当用户指定外部或本地契约/设计载体（如在线语雀设计文档、接口文档、`.proto` 服务端与客户端交互协议文件）作为对齐结论的持久化落地形式时，生成与更新该载体属于交付切片结论本身的必要步骤。
+- 这是一个由用户调用的对齐 skill。对齐期间不实施业务代码或未经授权的项目治理文档修改；执行属于另行授权的 implementation workflow。当用户指定外部或本地契约/设计载体（如在线语雀设计文档、接口文档、`.proto` 服务端与客户端交互协议文件）作为对齐结论的持久化落地形式时，生成与更新该载体属于交付切片结论本身的必要步骤；若用户要求先产出该载体交付下游但具体协议清单或字段尚未讨论定稿，必须先在本 skill 内完成完整清单盘点与字段对齐确认，再按目标仓库标准路径生成指定载体，不擅自切入 implementation workflow 或额外生成未要求的归档/打包产物（如 `.zip`）。若宿主或 IDE 配置了针对该契约载体的 File Watcher（如落地 `.proto` 时自动生成对应语言的衍生代码），由此连带刷新的对应生成物属于正常伴随产物，不视为越界实施业务代码。
 - 面向用户的 labels 和 template keys 使用用户的沟通语言。
 - 按第 6 节为每个能力切片选择交付形式。独立切片不共享同一个批准。
 
@@ -26,9 +26,9 @@ disable-model-invocation: true
 
 每个讨论问题或问题批次都必须独立可读。默认用户在调用本 skill 前没有细看，甚至没有粗看，Agent 之前输出的长篇内容；因此不能要求用户回看前文来理解当前问题。将当前问题所需的最小背景、已确认约束、尚未解决的判断，以及答案会改变的结果一起带上；只保留与当前判断直接相关的内容，不复述无关历史。
 
-在议题收敛、活动切换、进入等待或整体结束时，简要交代当前状态、实际下一步及行动方，让用户知道 Agent 会继续处理什么，或正在等待用户的什么输入。下一步可以是提问、取证、评审或实施交接，不限于新解锁的问题；阻塞时说明具体原因与解除方式。普通连续问答直接衔接当前议题，不要求每轮状态摘要、固定模板或全部剩余主题清单。
+在议题收敛、活动切换、进入等待或整体结束时，简要交代当前状态、实际下一步及行动方，让用户知道 Agent 会继续处理什么，或正在等待用户的什么输入。下一步可以是提问、取证、评审或实施交接，不限于新解锁的问题；阻塞时说明具体原因与解除方式。普通连续问答直接衔接当前议题，不要求每轮状态摘要、固定模板或全部剩余主题清单。当经历多轮讨论修订或重读外部更新后发起最终批准确认时，同条消息须自包含列出合并最新状态后的完整待批方案要点（对自然语言规则或文档修订按目标文件用结构化条目直接陈述，不以增量对比结论或代码 `diff` 块替代完整方案）。
 
-通过准确措辞保留 provenance，不要强制使用按来源组织的格式。自然地陈述已确认内容，在来源重要时简短归因。新提出但未确认的方案和重大假设首次出现时要明确标识；获得同意不会把 Agent 推导变成用户 requirement 或 verified fact。完整的 source/evidence 映射保留在私有台账和 reviewer handoff 中，不要把台账字段直接展示给用户。当讨论涉及协议、配置字段或公开接口结构时，直接基于已查明的承载模块与项目命名惯例给出具体名称（尚未确定的部分显式作为待确认点提出），不要用“示意”占位名替代真实命名对齐。
+通过准确措辞保留 provenance，不要强制使用按来源组织的格式。自然地陈述已确认内容，在来源重要时简短归因。新提出但未确认的方案和重大假设首次出现时要明确标识；获得同意不会把 Agent 推导变成用户 requirement 或 verified fact。完整的 source/evidence 映射保留在私有台账和 reviewer handoff 中，不要把台账字段直接展示给用户。当讨论涉及协议、配置字段或公开接口结构时，直接基于已查明的承载模块与项目命名惯例给出具体名称（尚未确定的部分显式作为待确认点提出），不要用“示意”占位名替代真实命名对齐；协商接口协议、契约或数据结构定义时，直接使用目标语言的原生定义代码块（含标识/编号、结构名、字段类型与行尾简短注释）呈现，不把多字段结构塞进窄列 Markdown 表格；背景提及锁、状态或组件时写明其具体作用域与归属（如区分模块级业务锁与框架请求锁）。
 
 Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal”分类。选项及其 trade-offs 放在背景之外。单个结论使用 prose，可比较或可行动的内容使用列表；省略空分类和套话式开场。
 
@@ -54,7 +54,7 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 在依据该理解改变目标或范围前，让用户有机会纠正它。不要重复未变化的复述，也不要强加固定的发现问卷。
 
-使用工具获取客观事实：代码、schema、日志、任务文本、依赖、可用产物和当前状态。不要让用户查找 Agent 可以验证的事实，也不要仅从现有代码推断用户想要的结果。核查既有行为时，从真实入口与当前配置值追踪实际命中的代码分支，不凭未命中的死分支断言现状；参考既有模块时，只提取与当前目标对应的结构，不将新需求未提及的旁路接口或旧特例默认带入新方案提问。
+使用工具获取客观事实：代码、schema、日志、任务文本、依赖、可用产物和当前状态。不要让用户查找 Agent 可以验证的事实，也不要仅从现有代码推断用户想要的结果。核查既有行为时，从真实入口与当前配置值追踪实际命中的代码分支，不凭未命中的死分支断言现状；构造受调试/管理接口或宿主组件触发的边界场景前，先核查源码中该接口的真实能力方向与约束（如仅支持单向推进或特定状态跃迁），不凭空捏造任意回退或逆向操作场景；参考既有模块时，只提取与当前目标对应的结构，不将新需求未提及的旁路接口或旧特例默认带入新方案提问；当候选方案取决于既有产物的维护职责或外部资源范围时，先核实该产物的生成与更新链路及实际资源集合规模，再组织选项与比较方案。
 
 当会话上下文已明确当前工作基线，或用户在实现中途针对特定局部问题重新调用本 skill 时，直接围绕目标问题讨论，不重复追问已有在途改动的去留。仅当工作区存在尚未经用户或当前会话确认归属、且与稳定基线或本次需求存在冲突的既有改动时，才清晰区分“稳定存量行为、当前分支既有改动、本次需求目标”，并按第 2 节处理其前置依赖。
 
@@ -80,7 +80,7 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
   - **Consequential judgment**：成本、保证、所有权、权限或整体策略的接受仍属于人类判断。这也包括只有一个已知可行方案，但其后果或条件需要用户判断的情况；不要求硬凑多个替代方案。
   - **Project-reserved decision**：用户或项目明确保留了参与判断的事项，且尚无有效确认或明确委托覆盖。即使它是局部、可逆或内部结构，也要按约定讨论，不能仅以“实现细节”跳过。
 
-在没有被用户或项目保留判断的范围内，推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问。构造失败处理或一致性问题前，先核实宿主现有的默认事务、原子回滚或事件保障机制；默认机制已能覆盖时不虚构额外补偿问题，确需提问时优先推荐遵循默认机制的最小方案。工具障碍、缺少权限和推测性原因不是决策选项。
+在没有被用户或项目保留判断的范围内，推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问；对齐规则或文档时，目标文件内部的章节安放、同义合并与排版组织由 Agent 按文档结构惯例自行收敛，不作为决策问题抛给用户。当上下游职责边界已确认时，不衍生让下游重复执行上游职责的伪问题。构造失败处理、消息重复/重试风险或跨服务能力限制问题前，先核实宿主与目标服务现有的默认事务、原子回滚、事件保障及中间件重试/去重配置；默认机制已能覆盖或未证实存在实际缺陷时不虚构额外风险问题，确需提问时优先推荐遵循默认机制或复用现有低成本中转路径的最小方案（而非跨服务新增 SDK/DI 装配）。工具障碍、缺少权限和推测性原因不是决策选项。
 
 按实际影响评估后果：数据丢失或迁移、权限、外部承诺、不可逆资源使用、结构重设计，以及实质不同的补救策略。一行改动也可能有不可逆后果。未知影响需要调查，不能直接归类为低风险。如果无法获得必要证据，报告具体 blocker，并保持该分支未解决。
 
@@ -145,7 +145,7 @@ This illustrates layout, not a stock opening question. Open and single-approach 
 收到决策回复后：
 
 1. Identify the decisions the reply actually settles and update only that coverage. Preserve unanswered choices and any required review or approval. For a custom answer, retain explicit overrides and constraints, deriving low-risk mechanics under section 3.
-2. Recompute the ready frontier across the remaining scope. Acknowledge the selection briefly, then ask the next ready question in the current slice or investigate missing evidence. Close the slice under section 6 before activating the next one; if neither investigation nor a user decision can advance the work, report the specific blocker. Use section 8 only when execution is actually directed.
+2. Recompute the ready frontier across the remaining scope. Acknowledge the selection briefly, then in the same reply ask the next ready question(s) in the current slice (batching up to 3 orthogonal ready questions rather than splitting them into single-question turns) or immediately execute the next investigation—do not stop after a partial acknowledgment waiting for the user to say "continue". Close the slice under section 6 before activating the next one; if neither investigation nor a user decision can advance the work, report the specific blocker. Use section 8 only when execution is actually directed.
 
 Show only new or changed information and material unresolved boundaries, not the full ledger. Neither the number of questions answered nor accepting one recommendation establishes overall completion.
 
@@ -166,7 +166,7 @@ For either form, synthesize the result around the actual problem and intended ou
 
 If new evidence reveals consequential human judgment, record the obligation and address it. Risk-triggered review can be required for either form; high-risk results for which no new human choice arose can remain Direct Results.
 
-Apply the collaborative-discussion rule before concluding either form. If the current slice has been persisted to a user-designated conclusion carrier (such as an online Yuque design/API doc or `.proto` protocol file), or subsequent discussion modifies, overturns, or supplements conclusions already written to that carrier, synchronously update the carrier before activating the next remaining slice. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. State whether alignment is complete, whether the relevant scope is ready for implementation, and whether existing authorization and execution intent allow handoff under section 8. Completing this workflow does not claim that any implementation occurred.
+Apply the collaborative-discussion rule before concluding either form. If the current slice has been persisted to a user-designated conclusion carrier (such as an online Yuque design/API doc or `.proto` protocol file), or subsequent discussion modifies, overturns, or supplements conclusions already written to that carrier, synchronously update the carrier before activating the next remaining slice; when an external document carrier references code-defined enums or constants as the source of truth, confirm and land the code enum definition before updating the external document. Complete only the current slice, then activate the next remaining slice. Before ending overall alignment, run the completion check across all in-scope slices. If the user explicitly stops, pauses, or narrows the scope, preserve remaining choices and review/approval obligations without marking them complete. State whether alignment is complete, whether the relevant scope is ready for implementation, and whether existing authorization and execution intent allow handoff under section 8. Completing this workflow does not claim that any implementation occurred.
 
 ## 7. 按风险评审
 

@@ -31,6 +31,7 @@
 
 - `SKILL.md` 不设 `disable-model-invocation: true`，与 `agents/openai.yaml` 的 `allow_implicit_invocation: true` 一致。
 - 解释仓库既有代码实现机制时，“顶层精简调用树 + 关键真实代码缩写块”规则位于视口列表首位，与纯算法伪代码边界清晰。
+- 微型 `diff` 视口明确限定于组件树、目录树、调用链或简短状态/配置片段等短小结构化骨架，自然语言规则、长段落文档或方案建议的增改直接使用结构化正文或列表陈述。
 - 第三方 `C:\Users\Administrator\.agents\skills\show-me\SKILL.md` 保持未修改。
 
 遵循仓库 [Skill Verification](../../AGENTS.md#skill-verification)：静态文档审阅、一致性、包装和链接检查，不创建或运行模拟会话行为测试。

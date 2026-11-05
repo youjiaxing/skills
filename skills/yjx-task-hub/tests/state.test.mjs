@@ -149,6 +149,16 @@ test('automatic status changes require matching fresh page and leave conflicts p
   assert.equal((await hub.handle({ action: 'dispatch', opId: op.opId, currentPage: reordered })).permitted, true);
 });
 
+test('source recovery persists clearing a manual exception even when Notion needs no write', async t => {
+  const { hub, root } = fixture(t);
+  hub.config.autoCompleteOnTbEnd = true;
+  hub.storeEntry(`TB:${id}`, entry({ tbEndManualOverride: true }));
+  await hub.handle({ action: 'inventory', complete: true, pages: [page('进行中')] });
+  const plan = await hub.handle({ action: 'plan', task: task() });
+  assert.equal(plan.unchanged, true);
+  assert.equal(readJson(root, 'state.json').entries[`TB:${id}`].tbEndManualOverride, false);
+});
+
 test('syncCoverage tracks planned tracked items and candidate checks accurately', async t => {
   const watchedId = 'eeeeeeeeeeeeeeeeeeeeeeee';
   const { hub } = fixture(t);
