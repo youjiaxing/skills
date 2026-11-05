@@ -639,3 +639,15 @@ test('an ambiguous session POST failure keeps its marker and prevents a second c
   assert.equal(creates, 1)
   assert.equal(JSON.parse(await readFile(state + '.creating', 'utf8')).udid, 'test-device')
 })
+
+test('completed stale reads are retryable but stale writes retain unknown effects', async () => {
+  const client = createAppiumClient({fetchImpl: async () => ({ok: false, status: 404,
+    json: async () => ({value: {error: 'stale element reference', message: 'stale'}})})})
+  for (const request of [() => client.source('session'), () => client.findElements('session', 'accessibility id', 'result'),
+    () => client.execute('session', 'mobile: source', [{format: 'json'}])]) {
+    await assert.rejects(request(), error => error.outcome === 'not-sent' && error.transportPending === false)
+  }
+  for (const request of [() => client.clickElement('session', 'button'), () => client.execute('session', 'mobile: tap', [{x: 1, y: 1}])]) {
+    await assert.rejects(request(), error => error.outcome === 'unknown' && error.transportPending === false)
+  }
+})

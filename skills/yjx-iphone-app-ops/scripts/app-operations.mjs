@@ -9,9 +9,23 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const stop = (status, message = status) => Object.assign(new Error(message), {status})
 const strategies = {'accessibility-id': 'accessibility id', predicate: '-ios predicate string', 'class-chain': '-ios class chain', css: 'css selector'}
 
+// Only a completed stale-reference response is safe for an automatic read retry.
+const transientRead = (error) => error.code === 'stale element reference' && error.transportPending === false
+  && error.outcome !== 'unknown'
+
 export function failureResult(error, operation = {outcome: 'not-sent'}) {
-  const unknown = error.transportPending || error.outcome === 'unknown' || error.code === 'ETIMEDOUT' || (operation.outcome === 'sent' && !error.verificationStatus)
-  return {ok: false, status: error.status || error.code || 'command-failed',
+  const unknown = operation.outcome === 'unknown' || error.transportPending || error.outcome === 'unknown' || error.code === 'ETIMEDOUT' || (operation.outcome === 'sent' && !error.verificationStatus)
+  const status = error.status || error.code || 'command-failed'
+  const category = unknown || error.outcome === 'unknown' ? 'result-unknown'
+    : /credential|verification|foreground|owner|session-state|user-input|safety-check/.test(status) ? 'identity-or-safety-unconfirmed'
+    : /not-readable|unobservable|parse|unsupported/.test(status) ? 'observation-insufficient'
+    : transientRead(error) ? 'temporary-read-failure' : 'deterministic-failure'
+  return {ok: false, status,
+    failure: {category, phase: error.phase || null, transportPending: Boolean(error.transportPending)},
+    recovery: {next: category === 'result-unknown' ? 'recover-session-then-reconcile'
+      : category === 'temporary-read-failure' ? (error.readBudgetExhausted ? 'reassess-observation' : 'bounded-read-retry')
+      : category === 'observation-insufficient' ? 'use-independent-observation' : 'resolve-precondition', replayAllowed: false,
+      ...(error.readRetries !== undefined ? {readRetries: error.readRetries, readBudgetExhausted: Boolean(error.readBudgetExhausted)} : {})},
     operation: {...operation, ...(unknown && operation.outcome === 'sent' ? {outcome: 'unknown'} : {})},
     verification: {status: unknown ? 'unknown' : error.verificationStatus || 'blocked', reason: error.message,
       ...(error.observed !== undefined ? {expected: error.expected, observed: error.observed} : {})},
@@ -103,13 +117,46 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     if (current !== 'NATIVE_APP') await call('setContext', 'NATIVE_APP')
   }
 
-  async function observe({purpose = 'information', method = 'auto', context, contains, limit = 80,
-    screenshotPath, sourcePath, outputPath} = {}) {
-    if (!['information', 'visual'].includes(purpose) || !['auto', 'native', 'ocr', 'dom'].includes(method)) throw stop('invalid-observation-mode')
+  // Independent of full source/JSON acquisition. A failed safety lookup fails closed.
+  // This still needs responsive native element lookup; it is not an AX-free bypass.
+  async function pixelGuard() {
+    const current = await call('getContext')
+    if (current !== 'NATIVE_APP') await call('setContext', 'NATIVE_APP')
+    const active = await call('execute', 'mobile: activeAppInfo')
+    const state = await call('execute', 'mobile: queryAppState', [{bundleId}])
+    if (active?.bundleId !== bundleId || state !== 4) throw stop('foreground-unverified')
+    const sensitive = await call('findElements', '-ios predicate string',
+      "name IN {'SBCoverSheetWindow', 'lockscreen-date-view'} OR type == 'XCUIElementTypeSecureTextField' OR (label MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code).*' OR name MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code).*')")
+    if (!Array.isArray(sensitive)) throw stop('safety-check-unreadable')
+    if (sensitive.length) throw stop('user-input-required')
+  }
+
+  async function observe(options = {}) {
+    // Shared by the whole observation, including its guards and acquisition steps.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await observeOnce(options, attempt)
+      } catch (error) {
+        if (attempt >= 1 || !transientRead(error)) {
+          error.readRetries = attempt
+          error.readBudgetExhausted = attempt >= 1 && transientRead(error)
+          throw error
+        }
+        await checkReady()
+        await sleep(200)
+      }
+    }
+  }
+
+  async function observeOnce({purpose = 'information', method = 'auto', context, contains, limit = 80,
+    screenshotPath, sourcePath, outputPath} = {}, readRetries = 0) {
+    if (!['information', 'visual'].includes(purpose) || !['auto', 'native', 'ocr', 'dom', 'pixels'].includes(method)) throw stop('invalid-observation-mode')
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw stop('invalid-observation-limit')
     if (purpose === 'visual' && !screenshotPath) throw stop('visual-output-required', 'Provide --screenshot-output, then let the Agent view the image')
     await preflightArtifacts({maxPages: 1, extractionPath: outputPath, screenshotPath, sourcePath})
-    const xml = await native()
+    const lightweight = method === 'pixels'
+    if (lightweight && sourcePath) throw stop('pixel-source-unavailable', 'Pixel observation does not acquire XML; omit --source-output')
+    const xml = lightweight ? (await pixelGuard(), '') : await native()
     const readAt = new Date(now()).toISOString()
     if (/XCUIElementTypeSecureTextField|验证码|安全验证|请依次点击下图图标/.test(xml)) {
       // Report a readable barrier without persisting or returning credential values.
@@ -152,26 +199,29 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
         }
       }
       selected = 'dom'
-    } else if (method !== 'ocr') {
+    } else if (method !== 'ocr' && !lightweight) {
       observations = nativeRows(await call('execute', 'mobile: source', [{format: 'json'}]))
       selected = 'accessibility'
     }
-    if (selected === 'pixels' || method === 'ocr' || (method === 'auto' && observations.length === 0) || screenshotPath) {
-      await native()
+    if (lightweight || selected === 'pixels' || method === 'ocr' || (method === 'auto' && observations.length === 0) || screenshotPath) {
+      if (!lightweight) await native()
       pixels = Buffer.from(await call('screenshot'), 'base64')
-      if (purpose !== 'visual' && (method === 'ocr' || observations.length === 0)) {
+      if (lightweight || (purpose !== 'visual' && (method === 'ocr' || observations.length === 0))) {
         const raw = await ocr(pixels)
         observations = raw.observations || []
-        selected = 'vision-ocr'
+        if (lightweight && /验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code/i.test(observations.map(row => row.text).join(' '))) throw stop('user-input-required')
+        selected = purpose === 'visual' ? 'pixels' : 'vision-ocr'
       }
     }
-    await native()
+    if (lightweight) await pixelGuard()
+    else await native()
     const filtered = contains ? observations.filter((row) => String(row.text).includes(contains)) : observations
     const result = {schemaVersion: 1, documentType: 'app-observation-v1', runId: randomUUID(), bundleId, readAt,
       finishedAt: new Date(now()).toISOString(), purpose, method: selected, viewport,
       observations: filtered.slice(0, limit), partial: sourcePartial || filtered.length > limit,
       observationCount: filtered.length, evidence: [],
       targets: [],
+      recovery: {readRetries, replayAllowed: false},
       snapshotNote: 'Sequential observations; image and accessibility data are not an atomic snapshot',
       operation: {outcome: 'not-sent'}, verification: {status: 'unknown', reason: 'observation-only'}}
     if (screenshotPath && pixels) {
@@ -219,6 +269,18 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     return {ok: matches, bundleId, operation: {outcome: 'not-sent'}, verification: {
       status: matches ? 'passed' : 'failed', condition, expected: expected ?? null, observed, attempts,
       checkedAt: new Date(now()).toISOString(), scope: 'specified observable condition',
+    }}
+  }
+
+  async function reconcile(options) {
+    let result
+    try { result = await verify(options) }
+    catch (error) { result = failureResult(error) }
+    return {...result, reconciliation: {
+      status: result.verification.status === 'passed' ? 'satisfied'
+        : result.verification.status === 'failed' ? 'unsatisfied' : 'unknown',
+      replayAllowed: false,
+      scope: 'Current postcondition only; absence does not prove that a prior action was not executed',
     }}
   }
 
@@ -316,6 +378,10 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
 
   async function captureFailure(result, options = {}) {
     if (!options.screenshotPath && !options.sourcePath) return result
+    if (result.failure?.category === 'identity-or-safety-unconfirmed') {
+      result.evidenceFailure = {reason: 'Identity or safety is unconfirmed; evidence capture withheld'}
+      return result
+    }
     try {
       const evidence = await observe({...options, purpose: options.screenshotPath ? 'visual' : 'information', screenshotPath: options.screenshotPath})
       result.evidence = evidence.evidence
@@ -323,5 +389,5 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     } catch (error) { result.evidenceFailure = {reason: error.message, status: error.status || error.code || 'capture-failed'} }
     return result
   }
-  return {observe, verify, element, contexts, gesture, app, captureFailure}
+  return {observe, verify, reconcile, element, contexts, gesture, app, captureFailure}
 }

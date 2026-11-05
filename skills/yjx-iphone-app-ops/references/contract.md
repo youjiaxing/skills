@@ -47,3 +47,20 @@ Appium 与 RemoteXPC 隧道是共享运行服务。查询使用预安装 WDA，�
 ## 通用操作结果
 
 观察、等待、断言、WebView 和手势见[通用操作与验证](operations.md)。新结果在原字段外独立表达 `operation.outcome` 和 `verification.status`；原 `ok` 或 `action` 仅有原命令含义。专用查询 schema 和 `factStatus` 保持原语义。
+
+
+## 受阻与恢复交接
+
+以下是本 skill 向调用方交付的语义契约，复用现有命令结果和已取得的观察，不要求所有 CLI 命令返回同一 JSON，也不另建持久化交接对象。专用查询保留自己的 schema，由操作 Agent 按实际结果整理同样的信息。
+
+| 交接内容 | 优先使用的既有信息 | 缺失或不确定时 |
+| --- | --- | --- |
+| 最后确认的 App 与页面 | `bundleId`、`foregroundBundle`、观察时间、`observations` 及证据引用 | 目标 bundle 只代表请求对象；未通过前台门禁不能称为已确认。保留最近一次确认时间并注明当前页面未确认 |
+| 最后动作与发送情况 | `operation.method`、`operation.outcome`；专用命令保留原字段含义 | 区分本次只读命令与先前有副作用动作；未知动作不能被后续 `not-sent` 覆盖 |
+| 效果是否确认 | `verification`、`reconciliation` 及对应后置证据 | 明确验证范围；单一条件通过不自动升级为业务目标完成，条件不满足不证明动作未执行 |
+| 未决请求与会话保护 | `failure.transportPending`、已读到的 unknown/reset-required/creating 标记及健康检查结果 | 未检查写“未检查”；`transportPending=false` 只说明该次请求未被标成在途，不能单独证明所有会话标记均不存在 |
+| 错误及恢复情况 | `status`、`phase`、`failure.category`、`recovery.readRetries/readBudgetExhausted`；恢复命令的 `steps`、`sessionRecovery` 等实际结果 | 只列实际执行过的恢复和已知局部消耗；不能把 `recovery.next` 建议当作已经执行，也不估算未记录的总次数或总时长 |
+| 可安全采取的下一步 | `recovery.next`、具体阻塞及所需前提 | 建议先服从在途请求、身份、安全和授权门禁；无法确定时停止依赖该效果的动作，说明缺少的证据 |
+| 必要证据 | `evidence`、产物引用、`evidenceFailure` | 取证失败附加在原错误上，不改变原动作的发送或验证状态；凭据和敏感正文不进入交接 |
+
+动作发送与业务效果、协议结果与在途状态分别表达；保留不同命令的先后关系。交接仅汇总已有结果，不为补齐字段而向未决 session 发新命令。跨会话保存的时机、位置和格式由调用方的上下文保存机制决定，本 skill 不引入该机制为运行依赖。

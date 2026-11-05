@@ -55,7 +55,7 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
     throw new Error('Appium must be bound to a loopback address')
   }
 
-  async function request(endpoint, options = {}) {
+  async function request(endpoint, options = {}, readOnly = !options.method || options.method === 'GET') {
     const started = monotonicNow()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), options.timeoutMs || requestTimeoutMs)
@@ -77,7 +77,7 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
         error.driverCode = body.value?.error || null
         error.elapsedMs = Math.round(elapsedMs)
         error.phase = endpoint
-        error.outcome = 'unknown'
+        error.outcome = readOnly && error.code === 'stale element reference' ? 'not-sent' : 'unknown'
         error.transportPending = false
         if (sessionFile && isProxyTimeout(error)) await markSessionResetRequired(sessionFile, endpoint,
           lookupUnconfirmed ? 'lookup-result-unconfirmed' : 'proxy-timeout-response-received').catch(() => {})
@@ -146,7 +146,7 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
     }),
     findElements: (sessionId, using, value) => request(`/session/${sessionId}/elements`, {
       method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({using, value}),
-    }),
+    }, true),
     elementDisplayed: (sessionId, id) => request(`/session/${sessionId}/element/${encodeURIComponent(id)}/displayed`),
     elementEnabled: (sessionId, id) => request(`/session/${sessionId}/element/${encodeURIComponent(id)}/enabled`),
     performActions: (sessionId, actions) => request(`/session/${sessionId}/actions`, {
@@ -171,7 +171,7 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify({script, args}),
-    }),
+    }, ['mobile: source', 'mobile: activeAppInfo', 'mobile: queryAppState', 'mobile: getContexts'].includes(script)),
     screenshot: (sessionId) => request(`/session/${sessionId}/screenshot`),
     tap: (sessionId, x, y) => request(`/session/${sessionId}/actions`, {
       method: 'POST',
@@ -464,12 +464,12 @@ export async function waitForForeground(client, sessionId, bundleId, timeout = 4
 
 async function requireForeground(client, sessionId, bundleId, existingPage) {
   const page = existingPage ?? await client.source(sessionId)
-  if (isLockScreenSource(page) || requiresCredential(page)) throw new Error('device is locked; no element action was sent')
+  if (isLockScreenSource(page) || requiresCredential(page)) throw Object.assign(new Error('device is locked; no element action was sent'), {status: 'user-input-required'})
   const activeAppInfo = await client.execute(sessionId, 'mobile: activeAppInfo')
   const appState = await client.execute(sessionId, 'mobile: queryAppState', [{bundleId}])
   const rootBundle = extractForegroundBundle(page)
   if (rootBundle !== bundleId || activeAppInfo?.bundleId !== bundleId || appState !== 4) {
-    throw new Error(`target app is not verified in foreground: root=${rootBundle || 'unknown'}, active=${activeAppInfo?.bundleId || 'unknown'}, state=${appState}`)
+    throw Object.assign(new Error(`target app is not verified in foreground: root=${rootBundle || 'unknown'}, active=${activeAppInfo?.bundleId || 'unknown'}, state=${appState}`), {status: 'foreground-unverified'})
   }
 }
 
@@ -680,11 +680,11 @@ async function main() {
         else if (command === 'gesture') result = await ops.gesture({observationPath: option('--observation'), target: option('--target'), action: args[0],
           x: Number(option('--x')), y: Number(option('--y')), toX: Number(option('--to-x')), toY: Number(option('--to-y')),
           durationMs: option('--duration-ms') === undefined ? 300 : Number(option('--duration-ms'))})
-        else if (['wait', 'assert'].includes(args[0])) result = await ops.verify({...loc, condition: option('--condition'), expected: option('--expected'),
+        else if (['wait', 'assert', 'reconcile'].includes(args[0])) result = await ops[args[0] === 'reconcile' ? 'reconcile' : 'verify']({...loc, condition: option('--condition'), expected: option('--expected'),
           timeoutMs: Number(option('--timeout-ms') ?? (args[0] === 'wait' ? 15000 : 0))})
         else result = await ops.element(args[0], loc, readStdin)
       } catch (error) { result = failureResult(error) }
-      if (!result.ok) { await ops.captureFailure(result, paths); process.exitCode = 1 }
+      if (!result.ok) { await ops.captureFailure(result, {...paths, method: command === 'observe' ? option('--method') : undefined}); process.exitCode = 1 }
       print(result)
     })
   }
@@ -795,7 +795,7 @@ async function main() {
       return {ok: true, closed: true}
     }))
   }
-  throw new Error('usage: iphone-app-ops.mjs doctor | wda-health | session | recover --bundle-id <id> | element <read|click|set-value> --bundle-id <id> --using <accessibility-id|predicate|class-chain> --selector <value> | dianping-search --query <text> --extract-output <path> [--screenshot-output <path>] [--source-output <path>] [--max-pages 1..5] | dianping-detail --from <search.json> --candidate <id> --extract-output <new.json> | dianping-share --from-detail <detail.json> --extract-output <new.json> | xiaohongshu-search --query <text> --extract-output <new.json> [--max-pages 1..5] | source | screenshot --output <path> | close')
+  throw new Error('usage: iphone-app-ops.mjs doctor | wda-health | session | recover --bundle-id <id> | observe --bundle-id <id> [--method auto|native|ocr|dom|pixels] | element <read|click|set-value|wait|assert|reconcile> --bundle-id <id> --using <accessibility-id|predicate|class-chain> --selector <value> | dianping-search --query <text> --extract-output <path> [--screenshot-output <path>] [--source-output <path>] [--max-pages 1..5] | dianping-detail --from <search.json> --candidate <id> --extract-output <new.json> | dianping-share --from-detail <detail.json> --extract-output <new.json> | xiaohongshu-search --query <text> --extract-output <new.json> [--max-pages 1..5] | source | screenshot --output <path> | close')
 }
 
 const invokedScript = process.argv[1] ? realpathSync(process.argv[1]) : null
@@ -803,8 +803,9 @@ const moduleScript = realpathSync(fileURLToPath(import.meta.url))
 
 if (invokedScript === moduleScript) {
   main().catch((error) => {
-    print({verification: {status: error.outcome === 'unknown' || isProxyTimeout(error) ? 'unknown' : 'blocked'}, ok: false, status: isProxyTimeout(error) ? 'protocol-timeout' : 'command-failed',
-      phase: error.phase || null, outcome: error.outcome || 'unknown', retryable: false, error: error.message})
+    const outcome = error.outcome || (error.status ? 'not-sent' : 'unknown')
+    print({...failureResult(error, {outcome}), status: error.status || (isProxyTimeout(error) ? 'protocol-timeout' : 'command-failed'),
+      phase: error.phase || null, outcome, retryable: false, error: error.message})
     process.exitCode = 1
   })
 }

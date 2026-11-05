@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto'
 import {readFileSync, writeFileSync} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import {createOperations, annotateTarget} from '../scripts/app-operations.mjs'
+import {createOperations, annotateTarget, failureResult} from '../scripts/app-operations.mjs'
 import {assertSessionReady} from '../scripts/local-config.mjs'
 import {serviceAction, wdaAction} from '../scripts/iphone-environment.mjs'
 import {doctor} from '../scripts/iphone-app-ops.mjs'
@@ -304,4 +304,121 @@ test('WDA installer rejects a business App before invoking an install command', 
   await assert.rejects(wdaAction({udid: 'device', wdaBundleId: 'control.WDA', sessionFile: path.join(dir, 'session'), configPath: path.join(dir, 'config')},
     'install', {exclusive: true, appPath, execute: (...args) => calls.push(args)}), /Only the configured WebDriverAgent/)
   assert.deepEqual(calls, [])
+})
+
+test('pixel observation avoids full trees but checks foreground and sensitive controls before publishing', async (t) => {
+  const dir = await directory(t)
+  let guards = 0
+  const f = fixture({
+    findElements: async () => [],
+    execute: async (_, script) => script === 'mobile: activeAppInfo' ? {bundleId} : 4,
+  }, {guardApp: async () => { guards++; throw new Error('full tree unavailable') }})
+  const result = await f.ops.observe({method: 'pixels', screenshotPath: path.join(dir, 'safe.png')})
+  assert.equal(result.ok, true)
+  assert.equal(result.method, 'vision-ocr')
+  assert.equal(result.viewport, null)
+  assert.equal(guards, 0)
+  const blocked = fixture({findElements: async () => [match], execute: async (_, s) => s === 'mobile: activeAppInfo' ? {bundleId} : 4})
+  await assert.rejects(blocked.ops.observe({method: 'pixels', screenshotPath: path.join(dir, 'blocked.png')}), /user-input-required/)
+  assert.deepEqual(blocked.calls, [])
+  await assert.rejects(readFile(path.join(dir, 'blocked.png')), {code: 'ENOENT'})
+})
+
+test('pixel evidence is withheld on post-capture identity change or an unreadable safety check', async (t) => {
+  const dir = await directory(t)
+  let active = 0
+  const f = fixture({findElements: async () => [], execute: async (_, s) => s === 'mobile: activeAppInfo' ? {bundleId: ++active === 1 ? bundleId : 'org.example.other'} : 4})
+  await assert.rejects(f.ops.observe({method: 'pixels', screenshotPath: path.join(dir, 'changed.png')}), /foreground-unverified/)
+  await assert.rejects(readFile(path.join(dir, 'changed.png')), {code: 'ENOENT'})
+  const unsafe = fixture({findElements: async () => { throw new Error('safety unavailable') }, execute: async (_, s) => s === 'mobile: activeAppInfo' ? {bundleId} : 4})
+  await assert.rejects(unsafe.ops.observe({method: 'pixels'}), /safety unavailable/)
+  assert.deepEqual(unsafe.calls, [])
+})
+
+test('one observation shares a single retry allowance and never retries unknown requests', async () => {
+  let reads = 0
+  const f = fixture({execute: async () => { reads++; throw Object.assign(new Error('stale'), {code: 'stale element reference', transportPending: false}) }}, {sleep: async () => {}})
+  await assert.rejects(f.ops.observe(), error => {
+    const failure = failureResult(error)
+    assert.equal(failure.recovery.next, 'reassess-observation')
+    assert.equal(failure.recovery.readBudgetExhausted, true)
+    return /stale/.test(error.message)
+  })
+  assert.equal(reads, 2)
+  let attempts = 0
+  const pending = fixture({execute: async () => { attempts++; throw Object.assign(new Error('pending'), {transportPending: true}) }})
+  await assert.rejects(pending.ops.observe(), /pending/)
+  assert.equal(attempts, 1)
+})
+
+test('reconciliation only reads a postcondition and never proves that an action was not executed', async () => {
+  const f = fixture()
+  const passed = await f.ops.reconcile({...loc, condition: 'text-equals', expected: 'Saved'})
+  assert.equal(passed.reconciliation.status, 'satisfied')
+  assert.equal(passed.reconciliation.replayAllowed, false)
+  const failed = await f.ops.reconcile({...loc, condition: 'text-equals', expected: 'Other'})
+  assert.equal(failed.reconciliation.status, 'unsatisfied')
+  assert.equal(failed.reconciliation.replayAllowed, false)
+  f.setPending()
+  const unknown = await f.ops.reconcile({...loc, condition: 'visible'})
+  assert.equal(unknown.reconciliation.status, 'unknown')
+  assert.equal(unknown.failure.category, 'result-unknown')
+  assert.deepEqual(f.calls, [])
+})
+
+test('OCR safety barriers and unknown markers withhold all pixel output and follow-up capture', async (t) => {
+  const dir = await directory(t)
+  const f = fixture({findElements: async () => [], execute: async (_, s) => s === 'mobile: activeAppInfo' ? {bundleId} : 4},
+    {ocr: async () => ({observations: [{text: '验证码 123456'}]})})
+  let failure
+  try { await f.ops.observe({method: 'pixels', screenshotPath: path.join(dir, 'sensitive.png')}) }
+  catch (error) { failure = failureResult(error) }
+  assert.equal(failure.failure.category, 'identity-or-safety-unconfirmed')
+  await f.ops.captureFailure(failure, {screenshotPath: path.join(dir, 'sensitive.png')})
+  assert.deepEqual(f.calls, ['pixels'])
+  assert.ok(!JSON.stringify(failure).includes('123456'))
+  await assert.rejects(readFile(path.join(dir, 'sensitive.png')), {code: 'ENOENT'})
+  f.setPending()
+  await assert.rejects(f.ops.observe({method: 'pixels'}), /in-flight/)
+  assert.deepEqual(f.calls, ['pixels'])
+})
+
+test('recovered reads record their retry and share the allowance across acquisition and guards', async () => {
+  let reads = 0, guards = 0
+  const stale = () => Object.assign(new Error('stale'), {code: 'stale element reference', transportPending: false})
+  const f = fixture({execute: async () => { if (++reads === 1) throw stale(); return {children: []} }},
+    {guardApp: async () => { if (++guards === 3) throw stale(); return xml }, sleep: async () => {}})
+  await assert.rejects(f.ops.observe({method: 'native'}), /stale/)
+  assert.equal(reads, 2)
+  assert.equal(guards, 3)
+  let attempts = 0
+  const recovered = fixture({execute: async () => { if (++attempts === 1) throw stale(); return {children: []} }}, {sleep: async () => {}})
+  assert.equal((await recovered.ops.observe({method: 'native'})).recovery.readRetries, 1)
+})
+
+test('pixel failure evidence preserves the selected mode and never acquires rejected XML', async (t) => {
+  const dir = await directory(t)
+  let trees = 0
+  const f = fixture({}, {guardApp: async () => { trees++; return xml }})
+  const options = {method: 'pixels', sourcePath: path.join(dir, 'rejected.xml')}
+  let failure
+  try { await f.ops.observe(options) } catch (error) { failure = failureResult(error) }
+  await f.ops.captureFailure(failure, options)
+  assert.equal(trees, 0)
+  assert.deepEqual(f.calls, [])
+  await assert.rejects(readFile(options.sourcePath), {code: 'ENOENT'})
+})
+
+test('lightweight lockscreen lookup blocks before capture even when active signals look ready', async () => {
+  let queried = false
+  const f = fixture({execute: async (_, s) => s === 'mobile: activeAppInfo' ? {bundleId} : 4,
+    findElements: async (_, using, predicate) => {
+      // Model WDA matching either of its known lockscreen identifiers.
+      queried = true
+      assert.equal(using, '-ios predicate string')
+      return predicate.includes('SBCoverSheetWindow') && predicate.includes('lockscreen-date-view') ? [match] : []
+    }})
+  await assert.rejects(f.ops.observe({method: 'pixels'}), /user-input-required/)
+  assert.equal(queried, true)
+  assert.deepEqual(f.calls, [])
 })

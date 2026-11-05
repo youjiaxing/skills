@@ -9,11 +9,24 @@ node scripts/iphone-app-ops.mjs observe --bundle-id <bundle> --contains '评分'
 node scripts/iphone-app-ops.mjs observe --bundle-id <bundle> --purpose visual --screenshot-output /tmp/new-screen.png --output /tmp/new-observation.json
 ```
 
-信息任务默认原生文字，文字不足才用本机 OCR；`--method native|ocr|dom` 可明确路径，DOM 配合 `--context`。默认最多 80 项，可用 `--limit`（1–500）和 `--contains` 限定，`partial` 表示输出截断。需要更多内容时滚动或调整观察范围，不将截断输出当完整页面。
+信息任务默认原生文字，文字不足才用本机 OCR；`--method native|ocr|dom|pixels` 可明确路径，DOM 配合 `--context`。默认最多 80 项，可用 `--limit`（1–500）和 `--contains` 限定，`partial` 表示输出截断。需要更多内容时滚动或调整观察范围，不将截断输出当完整页面。
 
 视觉任务使用 `--purpose visual` 和新的 `--screenshot-output`，随后通过 `yjx-image-reading` 准备输入，由独立视觉子任务实际查看图片并回传文字观察。输出一张截图不算视觉评审完成。布局、颜色、间距、遮挡、图表等由模型据实际图像判断，原生文字完整也不能省略截图。混合任务按目标组合路径；原控制代理继续持有设备命令和恢复状态。
 
 `--source-output` 显式保留 XML，`--output` 保存结构化观察。输出文件拒绝覆盖，截图、XML、文字包含各自观察阶段，不是原子快照。截图默认不落盘，视觉核验使用本轮新路径；保留与目标相关的范围，不保存或传递凭据。
+
+### 独立像素观察
+
+完整树或 JSON 读取能力不足，且在途请求已处理完成时，显式选 `--method pixels`：
+
+```bash
+node scripts/iphone-app-ops.mjs observe --bundle-id <bundle> --method pixels --contains '<所需文字>'
+node scripts/iphone-app-ops.mjs observe --bundle-id <bundle> --method pixels --purpose visual --screenshot-output /tmp/new-pixels.png --output /tmp/new-pixels.json
+```
+
+此路径不读取完整 XML/JSON；前后独立核对 active bundle、运行状态、锁屏标识及原生敏感控件，截图在内存完成本机 OCR 安全检查后才发布。它仍依赖原生控件查询；检查不可读时受阻，不作为 AX 完全失效时的绕过。敏感提示可能保守拒绝，需要用户处理或重新确认页面。支持文字提取及视觉观察，不接受 `--source-output`，`viewport=null`，不能用于坐标手势。需要手势时重新取得常规观察并保留既有视口、时间和图片指纹门禁；不能把截图像素尺寸当作设备点坐标。
+
+观察全流程共享最多一次自动重读，限收到已完成的 `stale element reference` 响应；输出 `recovery.readRetries`。传输未决、结果未知、超时及 reset-required 均不进入这项重试。App 内网络波动导致内容仍在加载时，用目标后置条件的有界等待；预算到期后报告当前观察，不据空白页面推断永久无内容。
 
 ## 元素操作
 
@@ -29,6 +42,8 @@ printf '%s' '<text>' | node scripts/iphone-app-ops.mjs element set-value --bundl
 
 ## 等待与断言
 
+加载、空结果、旧内容和交互遮挡按[页面状态判断](page-state.md#页面状态判断)区分。同一局部等待不通过重复调用重开预算；整项任务的时限由调用方编排，CLI 单次 `wait` 不负责累计。
+
 ```bash
 node scripts/iphone-app-ops.mjs element wait --bundle-id <bundle> --using accessibility-id --selector '<id>' --condition visible --timeout-ms 15000
 node scripts/iphone-app-ops.mjs element assert --bundle-id <bundle> --using accessibility-id --selector '<id>' --condition text-equals --expected '<text>'
@@ -41,6 +56,18 @@ node scripts/iphone-app-ops.mjs element assert --bundle-id <bundle> --using acce
 点击后按目标继续等待/断言，发送和付款等核对相应的记录/订单及关键字段。调用方可以用这些原语组织固定回归，业务用例和运行器由项目维护。
 
 失败时指定 `--screenshot-output` / `--source-output` 可补证据。取证错误附加在原失败上；存在 unknown/reset-required 时不发送截图、上下文切换或页面读取，先按恢复契约处理，再重新观察。
+
+### 动作结果复核
+
+先完成[会话恢复](recovery.md)，再对原动作的业务后置条件使用：
+
+```bash
+node scripts/iphone-app-ops.mjs element reconcile --bundle-id <bundle> --using accessibility-id --selector '<结果记录>' --condition text-equals --expected '<预期结果>' --timeout-ms 15000
+```
+
+此入口只读，不接收或重放原动作。`reconciliation.status=satisfied|unsatisfied|unknown` 只说明当前指定条件；条件未满足或记录缺失，不能证明先前动作没有执行，`replayAllowed` 始终为 false。调用方保留原动作的 unknown 状态和原始证据，把本次结果作为补充；仅当条件足以证明原业务目标才可继续完成任务。
+
+通用失败增加 `failure.category` 和 `recovery.next`，与既有 `operation`、`verification` 分开。分类及下一步见[故障分类](recovery.md#任务恢复决策)。分类是恢复建议，不是新的动作授权。向调用方报告时按[交接契约](contract.md#受阻与恢复交接)区分已做的恢复与建议的下一步，保留原未知动作与后续只读复核的先后关系。
 
 ## WebView
 
