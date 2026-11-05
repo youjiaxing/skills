@@ -109,9 +109,9 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 - **[`yjx-life-query`](skills/yjx-life-query/SKILL.md)**：查询国内吃喝门店、周边去处、旅游活动与优惠，按信息字段选择来源并核验时效，交付地点事实、比较依据和高德/点评入口。完整行程与攻略制作由下方的 `yjx-travel-planning` 负责。
 
-### 10. 旅行行程制作
+### 10. 旅行攻略与行程制作
 
-- **[`yjx-travel-planning`](skills/yjx-travel-planning/SKILL.md)**：将已核实的地点、交通、住宿、用餐和固定时间约束组织为可执行的旅行行程或正式攻略，生成对应的时间表、路线、地图和可维护资料，并在计划变化时传播更新。事实查询复用 `yjx-life-query`，不在两个 Skill 中维护两套查询规则。
+- **[`yjx-travel-planning`](skills/yjx-travel-planning/SKILL.md)**：先将来源整理为可浏览、可复用的地点与体验攻略，保留相关图文、个人经验与避坑；需要编排本次行程时再制作时间表、路线和地图，并在计划变化时传播更新。事实查询复用 `yjx-life-query`，不在两个 Skill 中维护两套查询规则。
 
 ### 11. 原型与预期产品效果
 
