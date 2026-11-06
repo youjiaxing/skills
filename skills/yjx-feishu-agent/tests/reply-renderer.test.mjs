@@ -54,3 +54,12 @@ test('oversized or empty card safely falls back to post', () => {
   const rendered = renderReply(`<!-- feishu:card -->\n${'段落 '.repeat(12000)}`);
   assert.equal(rendered.msgType, 'post');
 });
+
+test('card paragraph overflow preserves the full outbound body within capacity', () => {
+  const paragraphs = Array.from({length: 21}, (_, index) => `Evidence ${index + 1}: ${'x'.repeat(640)}`);
+  const body = paragraphs.join('\n\n');
+  const rendered = renderReply(`<!-- feishu:card -->\n${body}`);
+  assert.equal(rendered.msgType, 'interactive');
+  assert.equal(rendered.content.body.elements.map(element => element.content).join('\n\n'), body);
+  assert.ok(Buffer.byteLength(JSON.stringify(rendered.content), 'utf8') <= 30000);
+});

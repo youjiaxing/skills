@@ -60,7 +60,7 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-
 
 send/update、status、recheck、reconcile 在原字段之外分别返回 `delivery` 与实时 `followUp`。`delivery:confirmed` 表示有持久成功证据，`not_submitted` 表示有原尝试未提交证明，其余为 unknown；不要用预检结果判断历史投递。`followUp.state:ready` 表示查询时群已接入且有效路由仍指向该请求来源；`changed` 表示来源已换，`unavailable` 表示未登记/群未接入/路由禁用，`unknown` 表示记录缺失、pending 或不可读。附 `checkedAt`，只说明本地路由快照，不保证未来会话可用性或机器人权限。`sent` 和退出码 0 不单独证明可追问。
 
-更新 JSON：使用新的 requestId、`targetRequestId` 为最初发送编号、`expectedRevision` 为最后确认版本，提供 `msgType:interactive` 及完整 content/images，省略 chatId。初始版本1，确认更新后加1。只操作本工具当前应用下已记账的原卡片；不导入任意消息 ID。旧版本和前次结果未知的更新拒绝。
+更新 JSON：必须另存为独立的 revision 请求文件（例如 `*_rev02.json`），**严禁覆盖首次 `send` 的原始输入 JSON**（以保持原 `requestId` 输入与账本指纹可核查）；使用新的 `requestId`、`targetRequestId` 为最初发送编号、`expectedRevision` 为最后确认版本，提供 `msgType:interactive` 及完整 `content`/`images`，省略 `chatId`。初始版本1，确认更新后加1。只操作本工具当前应用下已记账的原卡片；不导入任意消息 ID。旧版本和前次结果未知的更新拒绝。
 
 另发提醒使用独立 send 编号，可设置 `requiresUpdate` 为更新编号。命令在原卡片锁内确认它为同应用、同群且仍为最新的成功更新，再发送提醒；不能依赖失败或过时更新。重复相同输入返回存档；若原本地图被移动或修改，先用 status 核对，不换编号重发。
 
@@ -88,7 +88,7 @@ send/update、status、recheck、reconcile 在原字段之外分别返回 `deliv
 
 图片应对应具体事项，保留原图可查看；本地路径需先上传取得飞书图片标识，不把 QQ 带鉴权参数的链接直接当成长期附件。图片获取遵循来源工作流的授权，本技能不自动扩大下载范围。文字识别失败不等于图片缺失；仅在缺失影响用户行动时提示查看原消息。
 
-消息类型和新卡片组件按 [外部 skills 分工](feishu-cli.md#外部-skills-的复用范围) 读取 `lark-im` 参考；本地示例使用旧式卡片1.0，不能混用2.0结构。卡片 Markdown 不是完整 Markdown：已实测旧版 lark_md 将井号标题原样显示，栏目可用已验收的加粗或标题组件；不能把此限制推广为所有2.0组件均不支持标题。
+消息类型和新卡片组件按 [外部 skills 分工](feishu-cli.md#外部-skills-的复用范围) 读取 `lark-im` 参考；本地示例使用旧式卡片1.0，不能混用2.0结构。卡片 Markdown 不是完整 Markdown：已实测旧版 lark_md 将井号标题原样显示，栏目可用已验收的加粗或标题组件；不能把此限制推广为所有2.0组件均不支持标题。飞书 Card 2.0 在列表项内嵌套 `>` 引用块时可能丢失该段内容，桥接渲染器会将列表下缩进的行首 `>` 转义为 `\>` 保留字面量；主动投递卡片在列表项内展开详情时优先使用普通缩进或加粗标签，避免依赖嵌套 `>` 引用。
 
 入站桥接回复默认使用 Card 2.0 兼容的 `post` 富文本结构；代码和日志等需要保留原样的内容使用 `text`。当内容同时具备明确栏目和列表等结构时，桥接可选择 Card 2.0；选择依据是内容形态，不是固定字数。回复会在发送前清理不支持的标题/HTML形态；代码、行内比较符号、链接和表格单元格保持原意，无法安全转换时保留为文本。文本或富文本超出边界时按 UTF-8 字节截断并附明确提示；卡片本地校验或超限时降级到 `post`，远程回执未知时不发送第二种格式。实际回复类型和模式写入本地诊断，不写正文。
 

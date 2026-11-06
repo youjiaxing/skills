@@ -64,7 +64,7 @@ node <skill-dir>/scripts/hub.mjs stop --session <token>
 
 每条任务处理按顺序：
 
-1. `plan` 或 `plan-personal` 生成计划。若 `plan` 返回 `unchanged: true`（`committed: true`），说明 Notion 当前页面属性与最新 TB 快照完全一致且本地基线已对齐，**直接结束该条，不发任何外部 Notion 写入请求**。个人编辑传用户要求的最小 patch；暂停/等待他人要连同恢复位置写入 `下一步动作`，内容缺失先询问或从实际进度取证，不编造。
+1. `plan` 或 `plan-personal` 生成计划。若 `plan` 返回 `unchanged: true`（`committed: true`），说明 Notion 当前页面属性与最新 TB 快照完全一致且本地基线已对齐（即便同时附带 `notices` 提示，也无需为提示重复写回相同属性），**直接结束该条，不发任何外部 Notion 写入请求**，仅按需向用户汇报 `notices`。个人编辑传用户要求的最小 patch；暂停/等待他人要连同恢复位置写入 `下一步动作`，内容缺失先询问或从实际进度取证，不编造。
 2. 需要写入的计划调用 `prepare`；`prepare` 成功前不发外部请求。
 3. 自动修改个人状态（`auto_complete`、`auto_reopen`）时先单页重读，按 inventory 的字段形状传 `currentPage` 给 `dispatch`。读取失败或页面变化时取消 prepared 并报告该条；已 dispatched 的结果未知不得取消。其他更新可基于本轮 inventory；创建校验来源唯一性。重读与外部写入之间仍有竞态。
 4. 只有 `dispatch` 返回 `permitted: true`，才调用 Notion `create_pages` 或 `update_page`，目标固定为配置数据源/返回 `pageId`、`properties` 固定为派发结果。不执行 TB 写回。

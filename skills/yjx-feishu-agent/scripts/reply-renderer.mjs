@@ -9,11 +9,35 @@ function truncateUtf8(text, maxBytes, suffix = '\n\n（回答过长，完整内�
   return `${text.slice(0, end)}${suffix}`;
 }
 
+function protectCode(text, protect) {
+  const lines = text.split('\n'), output = [];
+  let fence = null, code = [];
+  for (const line of lines) {
+    if (fence) {
+      code.push(line);
+      const closing = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
+      if (closing && closing[1][0] === fence[0] && closing[1].length >= fence.length) {
+        output.push(protect(code.join('\n')));
+        fence = null;
+        code = [];
+      }
+      continue;
+    }
+    const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (opening && (opening[1][0] !== '`' || !opening[2].includes('`'))) {
+      fence = opening[1];
+      code = [line];
+    } else output.push(line);
+  }
+  if (fence) output.push(protect(code.join('\n')));
+  return output.join('\n').replace(/(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)/g, protect);
+}
+
 export function normalizeReplyMarkdown(input) {
   let text = String(input ?? '').replaceAll('\r\n','\n').trim();
   // Keep code and inline comparisons literal while normalizing the supported subset.
   const protectedParts = [];
-  text = text.replace(/```[\s\S]*?```|`[^`\n]+`/g, value => {
+  text = protectCode(text, value => {
     const key = `\u0000FEISHU_CODE_${protectedParts.length}\u0000`;
     protectedParts.push(value);
     return key;
@@ -22,6 +46,9 @@ export function normalizeReplyMarkdown(input) {
   text = text.replace(/<\/?(?:br|p|div|span|strong|em|b|i|u)(?:\s[^>]*)?>/gi, match =>
     /^<br\b/i.test(match) ? '\n' : '');
   text = text.replace(/^\s*#{1,6}\s+(.+)$/gm, '**$1**');
+  // Feishu can omit blockquotes nested inside lists. Keep the marker
+  // literal so quoted evidence remains visible; protected code is untouched.
+  text = text.replace(/^([ \t]*)>/gm, '$1\\>');
   // Convert simple tables into labeled bullets without dropping cell values.
   text = text.replace(/((?:^\|[^\n]+\|[ \t]*\n?)+)/gm, block => {
     const rows = block.trim().split('\n').map(row => row.split('|').slice(1, -1).map(cell => cell.trim()));
@@ -42,10 +69,11 @@ function cardTitle(text) {
 function cardContent(text) {
   const blocks = text.split(/\n{2,}/).map(block => block.trim()).filter(Boolean);
   if (!blocks.length) return null;
-  const elements = blocks.slice(0, 20).map((content, index) => ({
+  // Keep long answers in one component instead of silently dropping later blocks.
+  const sections = blocks.length > 20 ? [text] : blocks;
+  const elements = sections.map((content, index) => ({
     tag: 'markdown', content, element_id: `section${index + 1}`,
   }));
-  if (blocks.length > 20) elements.push({ tag: 'markdown', content: '（后续内容请在 Codex 会话查看。）', element_id: 'tail' });
   return { schema: '2.0', config: { update_multi: true, width_mode: 'default' },
     header: { title: { tag: 'plain_text', content: cardTitle(text) }, template: 'blue' },
     body: { direction: 'vertical', padding: '12px 12px 20px 12px', elements } };

@@ -46,7 +46,9 @@ test('watched, absent owner, source completion and observed user intervention pr
   assert.equal(planTask(task({ executorId: other }), page('进行中'), entry(), { ...config, watchedTasks: [id] }).type, 'snapshot');
   assert.equal(planTask(task({ executorId: null }), page('进行中'), entry(), config).type, 'snapshot');
   const complete = planTask(task({ isDone: true }), page('进行中'), entry(), config);
-  assert.equal(complete.type, 'snapshot'); assert.equal(complete.notices.length, 1); assert.equal(complete.unchanged, false);
+  assert.equal(complete.type, 'snapshot'); assert.equal(complete.notices.length, 1); assert.equal(complete.unchanged, true);
+  const completeChanged = planTask(task({ isDone: true, statusName: '已完成' }), page('进行中'), entry(), config);
+  assert.equal(completeChanged.type, 'snapshot'); assert.equal(completeChanged.notices.length, 1); assert.equal(completeChanged.unchanged, false);
   const intervention = planTask(task({ executorId: other }), page('进行中'), entry({ lastKnownExecutorId: other, autoCompletedByReassign: true }), config);
   assert.equal(intervention.next.autoCompletedByReassign, false);
   assert.equal(planTask(task(), page('已完成'), intervention.next, config).type, 'snapshot');

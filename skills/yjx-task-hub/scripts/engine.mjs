@@ -159,7 +159,6 @@ export function planTask(task, page, previous, config) {
   const unchanged = Boolean(
     page &&
     type === 'snapshot' &&
-    notices.length === 0 &&
     Object.entries(properties).every(([field, value]) => JSON.stringify(normalizeEmpty(page.properties?.[field])) === JSON.stringify(normalizeEmpty(value)))
   );
   return { planId: randomUUID(), key, pageId: page?.pageId ?? null, type, unchanged, properties, before: page ? structuredClone(page.properties) : null, next, notices };
