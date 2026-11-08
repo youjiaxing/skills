@@ -1,0 +1,5 @@
+interface:
+  display_name: "Agent 定时任务"
+  short_description: "创建与整理定时任务，复用入口并保存需长期维护的任务指令"
+policy:
+  allow_implicit_invocation: true

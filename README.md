@@ -119,6 +119,10 @@ npx skills add youjiaxing/skills --skill yjx-grill
 - 原型制作与项目验证入口遵循目标项目规则；不要求安装上游 `prototype`。本仓库的 `yjx-wayfinder` 优先使用此 skill 处理适合的原型票。
 - 已有派生 skill 的来源、历史基线缺口、当前对照快照及后续选择吸收记录，维护在各自 `MAINTENANCE.md`；“已核对来源”与“已评估或吸收行为变化”分别记录。
 
+### 12. Agent 定时任务
+
+- **[`yjx-scheduled-tasks`](skills/yjx-scheduled-tasks/SKILL.md)**：创建、修改或恢复 Agent 宿主的定时任务，整理已有长提示词。优先复用 skill、脚本和项目文档；需长期维护的独有任务指令保存在所属仓库，定时器只引用入口与必要参数。周期等设置留在宿主，环境现场核查；支持模型按需调用，不管理操作系统调度器。
+
 ## 通用图片读取
 
 - **[`yjx-image-reading`](skills/yjx-image-reading/SKILL.md)**：需要模型理解图片、截图或视频帧时，准备保持分辨率的输入副本，并通过独立只读视觉子任务返回文字和来源索引。生活查询、旅行规划、视频课程、QQ、飞书和 iPhone 视觉观察引用同一入口；其他任务可按需选用，后续相关技能按仓库维护规则接入。依赖和隔离限制见技能说明。
