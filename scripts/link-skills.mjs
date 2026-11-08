@@ -19,6 +19,7 @@ const COMMON_TARGETS = [
   { label: 'Claude Code', value: '~/.claude/skills' },
   { label: 'Codex', value: '~/.codex/skills' },
   { label: 'Agent Skills 通用目录', value: '~/.agents/skills' },
+  { label: 'CodeBuddy Code', value: '~/.codebuddy/skills' },
 ];
 
 function pathKey(value) {

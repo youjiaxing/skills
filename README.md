@@ -158,6 +158,6 @@ npm test                        # 运行单元测试
 
 ### 跨平台挂载机制
 - `skills/` 的直接子目录只要包含 `SKILL.md` 即被识别为有效 skill。
-- **Claude Code / Codex** 等：采用目录软链接（macOS 为符号链接，Windows 为 junction）。
+- **Claude Code / Codex / CodeBuddy Code** 等：采用目录软链接（macOS 为符号链接，Windows 为 junction）。
 - **Google Antigravity**：采用原生配置挂载（自动维护 `~/.gemini/config/skills.json` 中的 `entries`，避开 Windows 软链接跨盘与穿透限制）。
 - 隔离验证步骤请参阅 [`docs/development/verification.md`](docs/development/verification.md)。
