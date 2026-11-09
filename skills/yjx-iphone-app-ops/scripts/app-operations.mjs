@@ -29,7 +29,8 @@ export function failureResult(error, operation = {outcome: 'not-sent'}) {
     operation: {...operation, ...(unknown && operation.outcome === 'sent' ? {outcome: 'unknown'} : {})},
     verification: {status: unknown ? 'unknown' : error.verificationStatus || 'blocked', reason: error.message,
       ...(error.observed !== undefined ? {expected: error.expected, observed: error.observed} : {})},
-    error: error.message, phase: error.phase || null, retryable: false}
+    error: error.message, phase: error.phase || null, retryable: false,
+    ...(error.snapshotRestoreFailure ? {snapshotRestoreFailure: error.snapshotRestoreFailure} : {})}
 }
 
 function validRegion(rect) {
@@ -202,6 +203,7 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     } else if (method !== 'ocr' && !lightweight) {
       observations = nativeRows(await call('execute', 'mobile: source', [{format: 'json'}]))
       selected = 'accessibility'
+      sourcePartial = client.sourceDepthLimit !== null && client.sourceDepthLimit !== undefined
     }
     if (lightweight || selected === 'pixels' || method === 'ocr' || (method === 'auto' && observations.length === 0) || screenshotPath) {
       if (!lightweight) await native()
@@ -211,6 +213,7 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
         observations = raw.observations || []
         if (lightweight && /验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code/i.test(observations.map(row => row.text).join(' '))) throw stop('user-input-required')
         selected = purpose === 'visual' ? 'pixels' : 'vision-ocr'
+        sourcePartial = false
       }
     }
     if (lightweight) await pixelGuard()
@@ -220,6 +223,7 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
       finishedAt: new Date(now()).toISOString(), purpose, method: selected, viewport,
       observations: filtered.slice(0, limit), partial: sourcePartial || filtered.length > limit,
       observationCount: filtered.length, evidence: [],
+      ...(sourcePartial && selected === 'accessibility' ? {snapshotMaxDepth: client.sourceDepthLimit, partialReason: 'snapshot-depth-limit'} : {}),
       targets: [],
       recovery: {readRetries, replayAllowed: false},
       snapshotNote: 'Sequential observations; image and accessibility data are not an atomic snapshot',

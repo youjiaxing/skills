@@ -11,6 +11,8 @@ node scripts/iphone-app-ops.mjs observe --bundle-id <bundle> --purpose visual --
 
 信息任务默认原生文字，文字不足才用本机 OCR；`--method native|ocr|dom|pixels` 可明确路径，DOM 配合 `--context`。默认最多 80 项，可用 `--limit`（1–500）和 `--contains` 限定，`partial` 表示输出截断。需要更多内容时滚动或调整观察范围，不将截断输出当完整页面。
 
+CLI 通用命令默认将 XML/JSON 页面快照临时限制为 10 层，读取后恢复为受控会话的 50 层查询基线；原生元素与敏感控件查询继续使用原深度。原生观察带 `partial=true`、`snapshotMaxDepth` 和 `partialReason=snapshot-depth-limit`，深层按钮或文字缺失时用原生 predicate 查找或 `--method pixels` 补读。需要更深的内容时可显式设置 `IPHONE_OPS_SOURCE_MAX_DEPTH`（1–50）；深度增大会重新触发部分 App 的 AX 超时。截图/OCR 与 DOM 的覆盖范围按其各自结果判断。点评和小红书专用查询命令沿用原有快照方式。
+
 视觉任务使用 `--purpose visual` 和新的 `--screenshot-output`，随后通过 `yjx-image-reading` 准备输入，由独立视觉子任务实际查看图片并回传文字观察。输出一张截图不算视觉评审完成。布局、颜色、间距、遮挡、图表等由模型据实际图像判断，原生文字完整也不能省略截图。混合任务按目标组合路径；原控制代理继续持有设备命令和恢复状态。
 
 `--source-output` 显式保留 XML，`--output` 保存结构化观察。输出文件拒绝覆盖，截图、XML、文字包含各自观察阶段，不是原子快照。截图默认不落盘，视觉核验使用本轮新路径；保留与目标相关的范围，不保存或传递凭据。

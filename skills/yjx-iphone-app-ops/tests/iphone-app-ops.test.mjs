@@ -8,6 +8,21 @@ import os from 'node:os'
 import path from 'node:path'
 import {classifyWdaHealth, collectSourceText, createAppiumClient, dianpingSearch, elementAction, extractForegroundBundle, isDianpingConsentSource, isDianpingVerificationSource, isLockScreenSource, parseDeviceLine, probeSessionHealth, recover, requiresCredential, waitForForeground, withFileLock} from '../scripts/iphone-app-ops.mjs'
 
+function settingsEndpoint() {
+  const depths = new Map()
+  return async (req, res) => {
+    if (!req.url.endsWith('/appium/settings')) return false
+    if (req.method === 'POST') {
+      let body = ''
+      for await (const chunk of req) body += chunk
+      depths.set(req.url, JSON.parse(body).settings.snapshotMaxDepth)
+    }
+    res.writeHead(200, {'content-type': 'application/json'})
+    res.end(JSON.stringify({value: {snapshotMaxDepth: depths.get(req.url) ?? 50}}))
+    return true
+  }
+}
+
 test('health classification separates Appium, tunnel, WDA, expired session, lockscreen and AX failures', () => {
   assert.equal(classifyWdaHealth({appium: false}), 'appium-unavailable')
   assert.equal(classifyWdaHealth({appium: true, tunnel: false, wda: false}), 'wda-and-remote-xpc-unavailable')
@@ -224,6 +239,7 @@ test('expired Appium session is replaced once and the new WDA session is validat
   const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-session-expiry-'))
   t.after(() => rm(directory, {recursive: true, force: true}))
   let creates = 0
+  const settings = settingsEndpoint()
   const server = createServer(async (req, res) => {
     const send = (status, value) => { res.writeHead(status, {'content-type': 'application/json'}); res.end(JSON.stringify({value})) }
     if (req.method === 'POST' && req.url === '/session') {
@@ -231,7 +247,8 @@ test('expired Appium session is replaced once and the new WDA session is validat
       for await (const _ of req) {}
       return send(200, {sessionId: 'renewed', capabilities: {}})
     }
-    if (req.url === '/session/stale/source') return send(404, {error: 'invalid session id', message: 'session expired'})
+    if (req.url.startsWith('/session/stale/')) return send(404, {error: 'invalid session id', message: 'session expired'})
+    if (await settings(req, res)) return
     if (req.url === '/session/renewed/source') return send(200, '<XCUIElementTypeApplication bundleId="com.apple.springboard"/>')
     res.writeHead(404).end()
   })
@@ -253,6 +270,7 @@ test('confirmed invalid session cleanup removes the creation marker', async (t) 
   t.after(() => rm(directory, {recursive: true, force: true}))
   const stateFile = path.join(directory, 'state.json')
   let creates = 0
+  const settings = settingsEndpoint()
   const server = createServer(async (req, res) => {
     const send = (status, value) => { res.writeHead(status, {'content-type': 'application/json'}); res.end(JSON.stringify({value})) }
     if (req.method === 'POST' && req.url === '/session') {
@@ -260,8 +278,9 @@ test('confirmed invalid session cleanup removes the creation marker', async (t) 
       for await (const _ of req) {}
       return send(200, {sessionId: creates === 1 ? 'stale' : 'renewed', capabilities: {}})
     }
-    if (req.method === 'GET' && req.url === '/session/stale/source') return send(404, {error: 'invalid session id', message: 'session expired'})
+    if (req.method === 'GET' && req.url.startsWith('/session/stale/')) return send(404, {error: 'invalid session id', message: 'session expired'})
     if (req.method === 'DELETE' && req.url === '/session/stale') return send(404, {error: 'invalid session id', message: 'session already closed'})
+    if (await settings(req, res)) return
     if (req.method === 'GET' && req.url === '/session/renewed/source') return send(200, '<XCUIElementTypeApplication bundleId="com.apple.springboard"/>')
     res.writeHead(404).end()
   })
@@ -283,6 +302,7 @@ test('completed proxy timeout marker replaces only its matching cached session',
   t.after(() => rm(directory, {recursive: true, force: true}))
   const stateFile = path.join(directory, 'state.json')
   const requests = []
+  const settings = settingsEndpoint()
   const server = createServer(async (req, res) => {
     requests.push(`${req.method} ${req.url}`)
     const send = (status, value) => { res.writeHead(status, {'content-type': 'application/json'}); res.end(JSON.stringify({value})) }
@@ -291,6 +311,7 @@ test('completed proxy timeout marker replaces only its matching cached session',
       for await (const _ of req) {}
       return send(200, {sessionId: 'renewed', capabilities: {}})
     }
+    if (await settings(req, res)) return
     if (req.method === 'GET' && req.url === '/session/renewed/source') return send(200, '<XCUIElementTypeApplication bundleId="com.apple.springboard"/>')
     res.writeHead(404).end()
   })
@@ -304,7 +325,9 @@ test('completed proxy timeout marker replaces only its matching cached session',
   const {stdout} = await promisify(execFile)(process.execPath, [script, 'session'], options)
   assert.equal(JSON.parse(stdout).sessionId, 'renewed')
   assert.equal(JSON.parse(stdout).reused, false)
-  assert.deepEqual(requests, ['DELETE /session/stale', 'POST /session', 'GET /session/renewed/source'])
+  assert.deepEqual(requests, ['DELETE /session/stale', 'POST /session',
+    'GET /session/renewed/appium/settings', 'POST /session/renewed/appium/settings',
+    'GET /session/renewed/source', 'POST /session/renewed/appium/settings'])
   await assert.rejects(readFile(stateFile + '.reset-required'), {code: 'ENOENT'})
 })
 
@@ -334,7 +357,9 @@ test('a valid cached session clears an orphaned creation marker', async (t) => {
   const stateFile = path.join(directory, 'state.json')
   await writeFile(stateFile, JSON.stringify({sessionId: 'live-session', udid: 'test-device'}))
   await writeFile(stateFile + '.creating', JSON.stringify({at: new Date().toISOString(), udid: 'test-device'}))
-  const server = createServer((req, res) => {
+  const settings = settingsEndpoint()
+  const server = createServer(async (req, res) => {
+    if (await settings(req, res)) return
     res.writeHead(200, {'content-type': 'application/json'})
     res.end(JSON.stringify({value: '<XCUIElementTypeApplication bundleId="com.apple.springboard"/>'}))
   })
@@ -577,6 +602,41 @@ test('element actions verify foreground and do not retry a sent click', async ()
   const result = await elementAction(client, 'session-1', 'click', 'com.xingin.discover', 'accessibility-id', 'search')
   assert.equal(result.ok, true)
   assert.deepEqual(calls, [['find', 'accessibility id', 'search'], ['click']])
+})
+
+test('bounded source cannot hide deeper credential controls from an element action', async () => {
+  const calls = []
+  const client = {sourceDepthLimit: 10, getContext: async () => 'NATIVE_APP',
+    source: async () => '<XCUIElementTypeApplication bundleId="example.app"/>',
+    execute: async (_, script) => script === 'mobile: activeAppInfo' ? {bundleId: 'example.app'} : 4,
+    findElements: async (_, using, selector) => { calls.push(selector); return [{ELEMENT: 'deep-credential'}] },
+    clickElement: async () => { throw new Error('credential barrier must prevent the click') }}
+  const result = await elementAction(client, 'session', 'click', 'example.app', 'predicate', 'name == "Search"')
+  assert.equal(result.status, 'user-input-required')
+  assert.equal(result.operation.outcome, 'not-sent')
+  assert.equal(calls.length, 1)
+  assert.match(calls[0], /SecureTextField/)
+  assert.match(calls[0], /value MATCHES/)
+})
+
+test('bounded lock screen recovery checks deeper secure controls before wake or swipe', async () => {
+  const actions = []
+  const client = {sourceDepthLimit: 10, source: async () => '<XCUIElementTypeApplication bundleId="com.apple.springboard"><XCUIElementTypeWindow name="SBCoverSheetWindow"/></XCUIElementTypeApplication>',
+    findElements: async () => [{ELEMENT: 'deep-passcode'}], execute: async (_, script) => actions.push(script)}
+  const result = await recover(client, 'session', 'example.app')
+  assert.equal(result.reason, 'credential-required')
+  assert.deepEqual(actions, [])
+})
+
+test('health stops after a received proxy timeout rather than probing activeAppInfo', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'iphone-health-proxy-stop-'))
+  t.after(() => rm(directory, {recursive: true, force: true}))
+  const client = {status: async () => ({ready: true}), wdaStatus: async () => ({}),
+    source: async () => { throw Object.assign(new Error('Could not proxy command to the remote server. Original error: timeout of 30000ms exceeded'), {code: 'unknown error', transportPending: false}) },
+    execute: async () => { assert.fail('no command may follow the source proxy timeout') }}
+  const result = await probeSessionHealth(client, 'session', {sessionFile: path.join(directory, 'state'), fetchImpl: async () => ({ok: true, json: async () => ({status: 'OK'})})})
+  assert.equal(result.resetRequired, true)
+  assert.equal(result.resetReason, 'proxy-timeout-response-received')
 })
 
 test('client refuses a non-loopback Appium endpoint', () => {

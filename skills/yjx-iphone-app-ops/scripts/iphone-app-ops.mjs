@@ -49,10 +49,13 @@ export function parseDeviceLine(output, udid = config.udid) {
 }
 
 export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetch, requestTimeoutMs = timeoutMs, sessionFile = null, deviceConfig = config,
-  monotonicNow = () => performance.now()} = {}) {
+  sourceMaxDepth = null, monotonicNow = () => performance.now()} = {}) {
   const endpoint = new URL(baseUrl)
   if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(endpoint.hostname)) {
     throw new Error('Appium must be bound to a loopback address')
+  }
+  if (sourceMaxDepth !== null && (!Number.isInteger(sourceMaxDepth) || sourceMaxDepth < 1 || sourceMaxDepth > 50)) {
+    throw new Error('sourceMaxDepth must be an integer from 1 to 50')
   }
 
   async function request(endpoint, options = {}, readOnly = !options.method || options.method === 'GET') {
@@ -106,7 +109,53 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
     }
   }
 
+  const settings = (sessionId, values) => request(`/session/${sessionId}/appium/settings`, values ? {
+    method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({settings: values}),
+  } : {})
+  const setSnapshotDepth = async (sessionId, depth) => {
+    try { await settings(sessionId, {snapshotMaxDepth: depth}) }
+    catch (error) {
+      if (sessionFile && !error.transportPending && !isProxyTimeout(error) && error.code !== 'invalid session id') {
+        await markSessionResetRequired(sessionFile, `/session/${sessionId}/appium/settings`, 'snapshot-settings-unconfirmed')
+      }
+      throw error
+    }
+  }
+  const snapshot = async (sessionId, acquire) => {
+    if (sourceMaxDepth === null) return acquire()
+    const original = (await settings(sessionId)).snapshotMaxDepth
+    // The Appium settings getter omits WDA defaults until explicitly initialized.
+    // Never guess a restore value for a session created outside this client.
+    if (original !== 50) throw Object.assign(
+      new Error('Snapshot depth is unconfirmed; close the owned session and create it with initialized snapshot settings'),
+      {status: 'snapshot-depth-unconfirmed'})
+    if (original <= sourceMaxDepth) return acquire()
+    if (!sessionFile) throw new Error('Bounded snapshots require a session state file for interrupted-scope recovery')
+    // Persist protection before the first mutation. A killed process must not
+    // leave a shallow query scope looking like a ready session on the next run.
+    await markSessionResetRequired(sessionFile, `/session/${sessionId}/source`, 'snapshot-depth-scope')
+    await setSnapshotDepth(sessionId, sourceMaxDepth)
+    let result, failure
+    try { result = await acquire() } catch (error) { failure = error }
+    // A proxy deadline does not cancel the device's snapshot. Keep the recovery
+    // marker and do not queue a settings restore behind a possibly running call.
+    if (failure && (failure.transportPending || isProxyTimeout(failure) || failure.code === 'invalid session id')) throw failure
+    try { await setSnapshotDepth(sessionId, original) }
+    catch (error) {
+      if (failure) { failure.snapshotRestoreFailure = error.message; throw failure }
+      throw error
+    }
+    const marker = await loadResetRequired(sessionFile)
+    if (marker?.sessionId !== sessionId || marker.reason !== 'snapshot-depth-scope') {
+      throw Object.assign(new Error('Snapshot recovery marker changed during restoration'), {status: 'session-state-unconfirmed'})
+    }
+    await rm(resetRequiredPath(sessionFile), {force: true})
+    if (failure) throw failure
+    return result
+  }
+
   return {
+    sourceDepthLimit: sourceMaxDepth,
     status: () => request('/status', {timeoutMs: 5000}),
     wdaStatus: async () => {
       const port = config.wdaLocalPort
@@ -137,9 +186,13 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
         'appium:newCommandTimeout': newCommandTimeoutSeconds,
         'appium:wdaLaunchTimeout': 60000,
         'appium:wdaConnectionTimeout': WDA_PROXY_TIMEOUT_MS,
+        // Keep native queries complete; limit only the source request below.
+        'appium:settings[snapshotMaxDepth]': 50,
+        // WDA does not reset this experimental setting between sessions.
+        'appium:settings[enforceCustomSnapshots]': false,
       }, firstMatch: [{}]}}),
     }),
-    source: (sessionId) => request(`/session/${sessionId}/source`),
+    source: (sessionId) => snapshot(sessionId, () => request(`/session/${sessionId}/source`)),
     getContext: (sessionId) => request(`/session/${sessionId}/context`),
     setContext: (sessionId, name) => request(`/session/${sessionId}/context`, {
       method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({name}),
@@ -167,11 +220,11 @@ export function createAppiumClient({baseUrl = config.appiumUrl, fetchImpl = fetc
       body: JSON.stringify({text: Array.from(value)}),
     }),
     clearElement: (sessionId, elementId) => request(`/session/${sessionId}/element/${encodeURIComponent(elementId)}/clear`, {method: 'POST', headers: {'content-type': 'application/json'}, body: '{}'}),
-    execute: (sessionId, script, args = []) => request(`/session/${sessionId}/execute/sync`, {
+    execute: (sessionId, script, args = []) => (script === 'mobile: source' ? snapshot : async (_sid, acquire) => acquire())(sessionId, () => request(`/session/${sessionId}/execute/sync`, {
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify({script, args}),
-    }, ['mobile: source', 'mobile: activeAppInfo', 'mobile: queryAppState', 'mobile: getContexts'].includes(script)),
+    }, ['mobile: source', 'mobile: activeAppInfo', 'mobile: queryAppState', 'mobile: getContexts'].includes(script))),
     screenshot: (sessionId) => request(`/session/${sessionId}/screenshot`),
     tap: (sessionId, x, y) => request(`/session/${sessionId}/actions`, {
       method: 'POST',
@@ -353,7 +406,7 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
     : {ok: false, error: wda.reason?.code || wda.reason?.message}
   const storedUnknown = await loadUnknownRequest(sessionFile)
   let unknown = storedUnknown && (!sessionId || storedUnknown.sessionId === sessionId) ? storedUnknown : null
-  const reset = await loadResetRequired(sessionFile)
+  let reset = await loadResetRequired(sessionFile)
   result.commandUnknown = Boolean(unknown && (!sessionId || unknown.sessionId === sessionId))
   result.resetRequired = Boolean(reset && (!sessionId || reset.sessionId === sessionId))
   result.resetReason = result.resetRequired ? reset.reason || 'proxy-timeout-response-received' : null
@@ -367,9 +420,14 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
       result.checks.source = {ok: false, code: error.code || 'protocol-error', phase: error.phase || null,
         outcome: error.outcome || 'unknown'}
       if (error.code === 'invalid session id') result.session = false
-      else if (error.transportPending === true || error.code === 'ETIMEDOUT') {
+      else if (error.transportPending === true) {
         result.commandUnknown = true
         unknown ||= {sessionId, at: Date.now(), command: 'source'}
+      }
+      else if (isProxyTimeout(error) || (reset = await loadResetRequired(sessionFile))) {
+        result.resetRequired = true
+        result.resetReason = reset?.reason || 'proxy-timeout-response-received'
+        reset ||= {sessionId, command: 'source', reason: result.resetReason}
       }
       else {
         try { await client.execute(sessionId, 'mobile: activeAppInfo'); result.active = true }
@@ -401,21 +459,21 @@ export async function recover(client, sessionId, bundleId) {
   }
   let page = await client.source(sessionId)
   const steps = [{name: 'read-source', ok: true, lockScreen: isLockScreenSource(page)}]
-  if (requiresCredential(page)) {
+  if (await lockCredentialRequired(client, sessionId, page)) {
     return {ok: false, status: 'blocked-needs-user', reason: 'credential-required', sessionId, bundleId, steps}
   }
   if (isLockScreenSource(page)) {
     await client.execute(sessionId, 'mobile: pressButton', [{name: 'home'}])
     steps.push({name: 'wake-home', ok: true})
     page = await client.source(sessionId)
-    if (requiresCredential(page)) {
+    if (await lockCredentialRequired(client, sessionId, page)) {
       return {ok: false, status: 'blocked-needs-user', reason: 'credential-required', sessionId, bundleId, steps}
     }
     if (isLockScreenSource(page)) {
       await client.execute(sessionId, 'mobile: dragFromToForDuration', [{duration: 0.1, fromX: 207, fromY: 850, toX: 207, toY: 120}])
       steps.push({name: 'swipe-lock-screen', ok: true})
       page = await client.source(sessionId)
-      if (requiresCredential(page)) {
+      if (await lockCredentialRequired(client, sessionId, page)) {
         return {ok: false, status: 'blocked-needs-user', reason: 'credential-required', sessionId, bundleId, steps}
       }
     }
@@ -428,6 +486,14 @@ export async function recover(client, sessionId, bundleId) {
   const appState = ready.appState
   const appReady = foregroundBundle === bundleId && activeBundle === bundleId && appState === 4
   return {ok: appReady, sessionId, bundleId, foregroundBundle, activeBundle, appState, steps, appReady, lockScreenAfter: isLockScreenSource(page)}
+}
+
+async function lockCredentialRequired(client, sessionId, page) {
+  if (requiresCredential(page)) return true
+  if (!isLockScreenSource(page) || client.sourceDepthLimit == null) return false
+  const secure = await client.findElements(sessionId, '-ios predicate string', 'type == "XCUIElementTypeSecureTextField"')
+  if (!Array.isArray(secure)) throw Object.assign(new Error('Lock screen credential check is unreadable'), {status: 'safety-check-unreadable'})
+  return secure.length > 0
 }
 
 export async function waitForForeground(client, sessionId, bundleId, timeout = 45000) {
@@ -470,6 +536,14 @@ async function requireForeground(client, sessionId, bundleId, existingPage) {
   const rootBundle = extractForegroundBundle(page)
   if (rootBundle !== bundleId || activeAppInfo?.bundleId !== bundleId || appState !== 4) {
     throw Object.assign(new Error(`target app is not verified in foreground: root=${rootBundle || 'unknown'}, active=${activeAppInfo?.bundleId || 'unknown'}, state=${appState}`), {status: 'foreground-unverified'})
+  }
+  if (client.sourceDepthLimit !== null && client.sourceDepthLimit !== undefined) {
+    // This query runs after source depth has been restored. A shallow tree alone
+    // cannot prove that deeper credential or security controls are absent.
+    const sensitive = await client.findElements(sessionId, '-ios predicate string',
+      "name IN {'SBCoverSheetWindow', 'lockscreen-date-view'} OR type == 'XCUIElementTypeSecureTextField' OR (label MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*' OR name MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*' OR value MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*')")
+    if (!Array.isArray(sensitive)) throw Object.assign(new Error('Sensitive controls could not be checked'), {status: 'safety-check-unreadable'})
+    if (sensitive.length) throw Object.assign(new Error('Credential or security controls require user handling'), {status: 'user-input-required'})
   }
 }
 
@@ -629,7 +703,9 @@ function print(result) {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2)
-  const client = createAppiumClient({sessionFile: config.sessionFile})
+  const sourceMaxDepth = Number(process.env.IPHONE_OPS_SOURCE_MAX_DEPTH ?? config.sourceMaxDepth ?? 10)
+  const specialized = ['dianping-search', 'dianping-detail', 'dianping-share', 'xiaohongshu-search'].includes(command)
+  const client = createAppiumClient({sessionFile: config.sessionFile, sourceMaxDepth: specialized ? null : sourceMaxDepth})
   if (command === 'doctor') return print(await doctor(client))
   if (command === 'target') {
     const option = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined }
@@ -758,12 +834,12 @@ async function main() {
         const page = await client.source(session.sessionId)
         const outputFlag = args.indexOf('--output')
         if (outputFlag < 0) {
-          return {sessionId: session.sessionId, foregroundBundle: extractForegroundBundle(page), lockScreen: isLockScreenSource(page), credentialRequired: requiresCredential(page), bytes: Buffer.byteLength(page)}
+          return {sessionId: session.sessionId, foregroundBundle: extractForegroundBundle(page), lockScreen: isLockScreenSource(page), credentialRequired: requiresCredential(page), bytes: Buffer.byteLength(page), snapshotMaxDepth: sourceMaxDepth, partial: true}
         }
         const outputPath = args[outputFlag + 1]
         if (!outputPath) throw new Error('source --output requires a path')
         await publishArtifact(path.resolve(outputPath), page)
-        return {sessionId: session.sessionId, source: outputPath, bytes: Buffer.byteLength(page)}
+        return {sessionId: session.sessionId, source: outputPath, bytes: Buffer.byteLength(page), snapshotMaxDepth: sourceMaxDepth, partial: true}
       }
       const page = await client.source(session.sessionId)
       if (isLockScreenSource(page)) throw new Error('screenshot withheld while the device is on the lock screen')

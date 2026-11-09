@@ -4,7 +4,7 @@
 
 Appium 与 RemoteXPC 隧道是共享运行服务。查询使用预安装 WDA，不在每轮重新构建或签名。控制环境的首次部署、WDA 签名安装和后续维护由本 skill 组织，见[控制环境维护](environment.md)。Xcode 账户、管理员密码、开发者模式/信任等需要本人完成的步骤单独交接。
 
-当前 Appium 用户 LaunchAgent 和管理员隧道 LaunchDaemon 已安装，Mac 重启并登录后的自动启动已实测；iPhone 配对与隧道可用，预安装 WDA 可按需建立新 session。App 切换按[恢复流程](recovery.md)先等前台信号收敛，再以完整页面树和后置状态确认就绪；不能把服务就绪视为整轮查询成功，详见[验收记录](roadmap.md)。Mac 登录前运行、用户登出和 iPhone 自身重启后的首次解锁仍未验收。
+当前 Appium 用户 LaunchAgent 和管理员隧道 LaunchDaemon 已安装，Mac 重启并登录后的自动启动已实测；iPhone 配对与隧道可用，预安装 WDA 可按需建立新 session。App 切换按[恢复流程](recovery.md)先等前台信号收敛，再以页面树根身份和后置状态确认就绪；页面快照的深度与覆盖见[通用操作](operations.md)。不能把服务就绪视为整轮查询成功，详见[验收记录](roadmap.md)。Mac 登录前运行、用户登出和 iPhone 自身重启后的首次解锁仍未验收。
 
 本机配置和参数化模板由 `scripts/iphone-environment.mjs` 管理，安装/启动命令见[控制环境维护](environment.md)。健康服务复用，维护时先确认唯一 owner、服务与配置归属和无在途请求；端口占用不能作为停止进程的依据。未知归属时保留现场并报告具体接管动作。隧道须以目标设备 registry 返回 OK 验证，进程存在不算就绪。
 
@@ -25,6 +25,7 @@ Appium 与 RemoteXPC 隧道是共享运行服务。查询使用预安装 WDA，�
 | `IPHONE_OPS_SESSION_FILE` | session 状态文件路径 | 系统临时目录下按设备区分 |
 | `IPHONE_OPS_TIMEOUT_MS` | Appium 请求 deadline；至少 `35000` 且默认 45 秒，高于当前 XCUITest 30 秒 WDA proxy deadline | `45000` |
 | `IPHONE_OPS_NEW_COMMAND_TIMEOUT_SEC` | 覆盖 Appium session 空闲寿命；`0` 表示 CLI 显式管理且不自动过期 | `0` |
+| `IPHONE_OPS_SOURCE_MAX_DEPTH` | XML/JSON 快照深度，1–50；仅限快照请求，原生查询保留原深度 | `10` |
 | `IOS_APP_BUNDLE_ID` | 默认目标 App | 无 |
 
 状态文件仅保存设备 UDID、session ID 和创建时间，权限设为 `0600`；不保存凭据、页面内容或截图。
@@ -38,6 +39,7 @@ Appium 与 RemoteXPC 隧道是共享运行服务。查询使用预安装 WDA，�
 - `wda-health`：分别探测 Appium、RemoteXPC 隧道 registry、配置的本机 WDA `/status` 端点和现有 session 页面树；没有持久化未知请求时，页面树失败再单独请求 activeAppInfo 区分完整 AX 快照与命令通道问题；有未知请求标记时跳过所有 session 命令。锁屏页面树可读是健康结果。默认 WDA 本机端口为 `8100`，多会话或端口变化时设置 `IOS_WDA_LOCAL_PORT`。
 - `recover`：目标 bundle 是页面树根应用。
 - `element read/click/set-value`：动作前目标 bundle、active app 和 `queryAppState=4` 一致；动作后页面树可再次读取。
+- 有界页面树不用于证明深层敏感控件不存在；操作前另用恢复原深度后的原生查询检查凭据和验证控件，查询失败即停止。旧 session 的快照深度未初始化时，关闭已确认归属的 session 后新建一次，不猜测恢复值。
 - 二维码只读：轻量会话检查、前后 active bundle/状态与同屏完整分店名/二维码；不要求深度 XML 快照，不放宽实际点击的门禁。
 - 页面截图：只证明该时刻设备显示状态，不证明内容真实或最新。
 
