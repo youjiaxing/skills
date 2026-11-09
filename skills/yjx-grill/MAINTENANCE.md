@@ -91,7 +91,9 @@ When changing the skill, verify that:
 - observed high stakes are not erased merely by answering a question; unresolved substantiated correctness findings or mandatory independent review that self-review cannot replace prevent approval or delivery;
 - a single launch/wait timeout is distinguished from a task's terminal state; queued/running Reviewers are retained under host notification, bounded-wait or continuation rules without short polling or an added fixed total deadline; Reviewer subagents stay open until the review loop settles rather than being closed before potential follow-up and re-opened via `resume_agent`, while small unambiguous boundary fixes are verified directly by the primary; unknown state is disclosed rather than treated as failure or completion, and fallback respects project/host review requirements;
 - collaborative discussion remains open to feedback, accepts clear closure without a fixed phrase or repeated unchanged confirmations, and preserves separate execution authorization;
-- a request for Q-numbered questions does not manufacture a decision; explanation requests receive an explanation, while genuine questions and required approval requests use the question-first layout;
+- a request for Q-numbered questions does not manufacture a decision; explanation requests, verified-fact/progress reports, and converged conclusions lead their first sentence directly with the answer, conclusion, or completed outcome using direct literal verbs without preambles, recaps, closing pleasantries, or corporate jargon, while genuine questions and required approval requests use the question-first layout;
+- non-blocking secondary/tangent issues discovered during investigation stay out of the active question background until the current topic converges, where FYI items are stated in plain prose and new questions still pass Sections 3 and 5 gates, while blockers to the current line still resolve as Section 2 prerequisites;
+- blocker, tool-failure, and defect reports state the concrete location and observed error, giving the confirmed cause and minimal unblock action when known or explicitly stating unknown cause plus the minimal next check;
 - background supplies enough context to decide without fixed fields or lengths, leading assumptions, duplicated option comparisons, or a required link detour; conclusions without pending decisions or approvals do not create an unspecified feedback checkpoint;
 - each discussion question or batch is independently understandable when the user has not read earlier long Agent output, while carrying only the minimum context needed for the current judgment;
 - key transitions identify the actual next action and its owner, or a specific blocker and how to clear it, without per-reply status templates or full remaining-topic inventories;
@@ -135,3 +137,7 @@ Follow the repository [Skill verification policy](../../AGENTS.md#skill-verifica
 决策图/frontier、事实调查、按回答重算、推荐项、问题身份和完成对齐均已有覆盖。保留后果/意图门禁、每轮最多三个正交问题、开放探索与用户偏好的数字选项；不恢复所有决策一律询问、无限 frontier 问卷、固定 emoji 或强制 yes 句式。fresh-context 规则亦已覆盖。没有发现需要新增的上游能力；本会话之前基于真实使用修正的作用域与评审等待规则属于本地演化，不记为本轮上游吸收。
 
 本次仅静态文档评估，未改运行规则或验证模型执行效果。此处建立当前能力评估版本，不补造最初参考提交。
+
+### 2026-11-09 跨源高信噪比呈现规则吸收
+
+借鉴 `ayghri/i-have-adhd` 与 `panda850819/i-have-adhd-zh-tw` 的高信噪比交互原则，经用户对齐确认后合入《呈现密度》：非提问回复与结论交付首句直给答案/已完成结果，使用直接动词与字面行动，省略首尾寒暄、过程复盘与空泛黑话；取证或讨论中不阻塞当前主线的旁支问题后置到当前议题末尾（纯知会用普通陈述，提问仍须独立通过第 3、5 节门禁，实际阻塞当前主线的问题仍按第 2 节前置依赖处理）；对齐阻塞、工具失败与 defect 报告直给具体位置、已观察到的报错及已确认原因（未知时标明未知）与最小下一步动作。明确排除强制两层缩排列表与每组 5 项硬截断。

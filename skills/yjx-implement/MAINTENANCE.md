@@ -95,7 +95,7 @@ Check the changed runtime text against these questions; use the scenarios to exp
 - Does the `No new test` path remain evidence-bearing and reviewable?
 - Do authorized test-order overrides remain distinguishable from missing red-green evidence, with source, scope, and substitute verification recorded?
 - Does the review gate start every subagent with a fresh context window (do not fork the current conversation), and retain the complete final change set, blocker disposition, independent re-review, and incomplete status when review cannot execute?
-- Is the skill still English, manually invoked, and independent of a particular language or application architecture?
+- Does the skill keep its established section-heading and terminology conventions consistent, execute runnable verification directly within agent authority, lead delivery reports with the completed outcome and verification entry without chronological recaps, report verification/delivery blockers with location, observed error, confirmed-or-unknown cause, and minimal next action, and remain manually invoked and independent of a particular programming language or application architecture?
 
 | Scenario | Expected assessment |
 | --- | --- |
@@ -163,3 +163,10 @@ Check the changed runtime text against these questions; use the scenarios to exp
 - `implement-spec` 的 DAG 编排不塞入本技能；本仓库已有 `yjx-issue-flow` 承接，对照说明见其维护记录。
 
 首次评估之后，I1 经独立方案审查、用户明确实施指令后落地；验证限于静态文档审阅、一致性和链接检查，未运行模拟行为测试，也未执行产品实施或 Git 交付。后续从上述版本比较 `implement/` 的增量，I1 不再作为待采用项。
+
+### 2026-11-09 跨源高信噪比交付与验证直报规则吸收
+
+借鉴 `ayghri/i-have-adhd` 与 `panda850819/i-have-adhd-zh-tw` 的高信噪比交互与自主闭环原则，经用户对齐确认后合入 Phase 3 与 Phase 5：
+- **权限内自主执行检查：** Phase 3 Bounded Verification 明确在已建立的工作区与授权范围内直接运行可执行的编译、测试与验证命令，不把可安全运行的检查留给用户代跑。
+- **失败与阻塞客观直报：** Phase 3 与 Phase 5 在检查失败或远程交付受阻时，直接输出失败位置（`file:line` 或命令）、已观察到的报错信息、已确认原因（若未知则明确标明未知）及最小修复或下一步可恢复动作。
+- **交付报告结果先行：** Phase 5 交付报告首行直接呈现已完成的可观察功能结果、立即可运行的验证入口与交付终态，省略按时间顺序复述的过程流水账与首尾客套。同时修正第 3 节维护检查中与中英混排正文失实的纯英文检查项。
