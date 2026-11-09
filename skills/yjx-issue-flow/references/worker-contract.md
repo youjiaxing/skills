@@ -31,6 +31,8 @@ Worker 在 issue 边界、项目规则与所选 handler skill 内自主完成工
 
 触发升级时，仅将当前 issue 标记为 `needs-human` 或 `blocked`，不影响其它互不依赖的并行 worker。
 
+发生环境或设备本地数据误删、损毁时，立即原样保留已有备份与现场取证文件，停在 `needs-human`，在获得用户明确指令前不编写恢复脚本、不向设备或容器回写覆盖。用白话向用户说明受损对象、是否存在现成完整备份以及对当前票据验收的实际影响：若已确认受损对象属于可丢弃的测试/开发造数，将「放弃恢复旧数据、使用任务夹具继续当前验收」置为推荐项 `1`，将「执行旧数据恢复」置为备选项 `2`；若无法排除连线真机等环境包含用户真实个人数据，先询问数据性质及是否需要从现成备份还原。
+
 ## 3. 结构化完成报告（Completion Report）
 
 Worker 结束或暂停时，必须向协调器返回以下结构化报告：
@@ -57,6 +59,6 @@ Next action: <仅在 Result 非 completed 时填写具体后续动作>
 ### 完成状态判据
 
 - **`Result: completed`（`local` 模式终态，或协调器完成主工作区合入与关票后的最终记账）**：要求本票需求、验收标准、相关验证、项目必需独立评审、集成基线合入以及 tracker 关票全部完成。仅凭文字报告不能关闭 issue。
-- **`Result: ready-to-integrate`（`worktree` 并行模式 worker 终态）**：要求本票需求、基于 `Baseline SHA` 的分支同步与冲突消解、验证、必需独立评审和 worker 分支本地 commit（`Delivery SHA`）全部完成，等待协调器在主工作区合入集成基线并执行 tracker 关票。
+- **`Result: ready-to-integrate`（`worktree` 并行模式 worker 终态）**：要求本票需求、基于 `Baseline SHA` 的分支同步与冲突消解、验证、必需独立评审和 worker 分支本地 commit（`Delivery SHA`）全部完成，等待协调器在主工作区合入集成基线并执行 tracker 关票。协调器针对 `ready-to-integrate` 发出的定向返工或补证消息使上一份就绪结论立即失效；下一份完成报告须附针对该缺口的新核查结果，并重新给出新的 `ready-to-integrate` 或写明具体阻塞原因的 `blocked` / `needs-human`。
 - **`Result: needs-coordinator-review`（禁止嵌套子代理的受限宿主过渡态）**：要求本票需求、验证及评审输入材料（决策上下文、适用验证路径证据与 diff 基线）已就绪，等待协调器代为完成独立评审子代理核查；评审通过后方可转入 `completed` 或 `ready-to-integrate`。
 

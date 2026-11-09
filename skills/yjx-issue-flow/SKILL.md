@@ -15,7 +15,7 @@ disable-model-invocation: true
 ## 边界与参考指针
 
 - **只协调，不直接写业务代码**：协调器负责目标解析、前置共享探索、依赖调度、主工作区基线集成、父级验收与最终报告；不在协调器会话中直接实现 issue 代码或手动消解业务代码冲突。
-- **跨宿主独立会话/任务 Worker**：默认把每个需要实施的 issue 派发到宿主原生的独立顶层会话/任务（Independent Session/Task）；仅当宿主不支持跨会话编排时，才回退使用宿主的全新上下文隔离执行单元。任何子代理调用（包括协调器的只读探索、代办评审，以及 worker 内部的调查或评审）均须遵守：`Start every subagent with a fresh context window (do not fork the current conversation).`
+- **跨宿主独立会话/任务 Worker**：默认把每个需要实施的 issue 派发到宿主原生的独立顶层会话/任务（Independent Session/Task）；若首屏工具列表未直接暴露独立会话创建入口，先通过宿主工具检索能力（如 `tool_search`）查找延迟加载的独立会话工具，仅在检索确认宿主确实不支持跨会话编排后，才回退使用宿主的全新上下文隔离执行单元。任何子代理调用（包括协调器的只读探索、代办评审，以及 worker 内部的调查或评审）均须遵守：`Start every subagent with a fresh context window (do not fork the current conversation).`
 - **单票自动降级**：能在当前会话直接完成的单个普通实施 issue 不走编排；除非用户明确要求新启动独立 worker，否则直接转入项目正常实施流程（如 `yjx-implement`）。
 - **尊重项目真源与范围**：不写死 GitHub、Local Markdown 或其它 tracker，也不把编排运行清单写入项目仓库；不为了填补拆分缺口而擅自新建子 issue（剩余要求由父级承接）。
 - **参考文件触发指针**：
