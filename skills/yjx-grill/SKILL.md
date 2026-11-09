@@ -54,7 +54,7 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 在依据该理解改变目标或范围前，让用户有机会纠正它。不要重复未变化的复述，也不要强加固定的发现问卷。
 
-使用工具获取客观事实：代码、schema、日志、任务文本、依赖、可用产物和当前状态。不要让用户查找 Agent 可以验证的事实，也不要仅从现有代码推断用户想要的结果。核查既有行为时，从真实入口与当前配置值追踪实际命中的代码分支，不凭未命中的死分支断言现状；构造受调试/管理接口或宿主组件触发的边界场景前，先核查源码中该接口的真实能力方向与约束（如仅支持单向推进或特定状态跃迁），不凭空捏造任意回退或逆向操作场景；参考既有模块时，只提取与当前目标对应的结构，不将新需求未提及的旁路接口或旧特例默认带入新方案提问；当候选方案取决于既有产物的维护职责或外部资源范围时，先核实该产物的生成与更新链路及实际资源集合规模，再组织选项与比较方案。
+使用工具获取客观事实：代码、schema、日志、任务文本、依赖、可用产物和当前状态。不要让用户查找 Agent 可以验证的事实，也不要仅从现有代码推断用户想要的结果。核查既有行为时，从真实入口与当前配置值追踪实际命中的代码分支，不凭未命中的死分支断言现状；当任务通过局部封装层调用本机已有工具或技能组件时，下探核查被调用组件的真实命令集与支持模式（如原位更新或对账接口），不将当前封装层尚未暴露的能力当成底层不支持；涉及本机定时调度、守护进程或运行环境取舍时，先用只读命令核实宿主运行形态、电源休眠配置与现有托管方式，不以未核实的设备休眠或环境假设充当选项正反理由；构造受调试/管理接口或宿主组件触发的边界场景前，先核查源码中该接口的真实能力方向与约束（如仅支持单向推进或特定状态跃迁），不凭空捏造任意回退或逆向操作场景；参考既有模块时，只提取与当前目标对应的结构，不将新需求未提及的旁路接口或旧特例默认带入新方案提问；当候选方案取决于既有产物的维护职责或外部资源范围时，先核实该产物的生成与更新链路及实际资源集合规模，再组织选项与比较方案。
 
 当会话上下文已明确当前工作基线，或用户在实现中途针对特定局部问题重新调用本 skill 时，直接围绕目标问题讨论，不重复追问已有在途改动的去留。仅当工作区存在尚未经用户或当前会话确认归属、且与稳定基线或本次需求存在冲突的既有改动时，才清晰区分“稳定存量行为、当前分支既有改动、本次需求目标”，并按第 2 节处理其前置依赖。
 
@@ -70,6 +70,8 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 
 依据实际任务和现状主动识别本次适用的设计决定，包括用户保留的事项。开始讨论或范围发生实质变化时，简短展示可纠正的范围总览，然后直接进入 ready 事项，不增加独立的范围确认门禁。用户无需预先列尽所有问题；后续发现新事项继续补入，用户没有指出遗漏也不能作为覆盖完整的证明。
 
+提出新增可复用工具或工作流时，先依据已有需求与证据明确服务对象、运行作用域和分发边界，再推荐承载方式。尚未确定且会改变方案的部分，按第 3 节门禁讨论；已有信息足够时自行判断，不增加固定问卷。作用域确定后，具体目录和文件组织由 Agent 按项目惯例选择。
+
 问题只有在事实和决策前置条件都确定后才 ready。进行中的调查（包括已派发但尚未返回结果的子代理或工具取证）属于未确定前置条件：继续处理 ready 分支，但等待依赖其结果的分支，拿到结论前不提出依赖该事实的问题。对于第 1 节识别出的未经确认归属且与基线或需求冲突的既有改动，若“沿用修补该改动还是舍弃重做”会直接改变后续细节问题是否成立，将其作为上游前置决策优先确认，不在去留未定前围绕该改动的内部细节提问。即使无论答案如何都需要某问题，只要另一个答案会改变它的前提、可行选项或建议，该问题仍未 ready。当切片中尚未解决的关键判断依赖视觉呈现、信息密度或交互体验，单靠文字描述难以评估实际效果时，将其记为待通过 `yjx-prototype` 验证的表现前提：当前任务已包含原型授权则直接推进原型验证，未包含则先向用户建议制作原型，不在缺乏可体验证据时直接请求生产代码实施。
 
 ## 3. 按意图与后果设置问题门禁
@@ -80,7 +82,7 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
   - **Consequential judgment**：成本、保证、所有权、权限或整体策略的接受仍属于人类判断。这也包括只有一个已知可行方案，但其后果或条件需要用户判断的情况；不要求硬凑多个替代方案。
   - **Project-reserved decision**：用户或项目明确保留了参与判断的事项，且尚无有效确认或明确委托覆盖。即使它是局部、可逆或内部结构，也要按约定讨论，不能仅以“实现细节”跳过。
 
-在没有被用户或项目保留判断的范围内，推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问；对齐规则或文档时，目标文件内部的章节安放、同义合并与排版组织由 Agent 按文档结构惯例自行收敛，不作为决策问题抛给用户。当上下游职责边界已确认时，不衍生让下游重复执行上游职责的伪问题。构造失败处理、消息重复/重试风险或跨服务能力限制问题前，先核实宿主与目标服务现有的默认事务、原子回滚、事件保障及中间件重试/去重配置；默认机制已能覆盖或未证实存在实际缺陷时不虚构额外风险问题，确需提问时优先推荐遵循默认机制或复用现有低成本中转路径的最小方案（而非跨服务新增 SDK/DI 装配）。工具障碍、缺少权限和推测性原因不是决策选项。
+在没有被用户或项目保留判断的范围内，推断不影响目标的常规机制、本地技术默认值和偏好。不要仅因存在多个实现就提问；对齐规则或文档时，目标文件内部的章节安放、同义合并与排版组织由 Agent 按文档结构惯例自行收敛，不作为决策问题抛给用户。当上下游职责边界已确认时，不衍生让下游重复执行上游职责的伪问题。当执行主体是具备修复工具权限的 Agent（如周期巡检、自动运维或故障恢复）时，优先推荐“Agent 权限内直接自愈、仅在需人工介入或自愈后仍失败时才触发外部告警”的分级策略，而非仅充当只读报警器。构造失败处理、消息重复/重试风险或跨服务能力限制问题前，先核实宿主与目标服务现有的默认事务、原子回滚、事件保障及中间件重试/去重配置；默认机制已能覆盖或未证实存在实际缺陷时不虚构额外风险问题，确需提问时优先推荐遵循默认机制或复用现有低成本中转路径的最小方案（而非跨服务新增 SDK/DI 装配）。工具障碍、缺少权限和推测性原因不是决策选项。
 
 按实际影响评估后果：数据丢失或迁移、权限、外部承诺、不可逆资源使用、结构重设计，以及实质不同的补救策略。一行改动也可能有不可逆后果。未知影响需要调查，不能直接归类为低风险。如果无法获得必要证据，报告具体 blocker，并保持该分支未解决。
 
@@ -123,7 +125,7 @@ Make the background sufficient to judge the question without relying on the user
 
 根据未解决判断选择回复形式：
 
-- **Real alternatives:** number viable options from 1, put the recommendation first with a localized marker, and explain its reasons, real costs, and critical assumptions. Explain when each alternative is preferable and why it is not recommended now. Invite corrections or a custom answer; options aid judgment, not constrain it.
+- **Real alternatives:** number viable options from 1, put the recommendation first with a localized marker, and explain its reasons, real costs (distinguishing inherent trade-offs of the option from existing implementation bloat or missing cleanup that can be eliminated by low-risk defaults), and critical assumptions. Explain when each alternative is preferable and why it is not recommended now. Invite corrections or a custom answer; options aid judgment, not constrain it.
 - **One known feasible approach:** describe it, the evidence limiting alternatives, and its material consequences or conditions. Keep infeasibility claims limited to the verified constraints. Ask the actual acceptability or constraint question without inventing competing options or implying the user must accept. If unacceptable, revisit the constraints or investigate further; do not manufacture feasibility.
 - **Experience or intent exploration:** ask an open question when examples or a free-form account would reveal more than a premature menu. Give the user enough background to answer without supplying a diagnosis for them.
 
@@ -172,13 +174,17 @@ Apply the collaborative-discussion rule before concluding either form. If the cu
 
 每个 Formal Contract 都需要在请求批准前完成评审；当实际影响、可逆性、权限、数据影响、兼容性、安全性或项目治理规则要求时，也要评审 Direct Result。评审本身不自动要求 contract。
 
-当宿主提供原生子代理能力时，由主代理启动上下文隔离（不继承主对话历史，仅传入本次评审材料）的独立 Reviewer 子代理执行评审：Start every subagent with a fresh context window (do not fork the current conversation). 禁止通过另起 `codex exec`、外部 CLI 进程或普通对话伪造子代理。若宿主没有子代理工具或子代理调用失败，则由当前会话直接对照同一材料与标准完成一轮自审，并在呈现结果或请求批准时注明本次为当前会话自审及原因，不硬阻断交付。
+当宿主提供原生子代理能力时，由主代理启动上下文隔离（不继承主对话历史，仅传入本次评审材料）的独立 Reviewer 子代理执行评审：Start every subagent with a fresh context window (do not fork the current conversation). 禁止通过另起 `codex exec`、外部 CLI 进程或普通对话伪造子代理。
+
+单次启动或等待调用超时、暂未返回结果时，区分工具调用返回与评审任务终态。任务仍在排队或运行时保留原任务，遵循宿主的完成通知、有界长等待或续接机制，不额外设置固定总等待时限，也不短周期轮询。宿主要求结束当前回合等待完成通知时照做，不能因此取消任务。启动结果或任务状态不明时，通过宿主可用的只读机制核实并如实说明限制，不盲目重复派发或声称评审完成、失败。评审未完成时，只有明确失败、宿主终止或确实无法继续、用户要求停止，才结束等待；取消、恢复与清理遵循宿主规则。
+
+没有可用子代理或调用明确失败时，仅在适用的项目与宿主规则允许的情况下，由当前会话对照同一材料与标准自审，并在呈现结果或请求批准时披露原因；若适用规则要求独立评审且不允许自审替代，则报告具体阻塞并保持评审未完成。
 
 Start each Reviewer task by stating that the recipient is already the independent Reviewer and must directly review the supplied material and return its own findings. Limit its authority to read-only review: no further delegation or Codex conversation creation, forking, or messaging. If it cannot complete the review, require it to report the limitation to the primary rather than substitute another workflow.
 
 评审输入包含原始目标、已验证事实、候选结果和相关 coverage record：来源与证据、待定或受约束边界、已选方案与代价、被拒分支与理由，以及剩余假设。核查结论是否有证据支撑，整体方案是否正确、适用、可维护、兼容、代价对称且忠实于来源映射。有效发现必须具备具体证据与实际影响，不能仅凭设计偏好重开已决分支。
 
-解决有依据的发现；发生实质修订后，对修订范围做针对性复核（子代理路径可优先复用同一 Reviewer 子代理跟进复核，当前会话自审路径由当前会话复核）。评审中若发现新的人类决策分叉，退回 ready frontier。只有当有证据支撑的实质正确性缺陷仍未解决时，才报告具体 blocker 并暂停交付或请求批准。
+解决有依据的发现；发生实质修订后，对修订范围做针对性复核（子代理路径可优先复用同一 Reviewer 子代理跟进复核，当前会话自审路径由当前会话复核）。评审中若发现新的人类决策分叉，退回 ready frontier。当有证据支撑的实质正确性缺陷仍未解决，或适用规则要求的独立评审尚未完成且不允许自审替代时，报告具体 blocker 并暂停交付或请求批准。
 
 ## 8. 在交接中保留授权
 

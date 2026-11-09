@@ -20,8 +20,9 @@ docs/agents/local-tracker.json
 
 ```text
 docs/agents/issue-tracker.md
-docs/agents/triage-labels.md
 ```
+
+`docs/agents/triage-labels.md` 存在时一并读取；上游可合法省略该文件，映射由 `yjx-local-tracker-setup` 核实并写入机器配置，看板不另行生成默认映射。
 
 机器配置只决定 tracker 根目录、完成字段和 canonical triage role 映射；它不覆盖项目文档中的生命周期规则。
 
@@ -188,7 +189,7 @@ Closed: false
 - `01-foundation.md`
 ```
 
-也兼容 Matt `to-tickets` 原生粗体格式；原生模板没有 `Closed` 时，等价于 `Closed: false`：
+也兼容 Matt `to-tickets` 原生粗体格式；缺少 `Closed` 本身是合法情况，完成状态按下方完成语义判定：
 
 ```markdown
 **What to build:** <end-to-end behavior>
@@ -196,7 +197,7 @@ Closed: false
 **Blocked by:** 01 — Foundation
 ```
 
-JSON 会保留 `hasClosedField: false` 并返回 `closedImplicit: true`，使消费者能够区分该兼容情况与显式 `Closed: false`。缺少 `Closed` 的其它 implementation issue 仍然 fail-closed。
+JSON 用 `hasClosedField` 表示字段是否存在；`closedImplicit: true` 仅标记缺少该字段且符合 Matt 原生模板识别条件的票，并非所有缺字段票的统一标记，也不决定完成状态。其它 implementation issue 同样不会仅因缺少 `Closed` 而 fail-closed；Status、冲突字段及依赖仍按既有规则校验，legacy `Closed` 继续只读兼容。
 
 Blocker 可以使用：
 

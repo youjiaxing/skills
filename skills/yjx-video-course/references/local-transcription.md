@@ -87,6 +87,12 @@ Unix 单配置构建通常位于 `build/bin/whisper-cli`，Windows 多配置构�
 
 Python 路线使用已确认的兼容解释器和独立虚拟环境，再安装 `yt-dlp`；不为这条可选路径更改系统默认 Python。YouTube 完整支持还可能需要官方文档中的 JavaScript 运行时等条件依赖，按当前平台检查，不把它们强加给所有 Bilibili 任务。
 
+#### 证书验证失败
+
+字幕或音频下载报 TLS 证书验证错误时，先核对用户已有的可信证书配置（如 `SSL_CERT_FILE` / `SSL_CERT_DIR`）及当前 yt-dlp 版本支持。确认所需证书在系统信任来源中且当前版本适用时，可仅为本次命令追加 `--compat-options no-certifi` 使用系统证书，保持证书验证开启；参数含义见 [官方固定版本说明](https://github.com/yt-dlp/yt-dlp/blob/412e7f0a4b0588fe884a02b344ac66a06538475b/README.md#L2338)。环境变量存在本身不证明配置可信或该处理有效。
+
+记录实际错误与重试结果；配置未知或重试仍失败时报告证书问题，不将其归为登录限制。不默认对全部下载追加参数、不关闭 TLS 验证或修改全局信任。此恢复分支仅经官方文档核对，尚未在本机真实证书环境实测。
+
 ## 模型准备
 
 按 [官方模型说明](https://github.com/ggml-org/whisper.cpp/blob/master/models/README.md) 取得与 CLI 兼容的 GGML 权重。该说明列出项目维护者托管的模型及校验值；记录模型名称、来源、实际文件路径和校验结果。

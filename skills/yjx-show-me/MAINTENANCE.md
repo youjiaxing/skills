@@ -6,11 +6,11 @@
 
 | 项目 | 记录 |
 | --- | --- |
-| 来源 | [Matt Pocock / skills](https://github.com/mattpocock/skills) 的 `show-me` |
-| 上游路径 | `skills/engineering/show-me/`（本机已安装只读副本 `C:\Users\Administrator\.agents\skills\show-me\SKILL.md`） |
+| 来源 | 原记录为 Matt Pocock / skills；2026-11-09 核查发现归属冲突，历史来源待核，见下文证据 |
+| 原记录路径 | `skills/engineering/show-me/` 未在本次 Matt 固定目标中找到；当时读取的是本机安装副本 `C:\Users\Administrator\.agents\skills\show-me\SKILL.md` |
 | 基线文件指纹 | `SKILL.md` git blob `f0ccd047c136d7b702b385e0ecad775ccb773eae` |
-| 关系 | 在上游 `show-me` 基础上独立维护的个人中文增强版；不修改第三方开源 `show-me` 原文件 |
-| 许可 | 上游 MIT；保留 [LICENSE](LICENSE) 中的原版权和许可 |
+| 关系 | 在上述已知 blob 内容基础上独立维护的个人中文增强版；内容指纹与仓库来源归属分别核实 |
+| 许可 | 现有 [LICENSE](LICENSE) 为 MIT、署名 Matt Pocock；该署名的来源依据待核，本轮未改版权文件 |
 
 ## 能力承接与本地取舍
 
@@ -26,6 +26,15 @@
 | 日期 | 核查范围与版本 | 实际吸收/保留差异 | 验证及剩余限制 |
 | --- | --- | --- | --- |
 | 2026-11-02 | 读取本机 `show-me/SKILL.md`（blob `f0ccd047c136d7b702b385e0ecad775ccb773eae`）全文 | 建立首版 `yjx-show-me`，改为模型可调用并补充既有源码走读的“顶层精简调用树 + 真实代码缩写块”规则 | 静态审阅与 `make link` 链接验证 |
+
+### 2026-11-09 来源冲突与当前能力复核
+
+- Matt 固定目标 `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d` 的树和指定路径历史未找到 `skills/engineering/show-me/`；其 [pr/CREDITS.md](https://github.com/mattpocock/skills/blob/4ae2317ddb22b046e26455e4f9c9b3aaaf62212d/skills/engineering/pr/CREDITS.md) 明说 show-me 来自 Dex Horthy / Humanlayer，且不属于该仓库。这是原归属的反证，不证明 Matt 历史上绝无任何其他路径的副本。
+- 对候选来源 Humanlayer 固定默认分支目标 `4d69d20f6e9b57b4fcf0d501ccfb1be961f0f329` 做 `ls-tree` 与内容 hash 核对：[plugins/show-me/skills/show-me/SKILL.md](https://github.com/humanlayer/skills/blob/4d69d20f6e9b57b4fcf0d501ccfb1be961f0f329/plugins/show-me/skills/show-me/SKILL.md) 的 blob **恰为**原记录的 `f0ccd047c136d7b702b385e0ecad775ccb773eae`。这是固定 commit/path 的内容匹配，不单凭它推断 11 月 2 日安装副本的获取来源。
+- 全文复核上述 blob 与本地正文、维护说明、入口配置和现有 LICENSE。全部视觉菜单已承接；本地真实源码缩写块、微型 diff 边界、跨平台 HTML 和模型可调用取舍保留。候选上游手动调用限制 [bba9d13](https://github.com/humanlayer/skills/commit/bba9d13ab34f0a87f1cc33df4dd196372393ddfc) 已在该 blob 中，本地有明确不采用理由，不作为新缺口。未发现需要新增的运行能力。
+- **待核实 S1：** 历史安装源与对应许可。Humanlayer 固定目标的 [LICENSE](https://github.com/humanlayer/skills/blob/4d69d20f6e9b57b4fcf0d501ccfb1be961f0f329/LICENSE) 是 MIT、署名 HumanLayer，和本地署名不同。需要核实创作时实际来源及许可链，再决定是否补充/更正归属；不自动删除现有署名或把候选来源当作已确认派生源。
+
+本轮仅更新来源核查记录，未改运行规则、调用策略或 LICENSE。历史来源未解决前，后续可从上述候选固定版本核对内容，但不能声称它是已确认的历史派生基线。静态检查不证明提示词行为可靠性。
 
 ## 静态维护检查
 

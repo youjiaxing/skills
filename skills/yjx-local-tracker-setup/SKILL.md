@@ -16,7 +16,7 @@ disable-model-invocation: true
 
 **无附属脚本。** Agent 直接读文件、改文件；不要找 `scripts/` 或跑 Node setup。
 
-**完成判据：** 机器配置已是下方目标 JSON（protocol `+resolved-v1`，`statusRoles` 与 triage 一致）**且** 约束文档已以 `Status: resolved` 为主完成真源。只写 JSON、不改仍写「Closed 完成」的合同 = **setup 未完成**。
+**完成判据：** 机器配置已是下方目标 JSON（protocol `+resolved-v1`，`statusRoles` 符合已核实的项目映射或合法缺省规则）**且** 约束文档已以 `Status: resolved` 为主完成真源。只写 JSON、不改仍写「Closed 完成」的合同 = **setup 未完成**。
 
 ## 前提
 
@@ -24,10 +24,11 @@ disable-model-invocation: true
 
 ```text
 docs/agents/issue-tracker.md
-docs/agents/triage-labels.md
 ```
 
 `issue-tracker.md` 必须声明 Local Markdown，且路径形态为 `.scratch/<feature>/issues/<NN>-<slug>.md`。不满足则停止，要求先跑 `setup-matt-pocock-skills` 并选 Local Markdown。
+
+`docs/agents/triage-labels.md` 存在时读取；上游 setup 在未使用 triage 时可合法省略它，缺省处理见下节。文件不可读或损坏不等于缺失。
 
 默认项目根 = 当前工作区；用户若给了路径则用该路径。
 
@@ -39,7 +40,7 @@ docs/agents/triage-labels.md
 docs/agents/local-tracker.json
 ```
 
-目标内容（`statusRoles` 的**值**必须从 `docs/agents/triage-labels.md` 表「Label in our tracker」列读取；下表仅为 Matt 默认同名示例）：
+目标内容（`statusRoles` 的值按下方“映射来源”核实；示例为 Matt 默认同名映射）：
 
 ```json
 {
@@ -63,7 +64,18 @@ docs/agents/local-tracker.json
 | `protocol` | 固定 `matt-local-markdown+resolved-v1`（若现有为 `+closed-v1`，确认后升级） |
 | `trackerRoot` | 固定 `.scratch` |
 | `completionField` | 固定 `"Closed"`——仅供 kanban **读取** legacy 字段名，**不是**要求新票写 Closed |
-| `statusRoles` | 五个 canonical key 齐全；value 来自 triage 表，彼此不重复 |
+| `statusRoles` | 五个 canonical key 齐全；value 为非空字符串，彼此不重复；来源见下节 |
+
+### 映射来源
+
+先读取已有 `local-tracker.json`、存在的 `triage-labels.md` 和 `issue-tracker.md` 中的状态约定；必要时核对现有票据的状态用法。
+
+- 有 triage 表时，读取「Label in our tracker」列；已有 JSON 的有效自定义映射应保留。两者或项目约定冲突时，先展示冲突并解决，再生成目标配置，不静默覆盖。
+- triage 文件缺失时，沿用已有有效 JSON 映射或其它明确、完整的项目映射。
+- 只有确认 triage 文件合法缺失、没有可沿用映射且没有自定义状态证据时，才采用示例中的五个同名默认值。自定义状态无法唯一对应五个角色时先澄清。
+- 已有文件不可读、损坏或映射不完整时，先报告并解决，不能当成缺失而回退默认值。
+
+预览时列出最终映射及其来源，与协议和约束文档改动一并确认。缺省映射只保存到既有 `local-tracker.json`，不另建 `triage-labels.md`。
 
 ### 完成语义（与 yjx-local-kanban 一致）
 
@@ -84,12 +96,12 @@ Wayfinder：开放未领可无/空 `Status`；领取 `claimed`；完成 `resolve
 
 读取并核对：
 
-1. **前提**：`issue-tracker.md`、`triage-labels.md` 存在且为 Local Markdown。
-2. **目标 config**：按上节拼出目标 `local-tracker.json`（含真实 `statusRoles`）。
+1. **前提与映射来源**：核对 `issue-tracker.md` 声明 Local Markdown；按“映射来源”读取已有文件，区分合法缺失与读取失败、损坏或冲突。
+2. **目标 config**：按上节拼出目标 `local-tracker.json`，列出真实 `statusRoles` 及来源；缺少 triage 文件不构成重置已有映射的理由。
 3. **现有 config**（若有 `docs/agents/local-tracker.json`）：
    - 不存在 → action `create`
    - 存在且与目标一致 → action `none`
-   - 存在但不一致（含 legacy `+closed-v1`）→ action `replace`（注明将升级）
+   - 存在、可读且映射已核实，但与目标不一致（含 legacy `+closed-v1`）→ action `replace`（注明具体变更和协议升级）
 4. **约束文档**（存在则读；主 tracker 必读）：
 
 | 路径 | 角色 |
@@ -107,7 +119,7 @@ Wayfinder：开放未领可无/空 `Status`；领取 `claimed`；完成 `resolve
 
 5. **票盘点（可选摘要，非阻塞）**：粗扫 `.scratch/*/issues/*.md` 即可——约多少实施票、是否仍见 legacy `Closed`、是否明显缺 `Status`。**不要**把「缺 Closed」当必须迁移；**不要**在本 skill 批量改票。
 
-把预览摘要用中文给用户（config action、是否需升级协议、哪些约束文档未对齐）。**此步不写盘。**
+把预览摘要用中文给用户（config action、最终映射及来源、是否需升级协议、哪些约束文档未对齐）。**此步不写盘。**
 
 ### 2. 请求确认
 
