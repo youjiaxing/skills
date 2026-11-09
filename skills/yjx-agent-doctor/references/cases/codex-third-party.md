@@ -84,3 +84,10 @@
 若当前证据证明相同失配，可在会话修复授权内选择最小工具通道或发送方版本调整；先确认候选值受当前运行时支持，并评估工具接口变化。历史通信修复以模型目录备份及精确字段差异为恢复依据，撤销时只恢复目标条目，避免覆盖后续修改。
 
 模型目录通常需要重新启动运行时加载；历史会话和子代理可能仍保留原工具集合或协议。该事故以新进程、新任务验收，不保证恢复旧聊天立即生效。当前环境已能正确处理相关工具或消息时，本案例不构成继续修改的理由。
+
+## 恢复子代理与重复工具声明
+
+2026-11-09 在 T3 Code / Codex 会话中观察到另一类子代理生命周期故障：主代理通过 `multi_agent_v1__spawn_agent`（`fork_context: false`）启动只读 Reviewer 子代理并在首轮 `wait_agent` 返回后立即调用了 `close_agent`；随后为跟进复核调用 `resume_agent` 重新打开该子代理并执行 `send_input`，子代理立即返回 `{"error":{"code":"invalid_request","message":"function tool name \"functions.exec\" is duplicated","type":"invalid_request_error"}}`。
+
+- **已确认触发链路：** 对同一已关闭子代理执行 `close_agent -> resume_agent -> send_input` 时，运行时在恢复路径中重复注入了 `functions.exec` 工具声明，导致模型请求在参数校验阶段被拒绝。
+- **规避与恢复边界：** 可能需要同一子代理跟进时保持其处于开启状态，直至不再需要后续交互时再执行 `close_agent`。若会话记录已因重复工具声明受损，先备份原会话记录并定点移除重复工具声明，再通过单次只读 `exec_command`（如 `pwd`）做连通性验证，验证通过后再恢复原业务流程。
