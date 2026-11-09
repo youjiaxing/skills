@@ -127,6 +127,12 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 - **[`yjx-image-reading`](skills/yjx-image-reading/SKILL.md)**：需要模型理解图片、截图或视频帧时，准备保持分辨率的输入副本，并通过独立只读视觉子任务返回文字和来源索引。生活查询、旅行规划、视频课程、QQ、飞书和 iPhone 视觉观察引用同一入口；其他任务可按需选用，后续相关技能按仓库维护规则接入。依赖和隔离限制见技能说明。
 
+## 本仓库维护入口
+
+在本仓库工作目录中手动调用 `$yjx-upstream-review`，检查启发来源的上游变化并获取选择吸收的建议；建议每月一次，发现上游更新时也可调用。人工确认后才实施现有 skill 的改进。
+
+该项目级入口位于 [`.agents/skills/yjx-upstream-review/`](.agents/skills/yjx-upstream-review/SKILL.md)，Claude 通过 `.claude/skills/` 的相对链接读取同一份正文。它不属于顶层 `skills/` 的对外技能产品，也不进入 `make link` 的全局链接流程；Skills CLI 以内部标记默认过滤，显式选择仍可能安装。核查进度与实际吸收分别记录，入口创建不代表已执行检查。
+
 ## 个人全局提示词
 
 [`prompts/`](prompts/) 保存跨 Agent 复用的个人沟通和子代理协作规则，与可按需调用的 `skills/` 分开维护。公开规则存放在 `prompts/shared/`，平台差异按需写在 `prompts/targets/`；私密或机器专有内容使用已被 Git 忽略的 `prompts.local/`。

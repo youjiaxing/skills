@@ -1,5 +1,13 @@
 # Repository Maintenance
 
+## Project-Local Skills
+
+Repository-only maintenance skills live in `.agents/skills/`; `.claude/skills/`
+may link to the same sources. They are separate from the public `skills/` tree.
+For a manually requested upstream change review, use the installed
+`yjx-upstream-review` entrypoint through the host's skill discovery mechanism.
+This pointer does not schedule or automatically invoke the review.
+
 ## Skill Verification
 
 Do not create, retain, or run simulated-conversation behavioral tests for skill
