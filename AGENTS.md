@@ -27,6 +27,11 @@ Use static document review, consistency checks, and packaging/link validation fo
 skill maintenance; retrospectives of actual user interactions remain allowed.
 These checks do not establish that a prompt reliably produces the intended agent
 behavior.
+When changes touch only Markdown, prompt, or maintenance documents without
+modifying executable scripts or link/mount logic, run only static checks on the
+changed documents (such as `git diff --check`, link/anchor, and frontmatter
+checks) rather than the full `npm test` suite; when script changes require tests,
+run `node --test <target-test-file>` for the affected module first.
 
 ## Subagent Context Isolation in Skills
 
