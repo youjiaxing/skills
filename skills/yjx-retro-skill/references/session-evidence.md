@@ -12,9 +12,15 @@
 
 ## 分段读取与覆盖
 
-先检查记录实际格式（如 `session_meta`、`turn_context`、`response_item`、`event_msg` 或压缩事件），再按消息顺序分段提取用户/assistant 消息、工具调用和结果，保留事件顺序与可回查定位。
+对 Codex 本地会话 JSONL，取证子代理优先运行本技能内置的确定性提取脚本生成结构化证据索引（自动完成跨文件 `ordinal` 去重与连续性校验、压缩事件定位、Skill 注入与文件读取提取、非零/失败工具调用索引，以及剥离系统包装后的完整真人输入原文与前置回复定位），避免每次手写全量 JSONL 解析器：
 
-分段读取并保留简短时间线、关键证据定位与待查问题。摘要仅作索引，重要结论回查原始消息及工具结果（调用成功不等于产物正确）。按需只读关联产物，不把整份日志载入主代理上下文。取证子代理返回：
+```bash
+node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-or-session-id>" --format md --output "<temp-evidence-index.md>"
+```
+
+若目标记录属于非 Codex 格式或需传入显式文件列表与截止 `ordinal`，可通过 `--file <path>`、`--until-ordinal <n>` 或先检查记录实际格式（如 `session_meta`、`turn_context`、`response_item`、`event_msg` 或压缩事件）再按消息顺序分段提取。
+
+基于提取出的完整真人输入与定位索引，围绕疑点回查特定行号的原始消息、完整工具输出及关联产物（调用成功不等于产物正确），不把整份原始 JSONL 载入主代理上下文。取证子代理清理其创建的临时索引文件后返回：
 
 - 目标身份、截止点、覆盖范围与缺口；
 - 实际使用的 skill 及执行时版本依据（未使用记为无；同时留存与本次任务痛点相关的候选 skill 线索，并注明是否有证据表明其在任务执行时已可用）；

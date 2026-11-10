@@ -24,7 +24,7 @@ disable-model-invocation: true
 
 讨论问题使用第 5 节的 question-first 布局；非提问回复（回答用户要求解释的问题、汇报已核实事实或进度、交付收敛结果）首句直接给出答案、已验证结论或已完成结果。按实际主题组织解释和结果；多个结果需要分别处理时使用简短主题标题。简短的单主题回复不需要标题。把行为、重要后果和验收放在它们支持的主题附近；内部能力切片术语不是展示用词。
 
-每个讨论问题或问题批次都必须独立可读。默认用户在调用本 skill 前没有细看，甚至没有粗看，Agent 之前输出的长篇内容；因此不能要求用户回看前文来理解当前问题。将当前问题所需的最小背景、已确认约束、尚未解决的判断，以及答案会改变的结果一起带上；只保留与当前判断直接相关的内容，不复述无关历史。取证或讨论中若发现不阻塞当前主线判断的次要/旁支问题，不在当前问题背景中穿插展开，先推进当前主线；待当前议题收敛末尾，纯知会事项用简短陈述说明，独立通过第 3、5 节问题门禁且前置条件已就绪的事项再单独提出（实际阻塞当前主线前提的问题仍按第 2 节前置依赖及时处理）。
+每个讨论问题或问题批次按第 5 节先重建判断上下文，再独立呈现。取证或讨论中若发现不阻塞当前主线判断的次要/旁支问题，不在当前问题背景中穿插展开，先推进当前主线；待当前议题收敛末尾，纯知会事项用简短陈述说明，独立通过第 3、5 节问题门禁且前置条件已就绪的事项再单独提出（实际阻塞当前主线前提的问题仍按第 2 节前置依赖及时处理）。
 
 在议题收敛、活动切换、进入等待或整体结束时，简要交代当前状态、实际下一步及行动方，让用户知道 Agent 会继续处理什么，或正在等待用户的什么输入。下一步可以是提问、取证、评审或实施交接，不限于新解锁的问题；报告对齐阻塞、工具失败或已核查 defect 时，直接写明具体位置与已观察到的错误或阻塞现象，原因已确认时给出原因与最小解除动作，原因未知时明确标明未知并给出下一步最小排查或解除方式。普通连续问答直接衔接当前议题，不要求每轮状态摘要、固定模板或全部剩余主题清单。当经历多轮讨论修订或重读外部更新后发起最终批准确认时，同条消息须自包含列出合并最新状态后的完整待批方案要点（对自然语言规则或文档修订按目标文件用结构化条目直接陈述，不以增量对比结论或代码 `diff` 块替代完整方案）。
 
@@ -32,7 +32,7 @@ disable-model-invocation: true
 
 Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal”分类。选项及其 trade-offs 放在背景之外。单个结论使用 prose，可比较或可行动的内容使用列表；使用直接动词与字面行动陈述，省略空分类、首尾寒暄、过程复盘和空泛黑话。
 
-发送前检查实际草稿：用户无需打开或回忆此前的 Agent 输出，就能找到当前问题、理解它为何重要并作答；同时能区分已确认内容、新建议和不确定主张。关键节点按上述规则交代状态和下一步，不能只确认选择便留下不明等待点。每个语义主张只保留一个主要归宿；只有第二次出现增加了不同边界或独立可观察后果时才重复。内部记录和实施关键内容都必须完整。
+发送前按第 5 节的上下文与版式要求核对讨论问题。关键节点按上述规则交代状态和下一步，不能只确认选择便留下不明等待点。每个语义主张只保留一个主要归宿；只有第二次出现增加了不同边界或独立可观察后果时才重复。内部记录和实施关键内容都必须完整。
 
 ## 1. 理解问题并测试前提
 
@@ -41,6 +41,10 @@ Blockquote 主要承载问题所需背景，不要把它当作“Agent proposal�
 `GRILL.md` 是可选的项目参与约定：存在就读取，缺失时按已有项目规则与当前明确要求继续，不要求先完成配置。存在但读取失败时，说明未读到的约定及对当前范围的影响，不能当作不存在而默认放权；可继续不依赖未读约定的部分。它可以引用已有设计规范，按任务读取有关部分；不替代通用项目治理。与其他适用要求存在无法调和的冲突时，明确提出受影响的部分。
 
 从这些来源识别哪些设计由用户保留判断、哪些已明确委托，以及仍有效的既有结论。参与深度依据当前项目与明确要求，不按编程语言、前后端或“内部细节”等标签推断。没有书面参与约定也可以依据当前明确共识推进，不把全部细节默认交给用户。
+
+从已有报告、方案、评审或其他产物衔接进入本 skill 时，先在 Agent 侧恢复用户的实际目标、已确认决定和未决事项。上游输出是调查材料；用户调用本 skill 不能被当作已经阅读、理解或接受了其中内容，也不表示其中每项建议都已成为用户目标。根据真实目标和依赖选择优先议题，不默认沿上游报告的目录逐项讲解，也不将非阻塞旁支提前替代主线。
+
+首轮依第 5 节重建当前议题所需背景并进入讨论，后续每轮继续执行同一要求；不要求用户先读报告、解释为什么没读或重复已经给出的目标。已确认决定保持其实际范围，尚无结论的部分保持未决；没有剩余人类判断时按第 6 节交付可调整结果，不为完成入场流程虚构问题。
 
 当用户表达长期参与要求、反复补充同类要求或纠正漏讨论，或阶段收敛出可复用协作约定时，在自然节点简短建议创建或更新根 `GRILL.md`。文件缺失本身不触发提醒；一次性选择不自动变成长期规则。提醒后继续当前讨论，用户暂不需要时不在本轮反复追问。创建或更新文件交给另行授权的文档编辑步骤，不在对齐时擅自写入。
 
@@ -115,13 +119,17 @@ Source and approval are independent. Approving a proposal does not turn its atta
 
 每轮询问零到三个 ready 且相互正交的问题。每个问题都必须通过第 3 节门禁，并且在不改变其它问题前提、选项或建议的情况下仍然必要。优先处理目标、source of truth、ownership、外部保证、不可逆转换、一致性和失败策略等枢纽。用已核实的事实、项目 `AGENTS.md` 既有禁令及已读取关联组件的真实职责边界裁剪不可能或已经确定的选项与正反理由，不在推荐方案中引入违背项目禁令的衍生做法或凭印象缩窄已知工具的适用范围。
 
+提问前，先为本题重建用户作出判断所需的上下文，适用于首次提问、续问和跨技能衔接。信息已出现过或篇幅很短，都不能作为用户已经阅读、理解或记得它的依据；不要依赖用户记住上轮的选项编号、术语或推导。带上当前相关的现状与已确认约束，解释影响判断的术语，说明尚未解决的选择、为什么需要用户判断以及答案会改变什么。将事实、假设和新建议自然区分，给出最小关键证据，问题本身仍须不打开链接即可理解。
+
+只重建与当前判断直接相关的背景，不复述整份上游材料或调查经过。用户明确确认的目标、约束和决定直接复用，只在影响本题时带上，不因补背景而重新询问。完成标准是：用户仅看本轮问题或问题批次，就能理解需要决定什么、为什么重要，以及各答案的实际影响；若不能，先补足背景再提问，不以追问“是否看懂”代替上下文重建。
+
 选择问题格式前先判断是否需要人类输入。只有真正涉及意图、判断或正式批准请求时才使用 `Q<N>`，不要每次回复都使用。用户要求解释时直接回答；对已确定选择做简短确认；事实、进度、blocker 或结论用普通 prose 报告，除非新问题独立通过门禁。格式偏好不足以支持虚构选项或重开已确定选择。
 
 在同一连续上下文中，问题编号从当前已出现的最大编号继续递增，不因新一轮或新批次重置；同一未决选择的澄清和追问沿用原编号。无需维护编号台账或回溯对话历史。若上下文压缩导致编号丢失，允许从 `Q1` 重新开始，接受小概率重复。
 
 When ready questions remain, lead the round with its first question after at most a brief acknowledgment, not a preliminary diagnosis or proposal. Start each question with a stable `Q<N>` heading that states the actual question. Directly beneath it, put the necessary background in a Markdown blockquote, without a "Context" label or equivalent. Place any options and their trade-offs below and outside the quote.
 
-Make the background sufficient to judge the question without relying on the user having read earlier Agent output: include the established situation or constraints, the unresolved judgment, and what the answer changes, only as needed. Distinguish verified facts, assumptions, and suggestions naturally. Explain unfamiliar terms and cite decisive evidence briefly, but keep the question understandable without opening links. Omit investigation history and option comparisons already covered below. Use one paragraph when enough, without mandatory fields, sentence counts, or fixed lengths; the background must not present the recommended choice as an established premise.
+Place the context reconstructed above in the background quote. Use one paragraph when enough, without mandatory fields, sentence counts, or fixed lengths. Keep option comparisons below and outside the quote; the background must not present the recommended choice as an established premise.
 
 根据未解决判断选择回复形式：
 
