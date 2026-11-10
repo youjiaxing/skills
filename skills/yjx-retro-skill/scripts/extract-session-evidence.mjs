@@ -172,10 +172,29 @@ function parseToolOutputSummary(outputArr) {
   };
 }
 
-async function analyzeFiles(filePaths, opts) {
+function eventSignature(obj) {
+  const payload = obj && typeof obj.payload === "object" && obj.payload ? obj.payload : {};
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        type: obj.type ?? null,
+        payloadType: payload.type ?? null,
+        role: payload.role ?? null,
+        id: payload.id ?? payload.call_id ?? payload.turn_id ?? null,
+        content: payload.content ?? payload.input ?? payload.arguments ?? payload.output ?? null,
+      }),
+      "utf8"
+    )
+    .digest("hex");
+}
+
+export async function analyzeFiles(filePaths, opts = {}) {
+  const untilOrdinal = opts.untilOrdinal ?? null;
   const filesMeta = [];
-  const seenOrdinals = new Set();
+  const seenOrdinals = new Map();
   const allOrdinals = [];
+  const ordinalCollisions = [];
   const compactions = [];
   const turnAborts = [];
   const skillInjections = [];
@@ -208,6 +227,7 @@ async function analyzeFiles(filePaths, opts) {
     let firstTs = null;
     let lastTs = null;
     let fileSessionId = null;
+    let historyBaseEndOrdinalExclusive = null;
 
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, { encoding: "utf8" }),
@@ -225,7 +245,7 @@ async function analyzeFiles(filePaths, opts) {
       }
 
       const ord = typeof obj.ordinal === "number" ? obj.ordinal : null;
-      if (opts.untilOrdinal !== null && ord !== null && ord > opts.untilOrdinal) {
+      if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) {
         continue;
       }
 
@@ -243,6 +263,9 @@ async function analyzeFiles(filePaths, opts) {
 
       if (obj.type === "session_meta" && obj.payload) {
         fileSessionId = obj.payload.id || obj.payload.session_id || null;
+        if (obj.payload.history_base && typeof obj.payload.history_base.end_ordinal_exclusive === "number") {
+          historyBaseEndOrdinalExclusive = obj.payload.history_base.end_ordinal_exclusive;
+        }
         if (!sessionMetaSummary) {
           sessionMetaSummary = {
             id: fileSessionId,
@@ -253,13 +276,30 @@ async function analyzeFiles(filePaths, opts) {
         }
       }
 
-      // Deduplicate by ordinal across rollout files when ordinal is present
+      // Deduplicate identical events across rollout files; retain diverged events with the same ordinal
       if (ord !== null) {
-        if (seenOrdinals.has(ord)) {
-          continue;
+        const sig = eventSignature(obj);
+        const existing = seenOrdinals.get(ord);
+        if (existing) {
+          if (existing.signatures.has(sig)) {
+            continue;
+          }
+          existing.signatures.add(sig);
+          ordinalCollisions.push({
+            ordinal: ord,
+            firstLocation: existing.firstLocation,
+            firstType: existing.firstType,
+            collidingLocation: loc,
+            collidingType: `${obj.type}${obj.payload?.type ? `:${obj.payload.type}` : ""}`,
+          });
+        } else {
+          seenOrdinals.set(ord, {
+            firstLocation: loc,
+            firstType: `${obj.type}${obj.payload?.type ? `:${obj.payload.type}` : ""}`,
+            signatures: new Set([sig]),
+          });
+          allOrdinals.push(ord);
         }
-        seenOrdinals.add(ord);
-        allOrdinals.push(ord);
       }
 
       const payload = obj.payload || {};
@@ -388,6 +428,7 @@ async function analyzeFiles(filePaths, opts) {
       lastOrdinal: lastOrd,
       firstTimestamp: firstTs,
       lastTimestamp: lastTs,
+      historyBaseEndOrdinalExclusive,
       sha256: fileSha256,
     });
   }
@@ -410,6 +451,7 @@ async function analyzeFiles(filePaths, opts) {
       maxOrdinal: allOrdinals.length > 0 ? allOrdinals[allOrdinals.length - 1] : null,
       uniqueOrdinals: allOrdinals.length,
       ordinalGaps,
+      ordinalCollisions,
       firstTimestamp: filesMeta[0]?.firstTimestamp || null,
       lastTimestamp: filesMeta[filesMeta.length - 1]?.lastTimestamp || null,
       files: filesMeta,
@@ -445,9 +487,22 @@ function formatMarkdown(report) {
   lines.push("");
   lines.push("## Files");
   for (const f of s.files) {
+    const baseNote =
+      f.historyBaseEndOrdinalExclusive !== null && f.historyBaseEndOrdinalExclusive !== undefined
+        ? `, history_base < ${f.historyBaseEndOrdinalExclusive}`
+        : "";
     lines.push(
-      `- **${f.tag}**: \`${f.path}\` (${f.lines} lines, ${f.sizeBytes} bytes, ordinal \`${f.firstOrdinal}..${f.lastOrdinal}\`)`
+      `- **${f.tag}**: \`${f.path}\` (${f.lines} lines, ${f.sizeBytes} bytes, ordinal \`${f.firstOrdinal}..${f.lastOrdinal}\`${baseNote})`
     );
+  }
+  if (s.ordinalCollisions && s.ordinalCollisions.length > 0) {
+    lines.push("");
+    lines.push(`## Ordinal Collisions / Rewound Branches (${s.ordinalCollisions.length})`);
+    for (const col of s.ordinalCollisions) {
+      lines.push(
+        `- ordinal ${col.ordinal}: ${col.firstLocation} (${col.firstType}) vs ${col.collidingLocation} (${col.collidingType})`
+      );
+    }
   }
   lines.push("");
   lines.push(`## Compactions (${report.compactions.length})`);
@@ -527,7 +582,12 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
-  process.exit(1);
-});
+export { formatMarkdown };
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+if (isMain) {
+  main().catch((err) => {
+    console.error(err.message || err);
+    process.exit(1);
+  });
+}
