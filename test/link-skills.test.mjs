@@ -12,6 +12,10 @@ import {
   isSkillsRootInAntigravity,
   readAntigravityConfig,
   scanSkills,
+  AGENT_PRESETS,
+  applyAgentSelection,
+  resolveInitialAgentSelection,
+  runInit,
   syncAntigravityConfig,
 } from '../scripts/link-skills.mjs';
 
@@ -224,4 +228,108 @@ test('提示词 --force 安全替换：不覆盖已有备份、链接失败时�
   });
   assert.equal(dirPlan.conflicts.length, 1);
   assert.match(dirPlan.conflicts[0], /提示词目标路径是目录/);
+});
+
+test('init 统一预设：空配置时自动探测已存在的宿主目录，并在全不存在时默认全选', async (t) => {
+  const work = await fixture();
+  t.after(() => rm(work.root, { recursive: true, force: true }));
+  const fakeHome = path.join(work.root, 'home');
+  await mkdir(path.join(fakeHome, '.codex'), { recursive: true });
+  await mkdir(path.join(fakeHome, '.gemini'), { recursive: true });
+
+  const detected = await resolveInitialAgentSelection({
+    rawTargets: [],
+    rawPromptTargets: [],
+    antigravity: false,
+    home: fakeHome,
+  });
+  assert.equal(detected.mode, 'detected');
+  assert.deepEqual(
+    detected.selectedIndexes.map((idx) => AGENT_PRESETS[idx].id),
+    ['codex', 'antigravity'],
+  );
+
+  const emptyHome = path.join(work.root, 'empty-home');
+  const fallbackAll = await resolveInitialAgentSelection({
+    rawTargets: [],
+    rawPromptTargets: [],
+    antigravity: false,
+    home: emptyHome,
+  });
+  assert.equal(fallbackAll.mode, 'detected');
+  assert.equal(fallbackAll.selectedIndexes.length, AGENT_PRESETS.length);
+});
+
+test('init 统一预设：勾选映射保留自定义目标、标准目标上的自定义 { target, source } 对象，并支持全不选保存', async (t) => {
+  const work = await fixture();
+  t.after(() => rm(work.root, { recursive: true, force: true }));
+  const fakeHome = path.join(work.root, 'home');
+  const localYaml = path.join(work.root, 'developer-targets.local.yaml');
+  const templateYaml = path.join(work.root, 'developer-targets.example.yaml');
+
+  await writeFile(
+    templateYaml,
+    'targets: []\nantigravity: false\nprompt_targets: []\n',
+    'utf8',
+  );
+  await writeFile(
+    localYaml,
+    [
+      'targets:',
+      '  - ~/.codex/skills',
+      '  - ~/custom/skills',
+      'antigravity: false',
+      'prompt_targets:',
+      '  - target: ~/.codex/AGENTS.md',
+      '    source: prompts.local/codex-custom.md',
+      '  - target: ~/custom/AGENTS.md',
+      '    source: prompts.local/other.md',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  // 1. 选择 1 (Codex) 与 5 (Antigravity)，验证保留 ~/.codex/AGENTS.md 的自定义 source 以及 ~/custom/*
+  const res1 = await runInit({
+    localPath: localYaml,
+    templatePath: templateYaml,
+    home: fakeHome,
+    interactive: false,
+    lineReader: async () => '1,5',
+  });
+  assert.equal(res1.cancelled, false);
+  assert.deepEqual(res1.targets, ['~/.codex/skills', '~/custom/skills']);
+  assert.equal(res1.antigravity, true);
+  assert.deepEqual(res1.promptTargets, [
+    { target: '~/.codex/AGENTS.md', source: 'prompts.local/codex-custom.md' },
+    '~/.gemini/config/AGENTS.md',
+    { target: '~/custom/AGENTS.md', source: 'prompts.local/other.md' },
+  ]);
+
+  // 2. 选择 0（全不选预设），验证预设全部移除但自定义条目保留
+  const res2 = await runInit({
+    localPath: localYaml,
+    templatePath: templateYaml,
+    home: fakeHome,
+    interactive: false,
+    lineReader: async () => '0',
+  });
+  assert.deepEqual(res2.targets, ['~/custom/skills']);
+  assert.equal(res2.antigravity, false);
+  assert.deepEqual(res2.promptTargets, [
+    { target: '~/custom/AGENTS.md', source: 'prompts.local/other.md' },
+  ]);
+
+  // 3. 无自定义条目时选择 0，正常保存为空列表
+  const emptyLocal = path.join(work.root, 'empty.local.yaml');
+  const res3 = await runInit({
+    localPath: emptyLocal,
+    templatePath: templateYaml,
+    home: fakeHome,
+    interactive: false,
+    lineReader: async () => '0',
+  });
+  assert.deepEqual(res3.targets, []);
+  assert.equal(res3.antigravity, false);
+  assert.deepEqual(res3.promptTargets, []);
 });

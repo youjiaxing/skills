@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline/promises';
 import { parseDocument } from 'yaml';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -18,20 +17,13 @@ export const localConfigPath = path.join(repoRoot, 'developer-targets.local.yaml
 export const templateConfigPath = path.join(repoRoot, 'developer-targets.example.yaml');
 export const antigravityConfigPath = path.join(os.homedir(), '.gemini', 'config', 'skills.json');
 
-const COMMON_TARGETS = [
-  { label: 'Claude Code', value: '~/.claude/skills' },
-  { label: 'Codex', value: '~/.codex/skills' },
-  { label: 'Agent Skills 通用目录', value: '~/.agents/skills' },
-  { label: 'CodeBuddy Code', value: '~/.codebuddy/skills' },
-  { label: 'Grok Build', value: '~/.grok/skills' },
-];
-
-export const COMMON_PROMPT_TARGETS = [
-  { label: 'Codex (Desktop & CLI)', value: '~/.codex/AGENTS.md' },
-  { label: 'Grok Build', value: '~/.grok/AGENTS.md' },
-  { label: 'Antigravity IDE & Agy CLI', value: '~/.gemini/config/AGENTS.md' },
-  { label: 'Claude Code', value: '~/.claude/CLAUDE.md' },
-  { label: 'CodeBuddy (IDE & CLI)', value: '~/.codebuddy/CODEBUDDY.md' },
+export const AGENT_PRESETS = [
+  { id: 'codex', label: 'Codex (Desktop & CLI)', skillTarget: '~/.codex/skills', promptTarget: '~/.codex/AGENTS.md', antigravity: false, detectDir: '~/.codex' },
+  { id: 'claude', label: 'Claude Code', skillTarget: '~/.claude/skills', promptTarget: '~/.claude/CLAUDE.md', antigravity: false, detectDir: '~/.claude' },
+  { id: 'grok', label: 'Grok Build', skillTarget: '~/.grok/skills', promptTarget: '~/.grok/AGENTS.md', antigravity: false, detectDir: '~/.grok' },
+  { id: 'codebuddy', label: 'CodeBuddy (IDE & CLI)', skillTarget: '~/.codebuddy/skills', promptTarget: '~/.codebuddy/CODEBUDDY.md', antigravity: false, detectDir: '~/.codebuddy' },
+  { id: 'antigravity', label: 'Antigravity IDE & Agy CLI', skillTarget: null, promptTarget: '~/.gemini/config/AGENTS.md', antigravity: true, detectDir: '~/.gemini' },
+  { id: 'agents-shared', label: 'Agent Skills 通用目录', skillTarget: '~/.agents/skills', promptTarget: null, antigravity: false, detectDir: '~/.agents' },
 ];
 
 function pathKey(value) {
@@ -545,85 +537,355 @@ async function ensureLocalConfig({ stopAfterCreate }) {
   return true;
 }
 
-function parseSelection(input, candidates, currentIndexes) {
-  if (input.trim() === '') return currentIndexes;
-  if (input.trim() === '0') return [];
-  const indexes = input.split(',').map((part) => Number.parseInt(part.trim(), 10) - 1);
+function extractPromptEntryTarget(entry) {
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object" && typeof entry.target === "string") return entry.target;
+  return null;
+}
+
+export async function resolveInitialAgentSelection({
+  rawTargets = [],
+  rawPromptTargets = [],
+  antigravity = false,
+  presets = AGENT_PRESETS,
+  env = process.env,
+  home = os.homedir(),
+} = {}) {
+  const skillKeys = new Map();
+  for (const preset of presets) {
+    if (preset.skillTarget) {
+      skillKeys.set(pathKey(expandTargetPath(preset.skillTarget, env, home)), preset.id);
+    }
+  }
+  const promptKeys = new Map();
+  for (const preset of presets) {
+    if (preset.promptTarget) {
+      promptKeys.set(pathKey(expandTargetPath(preset.promptTarget, env, home)), preset.id);
+    }
+  }
+
+  const configuredTargetKeys = new Set();
+  const customTargets = [];
+  for (const item of rawTargets) {
+    if (typeof item !== "string" || item.trim() === "") continue;
+    const key = pathKey(expandTargetPath(item, env, home));
+    configuredTargetKeys.add(key);
+    if (!skillKeys.has(key)) customTargets.push(item);
+  }
+
+  const configuredPromptByKey = new Map();
+  const customPromptTargets = [];
+  for (const entry of rawPromptTargets) {
+    const rawPath = extractPromptEntryTarget(entry);
+    if (!rawPath || rawPath.trim() === "") continue;
+    const key = pathKey(expandTargetPath(rawPath, env, home));
+    configuredPromptByKey.set(key, entry);
+    if (!promptKeys.has(key)) customPromptTargets.push(entry);
+  }
+
+  const hasExistingConfig = configuredTargetKeys.size > 0 || configuredPromptByKey.size > 0 || Boolean(antigravity);
+  const selectedIndexes = [];
+  let mode = "configured";
+
+  if (hasExistingConfig) {
+    presets.forEach((preset, index) => {
+      const hasSkill = preset.skillTarget
+        ? configuredTargetKeys.has(pathKey(expandTargetPath(preset.skillTarget, env, home)))
+        : false;
+      const hasPrompt = preset.promptTarget
+        ? configuredPromptByKey.has(pathKey(expandTargetPath(preset.promptTarget, env, home)))
+        : false;
+      const hasAg = Boolean(preset.antigravity && antigravity);
+      if (hasSkill || hasPrompt || hasAg) selectedIndexes.push(index);
+    });
+  } else {
+    mode = "detected";
+    for (let index = 0; index < presets.length; index += 1) {
+      const preset = presets[index];
+      if (!preset.detectDir) continue;
+      const dirPath = expandTargetPath(preset.detectDir, env, home);
+      if (await pathInfo(dirPath)) {
+        selectedIndexes.push(index);
+      }
+    }
+    if (selectedIndexes.length === 0) {
+      for (let index = 0; index < presets.length; index += 1) {
+        selectedIndexes.push(index);
+      }
+    }
+  }
+
+  return {
+    selectedIndexes,
+    customTargets,
+    customPromptTargets,
+    configuredPromptByKey,
+    mode,
+  };
+}
+
+export function applyAgentSelection({
+  selectedIndexes = [],
+  rawTargets = [],
+  rawPromptTargets = [],
+  presets = AGENT_PRESETS,
+  env = process.env,
+  home = os.homedir(),
+} = {}) {
+  const presetSkillKeys = new Set(
+    presets.filter((p) => p.skillTarget).map((p) => pathKey(expandTargetPath(p.skillTarget, env, home))),
+  );
+  const presetPromptKeys = new Set(
+    presets.filter((p) => p.promptTarget).map((p) => pathKey(expandTargetPath(p.promptTarget, env, home))),
+  );
+
+  const existingTargetEntryByKey = new Map();
+  const customTargets = [];
+  for (const item of rawTargets) {
+    if (typeof item !== "string" || item.trim() === "") continue;
+    const key = pathKey(expandTargetPath(item, env, home));
+    if (!existingTargetEntryByKey.has(key)) existingTargetEntryByKey.set(key, item);
+    if (!presetSkillKeys.has(key)) customTargets.push(item);
+  }
+
+  const existingPromptEntryByKey = new Map();
+  const customPromptTargets = [];
+  for (const entry of rawPromptTargets) {
+    const rawPath = extractPromptEntryTarget(entry);
+    if (!rawPath || rawPath.trim() === "") continue;
+    const key = pathKey(expandTargetPath(rawPath, env, home));
+    if (!existingPromptEntryByKey.has(key)) existingPromptEntryByKey.set(key, entry);
+    if (!presetPromptKeys.has(key)) customPromptTargets.push(entry);
+  }
+
+  const uniqueIndexes = [...new Set(selectedIndexes)].filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < presets.length);
+  const targets = [];
+  const promptTargets = [];
+  let antigravity = false;
+
+  for (const idx of uniqueIndexes) {
+    const preset = presets[idx];
+    if (preset.skillTarget) {
+      const key = pathKey(expandTargetPath(preset.skillTarget, env, home));
+      targets.push(existingTargetEntryByKey.get(key) ?? preset.skillTarget);
+    }
+    if (preset.promptTarget) {
+      const key = pathKey(expandTargetPath(preset.promptTarget, env, home));
+      promptTargets.push(existingPromptEntryByKey.get(key) ?? preset.promptTarget);
+    }
+    if (preset.antigravity) {
+      antigravity = true;
+    }
+  }
+
+  targets.push(...customTargets);
+  promptTargets.push(...customPromptTargets);
+
+  return { targets, promptTargets, antigravity, customTargets, customPromptTargets };
+}
+
+export function parsePresetSelectionInput(input, candidates, defaultIndexes) {
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed === "") return [...defaultIndexes];
+  if (trimmed === "0" || trimmed === "none") return [];
+  if (trimmed === "a" || trimmed === "all") return candidates.map((_, index) => index);
+  const indexes = trimmed.split(",").map((part) => Number.parseInt(part.trim(), 10) - 1);
   if (indexes.some((index) => !Number.isInteger(index) || index < 0 || index >= candidates.length)) {
-    throw new Error('候选编号无效');
+    throw new Error("候选编号无效");
   }
   return [...new Set(indexes)];
 }
 
-async function runInit() {
-  await ensureLocalConfig({ stopAfterCreate: false });
-  const { document, antigravity: currentAntigravity } = await readDeveloperConfig(localConfigPath);
+function describePresetSummary(preset) {
+  const parts = [];
+  if (preset.skillTarget) parts.push(`skills: ${preset.skillTarget}`);
+  else if (preset.antigravity) parts.push("skills: ~/.gemini/config/skills.json");
+  if (preset.promptTarget) parts.push(`prompt: ${preset.promptTarget}`);
+  return parts.join(" | ");
+}
 
-  const configured = document.get('targets', true)?.toJSON() ?? [];
-  const configuredKeys = new Set(configured.map((target) => pathKey(expandTargetPath(target))));
-  const currentIndexes = COMMON_TARGETS.flatMap((candidate, index) => configuredKeys.has(pathKey(expandTargetPath(candidate.value))) ? [index] : []);
-  const customTargets = configured.filter((target) => !COMMON_TARGETS.some((candidate) => samePath(expandTargetPath(candidate.value), expandTargetPath(target))));
+async function runInteractiveChecklist({ presets, initialIndexes, mode, customTargetCount, customPromptCount }) {
+  const selected = new Set(initialIndexes);
+  let cursor = 0;
+  let renderedLineCount = 0;
 
-  const configuredPrompts = document.get('prompt_targets', true)?.toJSON() ?? [];
-  const configuredPromptPaths = configuredPrompts.map((entry) => (typeof entry === 'string' ? entry : entry.target)).filter(Boolean);
-  const configuredPromptKeys = new Set(configuredPromptPaths.map((target) => pathKey(expandTargetPath(target))));
-  const currentPromptIndexes = COMMON_PROMPT_TARGETS.flatMap((candidate, index) => configuredPromptKeys.has(pathKey(expandTargetPath(candidate.value))) ? [index] : []);
-  const customPrompts = configuredPrompts.filter((entry) => {
-    const target = typeof entry === 'string' ? entry : entry?.target;
-    if (!target) return false;
-    return !COMMON_PROMPT_TARGETS.some((candidate) => samePath(expandTargetPath(candidate.value), expandTargetPath(target)));
-  });
+  const render = () => {
+    const lines = [
+      "配置本机要启用 Skills 与全局提示词软链接的 Agent 环境",
+      "操作: ↑/↓(或 k/j) 移动  Space 勾选  a 全选/全不选  Enter 确认保存  Esc/q 取消",
+      mode === "detected"
+        ? "状态: 未检测到已有配置，已按本机宿主目录自动预勾选"
+        : "状态: 已回显当前 developer-targets.local.yaml 配置",
+      "",
+    ];
 
-  console.log('常见 Agent 全局 skill 目录：');
-  COMMON_TARGETS.forEach((candidate, index) => {
-    const selected = currentIndexes.includes(index) ? 'x' : ' ';
-    console.log(`  ${index + 1}. [${selected}] ${candidate.label}: ${candidate.value}`);
-  });
+    presets.forEach((preset, index) => {
+      const pointer = index === cursor ? "❯" : " ";
+      const check = selected.has(index) ? "[x]" : "[ ]";
+      lines.push(`${pointer} ${check} ${preset.label} (${describePresetSummary(preset)})`);
+    });
 
-  let scriptedAnswers = null;
-  if (!process.stdin.isTTY) {
-    let input = '';
-    for await (const chunk of process.stdin) input += chunk;
-    scriptedAnswers = input.split(/\r?\n/);
-  }
-  const readline = scriptedAnswers ? null : createInterface({ input: process.stdin, output: process.stdout });
-  const ask = async (prompt) => {
-    if (readline) return readline.question(prompt);
-    process.stdout.write(prompt);
-    return scriptedAnswers.shift() ?? '';
+    if (customTargetCount > 0 || customPromptCount > 0) {
+      lines.push("");
+      lines.push(`注: 保存时将自动保留已有自定义项（${customTargetCount} 个 skill 目录，${customPromptCount} 个提示词目标）。`);
+    }
+
+    if (renderedLineCount > 0) {
+      process.stdout.write(`\x1b[${renderedLineCount}A\r\x1b[J`);
+    }
+    process.stdout.write(`${lines.join("\n")}\n`);
+    renderedLineCount = lines.length;
   };
 
-  try {
-    const selection = await ask('选择 skill 候选编号（逗号分隔；0 表示全不选；回车保留当前值）：');
-    const selectedIndexes = parseSelection(selection, COMMON_TARGETS, currentIndexes);
-    const custom = await ask(`自定义 skill 目录（逗号分隔；回车保留当前值${customTargets.length ? `：${customTargets.join(', ')}` : ''}）：`);
-    const selectedCustom = custom.trim() === '' ? customTargets : custom.split(',').map((item) => item.trim()).filter(Boolean);
-    const targets = [...selectedIndexes.map((index) => COMMON_TARGETS[index].value), ...selectedCustom];
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const wasRaw = Boolean(stdin.isRaw);
 
-    const defaultAgChoice = currentAntigravity ? 'Y/n' : 'y/N';
-    const antigravityAnswer = await ask(`启用 Antigravity 全局挂载 (~/.gemini/config/skills.json) [${defaultAgChoice}]：`);
-    let enableAntigravity = currentAntigravity;
-    const agTrimmed = antigravityAnswer.trim().toLowerCase();
-    if (agTrimmed === 'y' || agTrimmed === 'yes') enableAntigravity = true;
-    else if (agTrimmed === 'n' || agTrimmed === 'no') enableAntigravity = false;
+    const cleanup = () => {
+      stdin.removeListener("data", onData);
+      if (stdin.isTTY && typeof stdin.setRawMode === "function") {
+        stdin.setRawMode(wasRaw);
+      }
+      stdin.pause();
+      process.stdout.write("\x1b[?25h");
+    };
 
-    console.log('\n常见 Agent 全局提示词文件（默认软链接至 prompts/AGENTS.md）：');
-    COMMON_PROMPT_TARGETS.forEach((candidate, index) => {
-      const selected = currentPromptIndexes.includes(index) ? 'x' : ' ';
-      console.log(`  ${index + 1}. [${selected}] ${candidate.label}: ${candidate.value}`);
-    });
-    const promptSelection = await ask('选择全局提示词候选编号（逗号分隔；0 表示全不选；回车保留当前值）：');
-    const selectedPromptIndexes = parseSelection(promptSelection, COMMON_PROMPT_TARGETS, currentPromptIndexes);
-    const promptTargets = [...selectedPromptIndexes.map((index) => COMMON_PROMPT_TARGETS[index].value), ...customPrompts];
+    const finish = (result) => {
+      cleanup();
+      resolve(result);
+    };
 
-    document.set('targets', targets);
-    document.set('antigravity', enableAntigravity);
-    document.set('prompt_targets', promptTargets);
-    await writeFile(localConfigPath, document.toString(), 'utf8');
-    console.log(`\n已更新本机配置，共 ${targets.length} 个 skill 目标目录，${promptTargets.length} 个全局提示词入口，Antigravity 原生支持: ${enableAntigravity ? '已启用' : '已禁用'}。`);
-  } finally {
-    readline?.close();
+    const onData = (chunk) => {
+      const str = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      if (str === "\u0003" || str === "\u001b" || str === "q" || str === "Q") {
+        finish(null);
+        return;
+      }
+      if (str === "\r" || str === "\n") {
+        finish([...selected].sort((a, b) => a - b));
+        return;
+      }
+      if (str === " ") {
+        if (selected.has(cursor)) selected.delete(cursor);
+        else selected.add(cursor);
+        render();
+        return;
+      }
+      if (str === "a" || str === "A") {
+        if (selected.size === presets.length) {
+          selected.clear();
+        } else {
+          for (let i = 0; i < presets.length; i += 1) selected.add(i);
+        }
+        render();
+        return;
+      }
+      if (str === "\u001b[A" || str === "\u001bOA" || str === "k" || str === "K") {
+        cursor = (cursor - 1 + presets.length) % presets.length;
+        render();
+        return;
+      }
+      if (str === "\u001b[B" || str === "\u001bOB" || str === "j" || str === "J") {
+        cursor = (cursor + 1) % presets.length;
+        render();
+      }
+    };
+
+    try {
+      process.stdout.write("\x1b[?25l");
+      if (stdin.isTTY && typeof stdin.setRawMode === "function") {
+        stdin.setRawMode(true);
+      }
+      stdin.resume();
+      stdin.on("data", onData);
+      render();
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  });
+}
+
+async function readSingleLineFromStdin(promptText) {
+  process.stdout.write(promptText);
+  let input = "";
+  for await (const chunk of process.stdin) {
+    input += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    if (input.includes("\n")) break;
   }
+  return input.split(/\r?\n/)[0] ?? "";
+}
+
+export async function runInit({
+  localPath = localConfigPath,
+  templatePath = templateConfigPath,
+  presets = AGENT_PRESETS,
+  env = process.env,
+  home = os.homedir(),
+  interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  lineReader = readSingleLineFromStdin,
+} = {}) {
+  const hasLocalFile = Boolean(await pathInfo(localPath));
+  const sourcePath = hasLocalFile ? localPath : templatePath;
+  const rawYaml = await readFile(sourcePath, "utf8");
+  const document = parseDocument(rawYaml);
+  if (document.errors.length > 0) {
+    throw new Error(`配置文件格式错误: ${document.errors.map((error) => error.message).join("; ")}`);
+  }
+
+  const rawTargets = document.get("targets", true)?.toJSON() ?? [];
+  const rawPromptTargets = document.get("prompt_targets", true)?.toJSON() ?? [];
+  const rawAntigravity = Boolean(document.get("antigravity"));
+
+  const initialState = await resolveInitialAgentSelection({
+    rawTargets,
+    rawPromptTargets,
+    antigravity: rawAntigravity,
+    presets,
+    env,
+    home,
+  });
+
+  let chosenIndexes = null;
+  if (interactive) {
+    chosenIndexes = await runInteractiveChecklist({
+      presets,
+      initialIndexes: initialState.selectedIndexes,
+      mode: initialState.mode,
+      customTargetCount: initialState.customTargets.length,
+      customPromptCount: initialState.customPromptTargets.length,
+    });
+    if (chosenIndexes === null) {
+      console.log("\n已取消配置，未修改本机配置文件。");
+      return { cancelled: true };
+    }
+  } else {
+    console.log("可配置的 Agent 环境（同时包含 Skills 挂载与全局提示词软链接）：");
+    presets.forEach((preset, index) => {
+      const selected = initialState.selectedIndexes.includes(index) ? "x" : " ";
+      console.log(`  ${index + 1}. [${selected}] ${preset.label} (${describePresetSummary(preset)})`);
+    });
+    const answer = await lineReader("选择 Agent 编号（逗号分隔；a 全选；0 全不选；回车采用默认勾选）：");
+    chosenIndexes = parsePresetSelectionInput(answer, presets, initialState.selectedIndexes);
+  }
+
+  const applied = applyAgentSelection({
+    selectedIndexes: chosenIndexes,
+    rawTargets,
+    rawPromptTargets,
+    presets,
+    env,
+    home,
+  });
+
+  document.set("targets", applied.targets);
+  document.set("antigravity", applied.antigravity);
+  document.set("prompt_targets", applied.promptTargets);
+  await writeFile(localPath, document.toString(), "utf8");
+
+  console.log(`\n已保存配置至 ${localPath}：共启用 ${applied.targets.length} 个 skill 目录、${applied.promptTargets.length} 个全局提示词入口，Antigravity 原生支持: ${applied.antigravity ? "已启用" : "已禁用"}。`);
+  console.log("下一步：运行 make link（或 npm run link）建立链接；若首次替换已有同名文件可运行 make force（或 npm run force）。");
+  return { cancelled: false, ...applied };
 }
 
 async function main() {
