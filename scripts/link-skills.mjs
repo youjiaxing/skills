@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -11,6 +11,9 @@ import { parseDocument } from 'yaml';
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(scriptDir, '..');
 export const skillsRoot = path.join(repoRoot, 'skills');
+export const promptsRoot = path.join(repoRoot, 'prompts');
+export const promptsLocalRoot = path.join(repoRoot, 'prompts.local');
+export const defaultPromptSource = path.join(promptsRoot, 'AGENTS.md');
 export const localConfigPath = path.join(repoRoot, 'developer-targets.local.yaml');
 export const templateConfigPath = path.join(repoRoot, 'developer-targets.example.yaml');
 export const antigravityConfigPath = path.join(os.homedir(), '.gemini', 'config', 'skills.json');
@@ -20,6 +23,15 @@ const COMMON_TARGETS = [
   { label: 'Codex', value: '~/.codex/skills' },
   { label: 'Agent Skills 通用目录', value: '~/.agents/skills' },
   { label: 'CodeBuddy Code', value: '~/.codebuddy/skills' },
+  { label: 'Grok Build', value: '~/.grok/skills' },
+];
+
+export const COMMON_PROMPT_TARGETS = [
+  { label: 'Codex (Desktop & CLI)', value: '~/.codex/AGENTS.md' },
+  { label: 'Grok Build', value: '~/.grok/AGENTS.md' },
+  { label: 'Antigravity IDE & Agy CLI', value: '~/.gemini/config/AGENTS.md' },
+  { label: 'Claude Code', value: '~/.claude/CLAUDE.md' },
+  { label: 'CodeBuddy (IDE & CLI)', value: '~/.codebuddy/CODEBUDDY.md' },
 ];
 
 function pathKey(value) {
@@ -38,6 +50,12 @@ function isDirectChild(parent, child) {
   return samePath(path.dirname(path.resolve(child)), parent);
 }
 
+function isInsideRoot(root, candidate) {
+  const rootKey = pathKey(root);
+  const candidateKey = pathKey(candidate);
+  return candidateKey === rootKey || candidateKey.startsWith(`${rootKey}${path.sep}`);
+}
+
 async function pathInfo(targetPath) {
   try {
     return await lstat(targetPath);
@@ -53,7 +71,7 @@ function resolveLinkTarget(linkPath, target) {
 
 export function expandTargetPath(value, env = process.env, home = os.homedir()) {
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error('目标目录必须是非空字符串');
+    throw new Error('目标路径必须是非空字符串');
   }
 
   let expanded = value.trim();
@@ -64,6 +82,40 @@ export function expandTargetPath(value, env = process.env, home = os.homedir()) 
     return env[name];
   });
   return path.resolve(expanded);
+}
+
+export function normalizePromptTargets(rawEntries = [], {
+  env = process.env,
+  home = os.homedir(),
+  baseRoot = repoRoot,
+  defaultSource = path.join(baseRoot, 'prompts', 'AGENTS.md'),
+} = {}) {
+  if (!Array.isArray(rawEntries)) {
+    throw new Error('配置项 prompt_targets 必须是数组');
+  }
+  return rawEntries.map((entry) => {
+    if (typeof entry === 'string') {
+      return {
+        destination: expandTargetPath(entry, env, home),
+        source: path.resolve(defaultSource),
+      };
+    }
+    if (!entry || typeof entry !== 'object' || typeof entry.target !== 'string' || entry.target.trim() === '') {
+      throw new Error('prompt_targets 条目必须是路径字符串或包含 target 的对象');
+    }
+    const destination = expandTargetPath(entry.target, env, home);
+    let source = path.resolve(defaultSource);
+    if (entry.source !== undefined) {
+      if (typeof entry.source !== 'string' || entry.source.trim() === '') {
+        throw new Error('prompt_targets.source 必须是非空字符串');
+      }
+      const trimmedSource = entry.source.trim();
+      source = path.isAbsolute(trimmedSource) || trimmedSource.startsWith('~')
+        ? expandTargetPath(trimmedSource, env, home)
+        : path.resolve(baseRoot, trimmedSource);
+    }
+    return { destination, source };
+  });
 }
 
 export async function scanSkills(root = skillsRoot) {
@@ -97,7 +149,8 @@ export async function readDeveloperConfig(configPath = localConfigPath) {
   }
   const targets = (config.targets ?? []).map((target) => expandTargetPath(target));
   const antigravity = Boolean(config.antigravity);
-  return { targets, antigravity, document };
+  const promptTargets = normalizePromptTargets(config.prompt_targets ?? []);
+  return { targets, antigravity, promptTargets, document };
 }
 
 export async function readTargets(configPath = localConfigPath) {
@@ -168,7 +221,9 @@ export function mergeTargets(configTargets, cliTargets) {
 async function inspectExistingLink(linkPath) {
   const info = await pathInfo(linkPath);
   if (!info) return { kind: 'missing' };
-  if (!info.isSymbolicLink()) return { kind: 'other' };
+  if (!info.isSymbolicLink()) {
+    return { kind: info.isDirectory() ? 'directory' : 'file', size: info.size };
+  }
 
   const rawTarget = await readlink(linkPath);
   return { kind: 'link', target: resolveLinkTarget(linkPath, rawTarget) };
@@ -226,8 +281,51 @@ export async function canonicalizeTargets(targets) {
   return result;
 }
 
-export async function buildPlan({ skills, targets, force = false, prune = false, root = skillsRoot }) {
+async function canonicalPromptDestinationKey(destination) {
+  const parentDir = path.dirname(path.resolve(destination));
+  let canonicalParent = parentDir;
+  try {
+    canonicalParent = await realpath(parentDir);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return pathKey(path.join(canonicalParent, path.basename(destination)));
+}
+
+async function validatePromptSource(sourcePath, allowedRoots) {
+  const allowed = allowedRoots.some((allowedRoot) => isInsideRoot(allowedRoot, sourcePath));
+  if (!allowed) {
+    return `提示词源文件必须位于仓库 prompts/ 或 prompts.local/ 目录内: ${sourcePath}`;
+  }
+  const info = await pathInfo(sourcePath);
+  if (!info) {
+    return `提示词源文件不存在: ${sourcePath}`;
+  }
+  if (!info.isFile()) {
+    return `提示词源文件必须是普通文件: ${sourcePath}`;
+  }
+  return null;
+}
+
+export async function buildPlan({
+  skills = [],
+  targets = [],
+  promptTargets = [],
+  force = false,
+  prune = false,
+  root = skillsRoot,
+  allowedPromptRoots = [promptsRoot, promptsLocalRoot],
+}) {
   const plan = { mkdirs: [], links: [], replacements: [], prunes: [], unchanged: [], conflicts: [] };
+  const mkdirSeen = new Set();
+  const addMkdir = (dirPath) => {
+    const key = pathKey(dirPath);
+    if (!mkdirSeen.has(key)) {
+      mkdirSeen.add(key);
+      plan.mkdirs.push(dirPath);
+    }
+  };
+
   const effectiveTargets = await canonicalizeTargets(targets);
 
   // 第一阶段只读取文件系统并构造完整计划，任何冲突都会阻止后续写入。
@@ -237,17 +335,17 @@ export async function buildPlan({ skills, targets, force = false, prune = false,
       plan.conflicts.push(rootError);
       continue;
     }
-    if (!(await pathInfo(targetRoot))) plan.mkdirs.push(targetRoot);
+    if (!(await pathInfo(targetRoot))) addMkdir(targetRoot);
 
     for (const skill of skills) {
       const destination = path.join(targetRoot, skill.name);
       const existing = await inspectExistingLink(destination);
       if (existing.kind === 'missing') {
-        plan.links.push({ source: skill.source, destination });
+        plan.links.push({ kind: 'dir', source: skill.source, destination });
       } else if (existing.kind === 'link' && samePath(existing.target, skill.source)) {
-        plan.unchanged.push({ source: skill.source, destination });
+        plan.unchanged.push({ kind: 'dir', source: skill.source, destination });
       } else if (force) {
-        plan.replacements.push({ source: skill.source, destination });
+        plan.replacements.push({ kind: 'dir', source: skill.source, destination, existingKind: existing.kind });
       } else {
         const detail = existing.kind === 'link' ? `当前指向 ${existing.target}` : '当前是普通文件或目录';
         plan.conflicts.push(`目标已存在: ${destination}（${detail}）`);
@@ -257,35 +355,148 @@ export async function buildPlan({ skills, targets, force = false, prune = false,
     if (prune) plan.prunes.push(...await collectPruneActions(targetRoot, skills, root));
   }
 
+  const normalizedPrompts = normalizePromptTargets(
+    promptTargets.map((item) => (typeof item === 'string' || item.target ? item : { target: item.destination, source: item.source })),
+    { baseRoot: path.dirname(allowedPromptRoots[0] ?? promptsRoot), defaultSource: path.join(allowedPromptRoots[0] ?? promptsRoot, 'AGENTS.md') },
+  );
+
+  const seenPromptDest = new Map();
+  for (const item of normalizedPrompts) {
+    const destKey = await canonicalPromptDestinationKey(item.destination);
+    const sourceError = await validatePromptSource(item.source, allowedPromptRoots);
+    if (sourceError) {
+      plan.conflicts.push(sourceError);
+      continue;
+    }
+    const sourceKey = pathKey(item.source);
+    if (destKey === sourceKey) {
+      plan.conflicts.push(`提示词目标不能指向自身: ${item.destination}`);
+      continue;
+    }
+    if (seenPromptDest.has(destKey)) {
+      const prevSourceKey = seenPromptDest.get(destKey);
+      if (prevSourceKey !== sourceKey) {
+        plan.conflicts.push(`同一提示词目标配置了多个不同源文件: ${item.destination}`);
+      }
+      continue;
+    }
+    seenPromptDest.set(destKey, sourceKey);
+
+    const parentDir = path.dirname(item.destination);
+    const parentInfo = await pathInfo(parentDir);
+    if (!parentInfo) {
+      addMkdir(parentDir);
+    } else {
+      try {
+        const parentStat = await stat(parentDir);
+        if (!parentStat.isDirectory()) {
+          plan.conflicts.push(`提示词目标的父路径不是目录: ${parentDir}`);
+          continue;
+        }
+      } catch (error) {
+        plan.conflicts.push(`无法访问提示词目标父目录 ${parentDir}: ${error.message}`);
+        continue;
+      }
+    }
+
+    const existing = await inspectExistingLink(item.destination);
+    if (existing.kind === 'missing') {
+      plan.links.push({ kind: 'file', source: item.source, destination: item.destination });
+    } else if (existing.kind === 'link' && samePath(existing.target, item.source)) {
+      plan.unchanged.push({ kind: 'file', source: item.source, destination: item.destination });
+    } else if (existing.kind === 'directory') {
+      plan.conflicts.push(`提示词目标路径是目录，拒绝删除替换: ${item.destination}`);
+    } else if (force) {
+      plan.replacements.push({
+        kind: 'file',
+        source: item.source,
+        destination: item.destination,
+        existingKind: existing.kind,
+        existingSize: existing.size ?? 0,
+      });
+    } else {
+      const detail = existing.kind === 'link' ? `当前指向 ${existing.target}` : '当前是普通文件';
+      plan.conflicts.push(`提示词目标已存在: ${item.destination}（${detail}）`);
+    }
+  }
+
   return plan;
 }
 
 async function removePath(targetPath) {
   const info = await pathInfo(targetPath);
   if (!info) return;
-  if (info.isSymbolicLink()) {
+  if (info.isSymbolicLink() || info.isFile()) {
     await unlink(targetPath);
   } else {
     await rm(targetPath, { recursive: true, force: true });
   }
 }
 
-async function createDirectoryLink(source, destination) {
-  const type = process.platform === 'win32' ? 'junction' : 'dir';
-  await symlink(path.resolve(source), destination, type);
+async function allocateBackupPath(destination) {
+  const baseBackup = `${destination}.bak-before-link`;
+  if (!(await pathInfo(baseBackup))) return baseBackup;
+  let counter = 1;
+  while (await pathInfo(`${baseBackup}-${counter}`)) {
+    counter += 1;
+  }
+  return `${baseBackup}-${counter}`;
 }
 
-export async function executePlan(plan) {
+async function createEntryLink(action, linkFn = symlink) {
+  if (action.kind === 'file') {
+    await linkFn(path.resolve(action.source), action.destination, 'file');
+  } else {
+    const type = process.platform === 'win32' ? 'junction' : 'dir';
+    await linkFn(path.resolve(action.source), action.destination, type);
+  }
+}
+
+async function replaceFileEntrySafely(action, linkFn = symlink) {
+  const info = await pathInfo(action.destination);
+  if (!info) {
+    await createEntryLink(action, linkFn);
+    return null;
+  }
+  if (info.isDirectory() && !info.isSymbolicLink()) {
+    throw new Error(`提示词目标路径是目录，拒绝删除替换: ${action.destination}`);
+  }
+  const backupPath = await allocateBackupPath(action.destination);
+  const keepBackup = !info.isSymbolicLink() && info.size > 0;
+  await rename(action.destination, backupPath);
+  try {
+    await createEntryLink(action, linkFn);
+  } catch (error) {
+    try {
+      await rename(backupPath, action.destination);
+    } catch {
+      // Best-effort rollback
+    }
+    throw error;
+  }
+  if (!keepBackup) {
+    await removePath(backupPath);
+    return null;
+  }
+  return backupPath;
+}
+
+export async function executePlan(plan, { linkFn = symlink } = {}) {
   if (plan.conflicts.length > 0) throw new Error('存在冲突，不能执行计划');
 
   // 第二阶段才执行写操作；先建立目标根目录，再逐项清理、替换和创建链接。
   for (const targetRoot of plan.mkdirs) await mkdir(targetRoot, { recursive: true });
   for (const action of plan.prunes) await removePath(action.destination);
   for (const action of plan.replacements) {
-    await removePath(action.destination);
-    await createDirectoryLink(action.source, action.destination);
+    if (action.kind === 'file') {
+      const backupPath = await replaceFileEntrySafely(action, linkFn);
+      if (backupPath) action.backupPath = backupPath;
+    } else {
+      await removePath(action.destination);
+      await createEntryLink(action, linkFn);
+    }
   }
-  for (const action of plan.links) await createDirectoryLink(action.source, action.destination);
+  for (const action of plan.links) await createEntryLink(action, linkFn);
 }
 
 export function formatPlan(plan) {
@@ -301,7 +512,7 @@ export function formatPlan(plan) {
 function parseArgs(argv) {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith('-') ? args.shift() : 'link';
-  const options = { command, targets: [], force: false, prune: false, noConfig: false, help: false };
+  const options = { command, targets: [], promptTargets: [], force: false, prune: false, noConfig: false, help: false };
 
   while (args.length > 0) {
     const argument = args.shift();
@@ -313,13 +524,17 @@ function parseArgs(argv) {
       if (args.length === 0) throw new Error('--target 缺少目录参数');
       options.targets.push(args.shift());
     } else if (argument.startsWith('--target=')) options.targets.push(argument.slice('--target='.length));
+    else if (argument === '--prompt-target') {
+      if (args.length === 0) throw new Error('--prompt-target 缺少文件参数');
+      options.promptTargets.push(args.shift());
+    } else if (argument.startsWith('--prompt-target=')) options.promptTargets.push(argument.slice('--prompt-target='.length));
     else throw new Error(`未知参数: ${argument}`);
   }
   return options;
 }
 
 function printHelp() {
-  console.log(`用法: node scripts/link-skills.mjs <command> [options]\n\n命令:\n  init      交互配置本机目标目录\n  link      创建或校验 skill 链接\n  status    只检查链接状态\n\n选项:\n  --target PATH   临时追加目标目录，可重复使用\n  --no-config     忽略本机配置，只使用 --target\n  --force         删除冲突路径并重建链接\n  --prune         清理本仓库管理的陈旧链接\n  -h, --help      显示帮助`);
+  console.log(`用法: node scripts/link-skills.mjs <command> [options]\n\n命令:\n  init      交互配置本机目标目录与全局提示词入口\n  link      创建或校验 skill 与全局提示词链接\n  status    只检查链接状态\n\n选项:\n  --target PATH          临时追加 skill 目标目录，可重复使用\n  --prompt-target PATH   临时追加全局提示词目标文件，可重复使用\n  --no-config            忽略本机配置，只使用命令行参数\n  --force                替换冲突路径并重建链接（提示词普通文件自动备份）\n  --prune                清理本仓库已删除 skill 的陈旧链接\n  -h, --help             显示帮助`);
 }
 
 async function ensureLocalConfig({ stopAfterCreate }) {
@@ -349,6 +564,16 @@ async function runInit() {
   const currentIndexes = COMMON_TARGETS.flatMap((candidate, index) => configuredKeys.has(pathKey(expandTargetPath(candidate.value))) ? [index] : []);
   const customTargets = configured.filter((target) => !COMMON_TARGETS.some((candidate) => samePath(expandTargetPath(candidate.value), expandTargetPath(target))));
 
+  const configuredPrompts = document.get('prompt_targets', true)?.toJSON() ?? [];
+  const configuredPromptPaths = configuredPrompts.map((entry) => (typeof entry === 'string' ? entry : entry.target)).filter(Boolean);
+  const configuredPromptKeys = new Set(configuredPromptPaths.map((target) => pathKey(expandTargetPath(target))));
+  const currentPromptIndexes = COMMON_PROMPT_TARGETS.flatMap((candidate, index) => configuredPromptKeys.has(pathKey(expandTargetPath(candidate.value))) ? [index] : []);
+  const customPrompts = configuredPrompts.filter((entry) => {
+    const target = typeof entry === 'string' ? entry : entry?.target;
+    if (!target) return false;
+    return !COMMON_PROMPT_TARGETS.some((candidate) => samePath(expandTargetPath(candidate.value), expandTargetPath(target)));
+  });
+
   console.log('常见 Agent 全局 skill 目录：');
   COMMON_TARGETS.forEach((candidate, index) => {
     const selected = currentIndexes.includes(index) ? 'x' : ' ';
@@ -369,9 +594,9 @@ async function runInit() {
   };
 
   try {
-    const selection = await ask('选择候选编号（逗号分隔；0 表示全不选；回车保留当前值）：');
+    const selection = await ask('选择 skill 候选编号（逗号分隔；0 表示全不选；回车保留当前值）：');
     const selectedIndexes = parseSelection(selection, COMMON_TARGETS, currentIndexes);
-    const custom = await ask(`自定义目录（逗号分隔；回车保留当前值${customTargets.length ? `：${customTargets.join(', ')}` : ''}）：`);
+    const custom = await ask(`自定义 skill 目录（逗号分隔；回车保留当前值${customTargets.length ? `：${customTargets.join(', ')}` : ''}）：`);
     const selectedCustom = custom.trim() === '' ? customTargets : custom.split(',').map((item) => item.trim()).filter(Boolean);
     const targets = [...selectedIndexes.map((index) => COMMON_TARGETS[index].value), ...selectedCustom];
 
@@ -382,10 +607,20 @@ async function runInit() {
     if (agTrimmed === 'y' || agTrimmed === 'yes') enableAntigravity = true;
     else if (agTrimmed === 'n' || agTrimmed === 'no') enableAntigravity = false;
 
+    console.log('\n常见 Agent 全局提示词文件（默认软链接至 prompts/AGENTS.md）：');
+    COMMON_PROMPT_TARGETS.forEach((candidate, index) => {
+      const selected = currentPromptIndexes.includes(index) ? 'x' : ' ';
+      console.log(`  ${index + 1}. [${selected}] ${candidate.label}: ${candidate.value}`);
+    });
+    const promptSelection = await ask('选择全局提示词候选编号（逗号分隔；0 表示全不选；回车保留当前值）：');
+    const selectedPromptIndexes = parseSelection(promptSelection, COMMON_PROMPT_TARGETS, currentPromptIndexes);
+    const promptTargets = [...selectedPromptIndexes.map((index) => COMMON_PROMPT_TARGETS[index].value), ...customPrompts];
+
     document.set('targets', targets);
     document.set('antigravity', enableAntigravity);
+    document.set('prompt_targets', promptTargets);
     await writeFile(localConfigPath, document.toString(), 'utf8');
-    console.log(`\n已更新本机配置，共 ${targets.length} 个目标目录，Antigravity 原生支持: ${enableAntigravity ? '已启用' : '已禁用'}。`);
+    console.log(`\n已更新本机配置，共 ${targets.length} 个 skill 目标目录，${promptTargets.length} 个全局提示词入口，Antigravity 原生支持: ${enableAntigravity ? '已启用' : '已禁用'}。`);
   } finally {
     readline?.close();
   }
@@ -405,23 +640,40 @@ async function main() {
   if (options.command === 'status' && (options.force || options.prune)) throw new Error('status 不接受 --force 或 --prune');
 
   let configTargets = [];
+  let configPromptTargets = [];
   let antigravityEnabled = false;
   if (!options.noConfig) {
     const created = await ensureLocalConfig({ stopAfterCreate: true });
     if (created) return;
     const devConfig = await readDeveloperConfig();
     configTargets = devConfig.targets;
+    configPromptTargets = devConfig.promptTargets;
     antigravityEnabled = devConfig.antigravity;
   }
 
   const targets = mergeTargets(configTargets, options.targets);
-  if (targets.length === 0 && !antigravityEnabled) {
-    throw new Error('没有目标目录且未启用 Antigravity；请运行 npm run init、编辑本机配置，或传入 --target');
-  }
-  const skills = await scanSkills();
-  if (skills.length === 0) throw new Error('skills/ 下没有包含 SKILL.md 的直接子目录');
+  const promptTargets = [
+    ...configPromptTargets,
+    ...normalizePromptTargets(options.promptTargets),
+  ];
 
-  const plan = await buildPlan({ skills, targets, force: options.force, prune: options.prune });
+  if (targets.length === 0 && promptTargets.length === 0 && !antigravityEnabled) {
+    throw new Error('没有配置 skill 目标目录、全局提示词目标或 Antigravity；请运行 npm run init、编辑本机配置，或传入 --target / --prompt-target');
+  }
+
+  let skills = [];
+  if (targets.length > 0) {
+    skills = await scanSkills();
+    if (skills.length === 0) throw new Error('skills/ 下没有包含 SKILL.md 的直接子目录');
+  }
+
+  const plan = await buildPlan({
+    skills,
+    targets,
+    promptTargets,
+    force: options.force,
+    prune: options.prune,
+  });
   console.log(formatPlan(plan));
 
   if (antigravityEnabled) {
@@ -442,6 +694,11 @@ async function main() {
   if (options.command === 'status') return;
 
   await executePlan(plan);
+  for (const replacement of plan.replacements) {
+    if (replacement.backupPath) {
+      console.log(`  已备份原文件: ${replacement.backupPath}`);
+    }
+  }
   if (antigravityEnabled) {
     const agResult = await syncAntigravityConfig({ enabled: true });
     if (agResult.action === 'updated') {

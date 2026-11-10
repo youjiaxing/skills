@@ -135,9 +135,9 @@ npx skills add youjiaxing/skills --skill yjx-grill
 
 ## 个人全局提示词
 
-[`prompts/`](prompts/) 保存跨 Agent 复用的个人沟通和子代理协作规则，与可按需调用的 `skills/` 分开维护。公开规则存放在 `prompts/shared/`，平台差异按需写在 `prompts/targets/`；私密或机器专有内容使用已被 Git 忽略的 `prompts.local/`。
+[`prompts/`](prompts/) 保存跨 Agent 复用的个人沟通、工具选择和子代理协作规则，与可按需调用的 `skills/` 分开维护。通用公开规则收敛于唯一真源 [`prompts/AGENTS.md`](prompts/AGENTS.md)，私密或机器专有内容使用已被 Git 忽略的 `prompts.local/`。
 
-本仓库只存储提示词源文件；激活到各 Agent 的全局配置由后续的独立同步步骤处理。目录结构、组合顺序和维护边界参阅 [`prompts/README.md`](prompts/README.md)。
+通过 `developer-targets.local.yaml` 中的 `prompt_targets` 与 `npm run link` / `npm run force`，可将 Codex（`~/.codex/AGENTS.md`）、Grok Build（`~/.grok/AGENTS.md`）、Antigravity IDE & Agy CLI（`~/.gemini/config/AGENTS.md`）、Claude Code（`~/.claude/CLAUDE.md`）、CodeBuddy（`~/.codebuddy/CODEBUDDY.md`）等用户级全局入口以操作系统原生文件符号链接直接指向 [`prompts/AGENTS.md`](prompts/AGENTS.md)（或按对象格式指定独立源文件）。在 VS Code 中直接修改任一已链接入口即可同步更新仓库源文件与各宿主磁盘内容；详情参阅 [`prompts/README.md`](prompts/README.md)。
 
 ---
 

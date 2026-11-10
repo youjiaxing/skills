@@ -17,6 +17,17 @@ targets: []
 # CodeBuddy Code
 # - ~/.codebuddy/skills
 
+# Grok Build
+# - ~/.grok/skills
+
 # Antigravity 原生支持（自动维护 ~/.gemini/config/skills.json 中的 entries）：
 antigravity: false
 
+# 个人全局提示词文件软链接目标（默认全部禁用，启用后默认指向 prompts/AGENTS.md）：
+# 支持字符串简写，或使用对象指定独立源文件：{ target: ~/.some-agent/AGENTS.md, source: prompts/custom.md }
+prompt_targets: []
+# - ~/.codex/AGENTS.md
+# - ~/.grok/AGENTS.md
+# - ~/.gemini/config/AGENTS.md
+# - ~/.claude/CLAUDE.md
+# - ~/.codebuddy/CODEBUDDY.md
