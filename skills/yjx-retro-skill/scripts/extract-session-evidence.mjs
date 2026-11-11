@@ -15,6 +15,7 @@ Options:
   --file <path>           Explicit JSONL file path (can be specified multiple times)
   --codex-home <dir>      Codex home directory (default: $CODEX_HOME or ~/.codex)
   --until-ordinal <n>     Exclude records with ordinal > <n> (fix retro cutoff point)
+  --preflight              Read only session metadata and compaction markers, then print the routing decision
   --format <json|md>      Output format: json (default) or md
   --output <path>         Write output to file instead of stdout
   --help, -h              Show this help message
@@ -27,6 +28,7 @@ function parseArgs(argv) {
     files: [],
     codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
     untilOrdinal: null,
+    preflight: false,
     format: "json",
     output: null,
     help: false,
@@ -43,6 +45,8 @@ function parseArgs(argv) {
       opts.codexHome = argv[++i];
     } else if (arg === "--until-ordinal") {
       opts.untilOrdinal = Number(argv[++i]);
+    } else if (arg === "--preflight") {
+      opts.preflight = true;
     } else if (arg === "--format") {
       opts.format = argv[++i];
     } else if (arg === "--output") {
@@ -54,6 +58,71 @@ function parseArgs(argv) {
     }
   }
   return opts;
+}
+
+export async function preflightFiles(filePaths, opts = {}) {
+  const untilOrdinal = opts.untilOrdinal ?? null;
+  const files = [];
+  const compactions = [];
+  let sessionMeta = null;
+
+  for (let fIdx = 0; fIdx < filePaths.length; fIdx++) {
+    const filePath = path.resolve(filePaths[fIdx]);
+    const tag = `F${fIdx + 1}`;
+    let lineNo = 0;
+    const rl = readline.createInterface({
+      input: fs.createReadStream(filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      lineNo++;
+      if (!line.trim()) continue;
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const ord = typeof obj.ordinal === "number" ? obj.ordinal : null;
+      if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) continue;
+
+      const payload = obj.payload || {};
+      if (obj.type === "session_meta" && payload) {
+        sessionMeta ??= {
+          id: payload.id || payload.session_id || null,
+          cwd: payload.cwd || null,
+          forkedFromId: payload.forked_from_id || null,
+          forkedFromOrdinalExclusive: payload.forked_from_ordinal_exclusive ?? null,
+        };
+      }
+      if (obj.type === "compacted") {
+        compactions.push({
+          location: `${tag}:L${lineNo}`,
+          ordinal: ord,
+          timestamp: obj.timestamp || null,
+          windowNumber: payload.window_number ?? null,
+        });
+      }
+    }
+
+    files.push({ path: filePath, tag });
+  }
+
+  return {
+    route: compactions.length > 0 ? "full" : "fast",
+    compactions,
+    forkedFrom: sessionMeta
+      ? {
+          id: sessionMeta.forkedFromId,
+          ordinalExclusive: sessionMeta.forkedFromOrdinalExclusive,
+        }
+      : null,
+    files,
+    cutoffOrdinal: untilOrdinal,
+    rule: "compaction selects full; Forked From is informational only",
+  };
 }
 
 function findSessionFiles(sessionsRoot, sessionId) {
@@ -568,6 +637,18 @@ async function main() {
       console.error(`No rollout JSONL files found for session ID: ${opts.sessionId}`);
       process.exit(2);
     }
+  }
+
+  if (opts.preflight) {
+    const result = await preflightFiles(targetFiles, opts);
+    const outText = JSON.stringify(result, null, 2);
+    if (opts.output) {
+      fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
+      fs.writeFileSync(opts.output, outText, "utf8");
+    } else {
+      process.stdout.write(outText + "\n");
+    }
+    return;
   }
 
   const report = await analyzeFiles(targetFiles, opts);
