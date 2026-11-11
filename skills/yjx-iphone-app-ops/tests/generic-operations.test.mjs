@@ -169,7 +169,7 @@ test('information reads avoid screenshots; visual reads require pixels despite a
   await assert.rejects(f.ops.observe({purpose: 'visual', screenshotPath: image}), /exists/)
 })
 
-test('stale or changed screenshot proof cannot dispatch a gesture', async (t) => {
+test('changed or invalid-timestamp screenshot proof cannot dispatch a gesture while slow responses with unchanged screen succeed', async (t) => {
   const dir = await directory(t)
   const proof = path.join(dir, 'observation.json')
   const f = fixture()
@@ -179,9 +179,21 @@ test('stale or changed screenshot proof cannot dispatch a gesture', async (t) =>
   await writeFile(proof, JSON.stringify(observation))
   await assert.rejects(f.ops.gesture({observationPath: proof, target: 'Save', x: .5, y: .5}), /screen-changed/)
   assert.deepEqual(f.calls, ['pixels'])
-  observation.readAt = new Date(Date.now() - 60000).toISOString()
+  // Future or unparsable readAt is rejected before touching the device.
+  observation.readAt = new Date(Date.now() + 60000).toISOString()
   await writeFile(proof, JSON.stringify(observation))
   await assert.rejects(f.ops.gesture({observationPath: proof, target: 'Save', x: .5, y: .5}), /stale/)
+  observation.readAt = 'not-a-timestamp'
+  await writeFile(proof, JSON.stringify(observation))
+  await assert.rejects(f.ops.gesture({observationPath: proof, target: 'Save', x: .5, y: .5}), /stale/)
+  // Slow model/API turnaround (> 60s) still dispatches safely when live foreground and screen SHA match.
+  const validSha = createHash('sha256').update('pixels').digest('hex')
+  observation.readAt = new Date(Date.now() - 120000).toISOString()
+  observation.imageSha256 = validSha
+  observation.targets[0].imageSha256 = validSha
+  await writeFile(proof, JSON.stringify(observation))
+  assert.equal((await f.ops.gesture({observationPath: proof, target: 'Save', x: .5, y: .5})).operation.outcome, 'sent')
+  assert.deepEqual(f.calls, ['pixels', 'pixels', 'gesture'])
 })
 
 test('visual annotation binds one region to the viewed image; gestures outside it cannot dispatch', async (t) => {

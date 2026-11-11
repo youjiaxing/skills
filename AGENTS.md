@@ -59,17 +59,23 @@ inspection justify a separate call's fixed overhead, or when isolation is explic
 required. Judge the task as a whole, not a fixed image-count threshold. Direct reading
 does not require loading the image skill or running its preparation/dispatch flow.
 For the isolated branch, invoke the installed `yjx-image-reading` skill by name and
-declare that dependency at the read site; reuse its input preparation and read-only
-observation rather than duplicating compression or dispatch rules.
+declare that dependency at the read site; reuse its input preparation (including
+lossless/WebP preparation and ultra-long image tiling) and read-only observation
+rather than duplicating compression, tiling or dispatch rules.
+
+When inspecting long-image tiles (`tiles`) or dense-text images, pass
+`detail: "original"` to `view_image` and load tiles in parallel within a single
+turn rather than serially across turns or writing ad-hoc crop scripts.
 
 Keep source acquisition, action authority, necessary evidence coverage and
 task-specific state checks with the calling skill on both paths. Reassess later
 images if a one-off task becomes sustained visual work; images already received
 by the primary remain in its context. Document host limitations and do not claim
-isolation when tools automatically return images. Report a blocker when required
-isolation is unavailable. Forwarding an image without model inspection does not
-require a visual task. Static checks alone do not establish runtime isolation or
-cost savings; retain actual-path verification requirements and unverified status.
+isolation when tools automatically return images, nor print raw image payloads into
+the conversation. Report a blocker when required isolation is unavailable. Forwarding
+an image without model inspection does not require a visual task. Static checks alone
+do not establish runtime isolation or cost savings; retain actual-path verification
+requirements and unverified status.
 
 ## Temporary Research
 

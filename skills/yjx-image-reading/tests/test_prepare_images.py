@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from PIL import Image, ImageCms, PngImagePlugin
+from PIL import Image, ImageCms, ImageDraw, PngImagePlugin
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "prepare-images.py"
 SPEC = importlib.util.spec_from_file_location("prepare_images", SCRIPT)
@@ -163,6 +163,64 @@ class PreparationTests(unittest.TestCase):
         self.assertNotEqual(manifest["images"][1]["decision"], "rejected")
         self.assertNotIn("data:image", run.stdout)
         self.assertNotIn("base64", run.stdout)
+
+    def test_long_image_whitespace_cut_and_solid_block_overlap_fallback(self):
+        # Build a 400x3600 long image with dense content rows and a clear whitespace band at [1740, 1780).
+        tall = self.root / "long_schedule.png"
+        canvas = Image.new("RGB", (400, 3600), "#ffffff")
+        draw = ImageDraw.Draw(canvas)
+        for y in range(40, 3560, 16):
+            if 1740 <= y < 1780:
+                continue
+            draw.rectangle((20, y, 380, y + 6), fill="#1f2937")
+        canvas.save(tall)
+        before = tall.read_bytes()
+
+        # Tiling works even when --original or missing cwebp keeps the full image as original.
+        result = PREPARE.prepare(tall, self.output, original=True, tile_height=1800, tile_overlap=100)
+        self.assertEqual(tall.read_bytes(), before)
+        self.assertEqual(result["decision"], "original")
+        self.assertEqual(result["reason"], "original_requested")
+        tiles = result["tiles"]
+        self.assertEqual(len(tiles), 2)
+        self.assertEqual(tiles[0]["cut"], "whitespace")
+        self.assertTrue(1740 <= tiles[0]["y_end"] <= 1780)
+        self.assertEqual(tiles[0]["y_start"], 0)
+        self.assertEqual(tiles[1]["y_start"], tiles[0]["y_end"])
+        self.assertEqual(tiles[1]["y_end"], 3600)
+        for item in tiles:
+            tile_path = Path(item["path"])
+            self.assertTrue(tile_path.is_file())
+            self.assertEqual(hashlib.sha256(tile_path.read_bytes()).hexdigest(), item["sha256"])
+
+        # Pure solid-color long image must not mis-cut as whitespace; it falls back to overlap windows.
+        solid = self.root / "solid_long.png"
+        Image.new("RGB", (400, 3400), "#dbe9f8").save(solid)
+        solid_res = PREPARE.prepare(
+            solid, self.output, cwebp="missing-encoder", tile_height=1500, tile_overlap=120
+        )
+        self.assertEqual(solid_res["reason"], "encoder_unavailable")
+        solid_tiles = solid_res["tiles"]
+        self.assertEqual(
+            [(t["y_start"], t["y_end"], t["cut"]) for t in solid_tiles],
+            [(0, 1500, "overlap"), (1380, 2880, "overlap"), (2760, 3400, "end")],
+        )
+
+        # --no-tile disables tiling even on ultra-long images.
+        no_tile_res = PREPARE.prepare(tall, self.output, original=True, no_tile=True)
+        self.assertEqual(no_tile_res["tiles"], [])
+
+    def test_existing_tile_file_is_never_overwritten(self):
+        solid = self.root / "conflict_long.png"
+        Image.new("RGB", (400, 3200), "#dbe9f8").save(solid)
+        sha = hashlib.sha256(solid.read_bytes()).hexdigest()
+        self.output.mkdir(parents=True, exist_ok=True)
+        conflict_tile = self.output / f"{sha}.tile-00-0-1800.png"
+        conflict_tile.write_bytes(b"existing tile from another run")
+        result = PREPARE.prepare(solid, self.output, original=True)
+        self.assertEqual(result["reason"], "output_conflict")
+        self.assertEqual(result["tiles"], [])
+        self.assertEqual(conflict_tile.read_bytes(), b"existing tile from another run")
 
 
 if __name__ == "__main__":

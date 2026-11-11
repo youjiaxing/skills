@@ -13,7 +13,7 @@ await fs.writeFile(outputPath, bytes, {flag: 'wx', mode: 0o600});
 nodeRepl.write({path: outputPath, bytes: bytes.length});
 ```
 
-由当前浏览器文档提供的截图接口返回字节并允许关闭自动展示时才能使用这种方式。保存后的原图再交图片准备脚本，不调用 `emitImage` 或在主会话中打开它。
+由当前浏览器文档提供的截图接口返回字节并允许关闭自动展示时才能使用这种方式。保存后的原图再交图片准备脚本，不调用 `emitImage`，再按 `SKILL.md` 第 3 节分流（单次 ≤ 3 张、UI 交互或地图核验由当前控制代理直接调用 `view_image`；≥ 4 张、超长图 `tiles` 全文转录或大批量提取派发隔离视觉子代理）。
 
 ## 页面图片资产
 
@@ -36,4 +36,4 @@ nodeRepl.write(bundle);
 - 飞书当前消息和明确引用的图片沿既有资源接口落盘，保持绑定范围、消息 ID 与图片 key 的对应；只交付已授权的必要本地图片给视觉任务。
 - iPhone 复用 `observe --purpose visual --screenshot-output ... --output ...`，或现有 `screenshot --output ...` 的路径输出；操作、锁、凭据页和恢复门禁由原技能持有，见 [手机适配](iphone.md)。
 
-接入后核对一次实际工具输出和父会话记录，确认没有 `input_image`、Base64/data URL 或完整图像响应回流。仅检查脚本最后返回路径不足以证明宿主没有自动发图。无法运行的平台/来源保留未验收状态。
+接入后核对一次实际工具输出，确认取图脚本没有直接向会话标准输出打印 Base64/data URL 或含原始截图字节的完整工具响应包。无法运行的平台/来源保留未验收状态。

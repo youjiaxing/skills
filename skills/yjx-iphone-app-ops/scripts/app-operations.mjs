@@ -158,10 +158,9 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     const lightweight = method === 'pixels'
     if (lightweight && sourcePath) throw stop('pixel-source-unavailable', 'Pixel observation does not acquire XML; omit --source-output')
     const xml = lightweight ? (await pixelGuard(), '') : await native()
-    const readAt = new Date(now()).toISOString()
     if (/XCUIElementTypeSecureTextField|验证码|安全验证|请依次点击下图图标/.test(xml)) {
       // Report a readable barrier without persisting or returning credential values.
-      return {ok: false, bundleId, readAt, status: 'user-input-required', operation: {outcome: 'not-sent'},
+      return {ok: false, bundleId, readAt: new Date(now()).toISOString(), status: 'user-input-required', operation: {outcome: 'not-sent'},
         verification: {status: 'blocked', reason: 'credential-or-security-page'},
         observations: [{type: 'page-barrier', text: 'Credential/security controls are present; user handling is required'}],
         evidence: [], next: 'User completes the credential/verification step, then observe again'}
@@ -218,9 +217,10 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     }
     if (lightweight) await pixelGuard()
     else await native()
+    const readAt = new Date(now()).toISOString()
     const filtered = contains ? observations.filter((row) => String(row.text).includes(contains)) : observations
     const result = {schemaVersion: 1, documentType: 'app-observation-v1', runId: randomUUID(), bundleId, readAt,
-      finishedAt: new Date(now()).toISOString(), purpose, method: selected, viewport,
+      finishedAt: readAt, purpose, method: selected, viewport,
       observations: filtered.slice(0, limit), partial: sourcePartial || filtered.length > limit,
       observationCount: filtered.length, evidence: [],
       ...(sourcePartial && selected === 'accessibility' ? {snapshotMaxDepth: client.sourceDepthLimit, partialReason: 'snapshot-depth-limit'} : {}),
@@ -341,7 +341,7 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     const observation = JSON.parse(await readFile(observationPath, 'utf8'))
     const age = now() - Date.parse(observation.readAt)
     if (observation.documentType !== 'app-observation-v1' || observation.bundleId !== bundleId ||
-      !observation.imageSha256 || age < 0 || age > 30000 || !observation.viewport) throw stop('gesture-observation-stale')
+      !observation.imageSha256 || !Number.isFinite(age) || age < 0 || !observation.viewport) throw stop('gesture-observation-stale')
     const targets = (observation.targets || []).filter((entry) => entry.id === target || entry.label === target)
     if (targets.length !== 1 || !validRegion(targets[0].rect) || targets[0].imageSha256 !== observation.imageSha256) throw stop('gesture-target-unverified')
     const region = targets[0].rect

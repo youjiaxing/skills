@@ -94,6 +94,7 @@ npx skills add youjiaxing/skills --skill yjx-grill
 ### 6. 会话后的 Skill 复盘
 
 - **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据当前上下文或原始会话记录复盘整个任务过程与用户每一次纠正，向已用/未调用 Skill 优化、新建或拆分 Skill 提议（输出概要卡片）、项目文档/Spec 及项目/用户级 `AGENTS.md` 四层去特例化分流。当前上下文完整时由主代理单代理直读，已压缩或跨会话时委派隔离子代理取证；默认只提建议不直接修改或创建 skill。
+- **[商品选购调查：待验证经验](docs/product-selection-lessons.md)**：按用户要求跨会话保留的真实任务教训与待验证做法；下一次选购时可引用，尚未固化为 Skill。
 
 ### 7. 飞书 Agent 桥接
 
