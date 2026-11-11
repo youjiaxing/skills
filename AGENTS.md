@@ -53,14 +53,23 @@ dependency rather than guessing its path or copying its workflow.
 ## Model Image Inputs
 
 When adding or changing a skill that asks a model to inspect images, screenshots
-or video frames, invoke the installed `yjx-image-reading` skill by name for input
-preparation and isolated visual observation, and declare that dependency at the
-read site. Keep source acquisition, action authority and task-specific state
-checks with the calling skill. Document supported exceptions or host limitations
-rather than silently returning images to a long-lived primary conversation. Reuse the shared
-implementation instead of duplicating compression or dispatch rules. This applies
-to future skills as well as existing integrations; forwarding an image without
-model inspection does not require a visual task.
+or video frames, allow simple, one-off reading directly through the host's visual
+capability. Choose isolation when expected visual-context accumulation and repeated
+inspection justify a separate call's fixed overhead, or when isolation is explicitly
+required. Judge the task as a whole, not a fixed image-count threshold. Direct reading
+does not require loading the image skill or running its preparation/dispatch flow.
+For the isolated branch, invoke the installed `yjx-image-reading` skill by name and
+declare that dependency at the read site; reuse its input preparation and read-only
+observation rather than duplicating compression or dispatch rules.
+
+Keep source acquisition, action authority, necessary evidence coverage and
+task-specific state checks with the calling skill on both paths. Reassess later
+images if a one-off task becomes sustained visual work; images already received
+by the primary remain in its context. Document host limitations and do not claim
+isolation when tools automatically return images. Report a blocker when required
+isolation is unavailable. Forwarding an image without model inspection does not
+require a visual task. Static checks alone do not establish runtime isolation or
+cost savings; retain actual-path verification requirements and unverified status.
 
 ## Temporary Research
 
