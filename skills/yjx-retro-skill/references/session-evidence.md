@@ -1,6 +1,6 @@
 # 会话记录取证
 
-本参考仅在 [SKILL.md 第 1 节](../SKILL.md) 进入“被复盘任务在当前上下文中已被压缩摘要替换，或用户指定复盘其他会话”分支时加载。当前会话上下文已完整保留被复盘任务原始对话时，不读取本文件，也不查找磁盘会话日志。
+本参考仅在 [SKILL.md 第 1 节](../SKILL.md) 进入“复盘范围内的被复盘任务已被压缩摘要替换，或用户指定复盘其他会话”分支，或同一会话重复复盘需要补读已压缩区段时加载。当前会话上下文已完整保留复盘范围内原始对话时，不读取本文件，也不查找磁盘会话日志。
 
 ## 定位与范围
 
@@ -8,15 +8,17 @@
 
 在 Codex 本地环境，可先检查 `CODEX_THREAD_ID` / `CODEX_SESSION_ID` 等定位信息，并在实际配置的 Codex 数据目录下查找 `sessions` 中对应 ID 的 JSONL；环境未提供时使用宿主支持的记录接口或针对性查找，仍无法确定才向用户询问定位，不扫描所有项目历史。在 `~/.codex` 等宿主数据目录下检索全局配置或提示词引用时，精确指定目标配置文件（如 `~/.codex/AGENTS.md`）或显式排除 `sessions/`、`log/`、`visualizations/` 等运行时大目录，避免无过滤全目录扫描历史会话日志。
 
-开始读取时固定本次目标任务的截止点，记录文件路径与行号范围或稳定消息 ID（复盘调用之后追加的内容不纳入被复盘任务）。关联子代理或恢复记录仅在属于该任务且已有结果不足以核实时追查。
+开始读取时固定本次目标任务的起点与截止点，记录文件路径与行号范围或稳定消息 ID。截止点为本次复盘调用前，之后追加的内容不纳入被复盘任务；同一会话重复复盘时，起点为预检定位到的上一次本 skill 调用 ordinal（`rangeStartOrdinal`），首次复盘为会话开头。按需补读起点之前的区段时，只读取与待核实问题对应的那一段。关联子代理或恢复记录仅在属于该任务且已有结果不足以核实时追查。
 
 ## 分段读取与覆盖
 
 对 Codex 本地会话 JSONL，取证子代理优先运行本技能内置的确定性提取脚本生成结构化证据索引（自动完成跨文件 `ordinal` 去重与连续性校验、压缩事件定位、Skill 注入与文件读取提取、非零/失败工具调用索引，以及剥离系统包装后的完整真人输入原文与前置回复定位），避免每次手写全量 JSONL 解析器：
 
 ```bash
-node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-or-session-id>" --format md --output "<temp-evidence-index.md>"
+node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-or-session-id>" --since-ordinal "<range-start-ordinal>" --format md --output "<temp-evidence-index.md>"
 ```
+
+首次复盘省略 `--since-ordinal`。`--since-ordinal <n>` 只保留 ordinal 不小于 `n` 的记录（会话身份仍从起点之前的 `session_meta` 读取），可与 `--until-ordinal <n>` 组合固定两端。
 
 若目标记录属于非 Codex 格式或需传入显式文件列表与截止 `ordinal`，可通过 `--file <path>`、`--until-ordinal <n>` 或先检查记录实际格式（如 `session_meta`、`turn_context`、`response_item`、`event_msg` 或压缩事件）再按消息顺序分段提取。
 

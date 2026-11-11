@@ -5,6 +5,16 @@ import os from "node:os";
 import readline from "node:readline";
 import crypto from "node:crypto";
 
+const RETRO_SKILL_NAME = "yjx-retro-skill";
+
+function parseOrdinalArg(name, value) {
+  const n = Number(value);
+  if (value === undefined || !Number.isInteger(n)) {
+    throw new Error(`${name} requires an integer ordinal`);
+  }
+  return n;
+}
+
 function printHelp() {
   console.log(`Usage:
   node extract-session-evidence.mjs --session-id <thread-or-session-id> [options]
@@ -14,8 +24,10 @@ Options:
   --session-id <id>       Locate rollout-*.jsonl files for this session/thread ID under <codex-home>/sessions
   --file <path>           Explicit JSONL file path (can be specified multiple times)
   --codex-home <dir>      Codex home directory (default: $CODEX_HOME or ~/.codex)
-  --until-ordinal <n>     Exclude records with ordinal > <n> (fix retro cutoff point)
-  --preflight              Read only session metadata and compaction markers, then print the routing decision
+  --until-ordinal <n>     Exclude records with ordinal > <n> (fix retro cutoff point before the current call)
+  --since-ordinal <n>     Exclude records with ordinal < <n> (start of a repeated retro range; session_meta is still read)
+  --preflight              Read only session metadata, compaction markers and yjx-retro-skill invocations,
+                           then print the review range start and routing decision
   --format <json|md>      Output format: json (default) or md
   --output <path>         Write output to file instead of stdout
   --help, -h              Show this help message
@@ -28,6 +40,7 @@ function parseArgs(argv) {
     files: [],
     codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
     untilOrdinal: null,
+    sinceOrdinal: null,
     preflight: false,
     format: "json",
     output: null,
@@ -44,7 +57,9 @@ function parseArgs(argv) {
     } else if (arg === "--codex-home") {
       opts.codexHome = argv[++i];
     } else if (arg === "--until-ordinal") {
-      opts.untilOrdinal = Number(argv[++i]);
+      opts.untilOrdinal = parseOrdinalArg(arg, argv[++i]);
+    } else if (arg === "--since-ordinal") {
+      opts.sinceOrdinal = parseOrdinalArg(arg, argv[++i]);
     } else if (arg === "--preflight") {
       opts.preflight = true;
     } else if (arg === "--format") {
@@ -64,6 +79,8 @@ export async function preflightFiles(filePaths, opts = {}) {
   const untilOrdinal = opts.untilOrdinal ?? null;
   const files = [];
   const compactions = [];
+  const retroByOrdinal = new Map();
+  const retroWithoutOrdinal = [];
   let sessionMeta = null;
 
   for (let fIdx = 0; fIdx < filePaths.length; fIdx++) {
@@ -105,13 +122,42 @@ export async function preflightFiles(filePaths, opts = {}) {
           windowNumber: payload.window_number ?? null,
         });
       }
+      if (
+        obj.type === "response_item" &&
+        payload.type === "message" &&
+        payload.role === "user"
+      ) {
+        const cls = classifyUserMessage(extractContentText(payload.content));
+        if (cls.kind === "skill_injection" && cls.name === RETRO_SKILL_NAME) {
+          const inv = { location: `${tag}:L${lineNo}`, ordinal: ord, timestamp: obj.timestamp || null };
+          if (ord === null) retroWithoutOrdinal.push(inv);
+          else if (!retroByOrdinal.has(ord)) retroByOrdinal.set(ord, inv);
+        }
+      }
     }
 
     files.push({ path: filePath, tag });
   }
 
+  const retroInvocations = [...retroByOrdinal.values()].sort((a, b) => a.ordinal - b.ordinal);
+  // Without --until-ordinal the preflight runs inside the current retro, so the last invocation is the current call.
+  const currentRetro = untilOrdinal === null ? retroInvocations[retroInvocations.length - 1] ?? null : null;
+  const previousRetros = currentRetro ? retroInvocations.slice(0, -1) : retroInvocations;
+  const previousRetro = previousRetros[previousRetros.length - 1] ?? null;
+  const rangeStartOrdinal = previousRetro ? previousRetro.ordinal : null;
+  // Compactions without an ordinal cannot be placed, so they conservatively count as in range.
+  const rangeCompactions = compactions.filter(
+    (c) => rangeStartOrdinal === null || c.ordinal === null || c.ordinal > rangeStartOrdinal
+  );
+
   return {
-    route: compactions.length > 0 ? "full" : "fast",
+    route: rangeCompactions.length > 0 ? "full" : "fast",
+    rangeStartOrdinal,
+    previousRetro,
+    currentRetro,
+    retroInvocations,
+    retroInvocationsWithoutOrdinal: retroWithoutOrdinal,
+    rangeCompactions,
     compactions,
     forkedFrom: sessionMeta
       ? {
@@ -121,7 +167,7 @@ export async function preflightFiles(filePaths, opts = {}) {
       : null,
     files,
     cutoffOrdinal: untilOrdinal,
-    rule: "compaction selects full; Forked From is informational only",
+    rule: "range starts at the previous retro invocation (session start if none); compaction inside the range selects full; Forked From is informational only",
   };
 }
 
@@ -260,6 +306,7 @@ function eventSignature(obj) {
 
 export async function analyzeFiles(filePaths, opts = {}) {
   const untilOrdinal = opts.untilOrdinal ?? null;
+  const sinceOrdinal = opts.sinceOrdinal ?? null;
   const filesMeta = [];
   const seenOrdinals = new Map();
   const allOrdinals = [];
@@ -315,6 +362,19 @@ export async function analyzeFiles(filePaths, opts = {}) {
 
       const ord = typeof obj.ordinal === "number" ? obj.ordinal : null;
       if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) {
+        continue;
+      }
+      if (sinceOrdinal !== null && ord !== null && ord < sinceOrdinal) {
+        // Keep session identity even when the range starts after the session_meta record.
+        if (obj.type === "session_meta" && obj.payload) {
+          fileSessionId ??= obj.payload.id || obj.payload.session_id || null;
+          sessionMetaSummary ??= {
+            id: obj.payload.id || obj.payload.session_id || null,
+            cwd: obj.payload.cwd || null,
+            forkedFromId: obj.payload.forked_from_id || null,
+            forkedFromOrdinalExclusive: obj.payload.forked_from_ordinal_exclusive ?? null,
+          };
+        }
         continue;
       }
 
@@ -516,6 +576,8 @@ export async function analyzeFiles(filePaths, opts = {}) {
   return {
     session: {
       ...(sessionMetaSummary || {}),
+      sinceOrdinal,
+      untilOrdinal,
       minOrdinal: allOrdinals.length > 0 ? allOrdinals[0] : null,
       maxOrdinal: allOrdinals.length > 0 ? allOrdinals[allOrdinals.length - 1] : null,
       uniqueOrdinals: allOrdinals.length,
@@ -553,6 +615,9 @@ function formatMarkdown(report) {
     `- Ordinals: \`${s.minOrdinal}..${s.maxOrdinal}\` (unique: ${s.uniqueOrdinals}, gaps: ${s.ordinalGaps.length})`
   );
   lines.push(`- Time Range: \`${s.firstTimestamp}\` -> \`${s.lastTimestamp}\``);
+  lines.push(
+    `- Review Range: since ordinal ${s.sinceOrdinal ?? "session start"}, until ordinal ${s.untilOrdinal ?? "end"}`
+  );
   lines.push("");
   lines.push("## Files");
   for (const f of s.files) {

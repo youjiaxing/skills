@@ -4,7 +4,35 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { analyzeFiles, formatMarkdown } from "../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs";
+import {
+  analyzeFiles,
+  formatMarkdown,
+  preflightFiles,
+} from "../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs";
+
+function meta(ordinal) {
+  return { ordinal, type: "session_meta", payload: { id: "sess-r", cwd: "/repo" } };
+}
+function human(ordinal, text) {
+  return {
+    ordinal,
+    type: "response_item",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+  };
+}
+function skill(ordinal, name) {
+  return human(ordinal, `<skill>\n<name>${name}</name>\n<path>/skills/${name}/SKILL.md</path>\nbody\n</skill>`);
+}
+function compacted(ordinal) {
+  return { ordinal, type: "compacted", payload: { window_number: 1 } };
+}
+async function writeSession(t, records) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yjx-evidence-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, "rollout-1.jsonl");
+  await writeFile(file, records.map((x) => JSON.stringify(x)).join("\n") + "\n", "utf8");
+  return file;
+}
 
 test("跨 rollout 文件相同 ordinal：内容相同时去重，分叉回滚导致内容不同时同时保留并记录冲突", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-evidence-"));
@@ -107,4 +135,70 @@ test("跨 rollout 文件相同 ordinal：内容相同时去重，分叉回滚导
   const md = formatMarkdown(report);
   assert.match(md, /history_base < 2/);
   assert.match(md, /Ordinal Collisions/);
+});
+
+test("预检：重复复盘以上一次复盘调用为起点，只按范围内的压缩分流", async (t) => {
+  // 压缩发生在上一次复盘之前：范围内无压缩，走快速分支
+  const before = await writeSession(t, [
+    meta(0),
+    human(1, "task A"),
+    compacted(2),
+    skill(3, "yjx-retro-skill"),
+    human(4, "task B"),
+    skill(5, "yjx-grill"),
+    skill(6, "yjx-retro-skill"),
+  ]);
+  const r1 = await preflightFiles([before]);
+  assert.equal(r1.currentRetro.ordinal, 6);
+  assert.equal(r1.previousRetro.ordinal, 3);
+  assert.equal(r1.rangeStartOrdinal, 3);
+  assert.equal(r1.rangeCompactions.length, 0);
+  assert.equal(r1.compactions.length, 1);
+  assert.equal(r1.route, "fast");
+
+  // 压缩发生在上一次复盘之后：走完整分支
+  const after = await writeSession(t, [
+    meta(0),
+    skill(1, "yjx-retro-skill"),
+    human(2, "task B"),
+    compacted(3),
+    skill(4, "yjx-retro-skill"),
+  ]);
+  const r2 = await preflightFiles([after]);
+  assert.equal(r2.rangeStartOrdinal, 1);
+  assert.deepEqual(r2.rangeCompactions.map((c) => c.ordinal), [3]);
+  assert.equal(r2.route, "full");
+
+  // 首次复盘：范围从会话开头算，任何压缩都走完整分支
+  const first = await writeSession(t, [meta(0), human(1, "task A"), compacted(2), skill(3, "yjx-retro-skill")]);
+  const r3 = await preflightFiles([first]);
+  assert.equal(r3.previousRetro, null);
+  assert.equal(r3.rangeStartOrdinal, null);
+  assert.equal(r3.route, "full");
+
+  // 显式截止点已排除本次调用时，截止点内最后一次复盘即为上一次复盘
+  const r4 = await preflightFiles([before], { untilOrdinal: 5 });
+  assert.equal(r4.currentRetro, null);
+  assert.equal(r4.previousRetro.ordinal, 3);
+  assert.equal(r4.route, "fast");
+});
+
+test("完整提取：--since-ordinal 只保留起点之后的记录，仍保留会话身份且不制造缺号", async (t) => {
+  const file = await writeSession(t, [
+    meta(0),
+    human(1, "old task"),
+    compacted(2),
+    skill(3, "yjx-retro-skill"),
+    human(4, "复盘结果太啰嗦"),
+    human(5, "new task"),
+  ]);
+  const report = await analyzeFiles([file], { sinceOrdinal: 3, untilOrdinal: 5 });
+  assert.equal(report.session.id, "sess-r");
+  assert.equal(report.session.minOrdinal, 3);
+  assert.equal(report.session.maxOrdinal, 5);
+  assert.equal(report.session.ordinalGaps.length, 0);
+  assert.equal(report.compactions.length, 0);
+  assert.deepEqual(report.skills.injected.map((i) => i.ordinal), [3]);
+  assert.deepEqual(report.humanInputs.map((h) => h.text), ["复盘结果太啰嗦", "new task"]);
+  assert.match(formatMarkdown(report), /Review Range: since ordinal 3, until ordinal 5/);
 });
