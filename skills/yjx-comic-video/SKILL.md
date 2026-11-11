@@ -59,5 +59,5 @@ description: 制作或修改「静态图片 + 代码动画 + TTS 配音」的动
 - 配音以项目 `ep01_gainian/casting.json` 为准，生成正式配音时读取该文件，不要写死旧音色；`voice_status` 为 `tbd` 的角色不要擅自锁定。
 - 苏姐已定：豆包 2.0「顾姐」`zh_female_gujie_uranus_bigtts`。
 - 阿韭待定（豆包 2.0）：「机灵小伙」`ICL_uranus_zh_male_jilingxiaohuo_tob`，或「嚣张小哥」`ICL_uranus_zh_male_xiaozhangxiaoge_tob`。
-- 老周配音尚未选定。候选：豆包 2.0「成熟总裁」`ICL_uranus_zh_male_chengshuzongcai_tob`、豆包 2.0「深沉总裁」`ICL_uranus_zh_male_shenchenzongcai_tob`（这两支 speech_rate 约 -10，用 context_texts 场景提示）、Gemini「Rasalgethi」（仅用已授权的 `gemini-3.8-flash-tts` 做配音）。
+- 老周配音已定：豆包 2.0「深沉总裁」`ICL_uranus_zh_male_shenchenzongcai_tob`，speech_rate 约 -10，用 context_texts 场景提示。中文配音只用豆包；Gemini（如 Rasalgethi）念中文水土不服，不要用来配中文角色。
 - 豆包 1.0 方言/角色音色未授权到当前项目，不要再走这条路。
