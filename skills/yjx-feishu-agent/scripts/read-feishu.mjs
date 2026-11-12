@@ -67,7 +67,7 @@ export async function main(argv) {
 }
 try {
   if (realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url))) main(process.argv.slice(2)).catch(error=>{
-    console.log(JSON.stringify({ status:'error', message:'检查绑定群、参数、消息可见性及读取权限', reason:safeApiError(error) }));
+    console.log(JSON.stringify({ status:'error', message:'读取失败', reason:safeApiError(error) }));
     process.exitCode=2;
   });
 } catch { /* Import only. */ }

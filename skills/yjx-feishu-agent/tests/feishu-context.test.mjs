@@ -87,3 +87,19 @@ test('read command enforces scope parameters and epoch-second ranges',()=>{
   assert.throws(()=>parseReadArgs(['history','--chat','oc_bound','--thread','omt_a','--start-time','1']),/time range/);
   assert.equal(parseReadArgs(['--state-dir','/state','history','--chat','oc_bound']).limit,20);
 });
+
+test('resource HTTP errors surface the Feishu code and stop useless image retries',async t=>{
+  const c=await setup(t);
+  const image={...quoted('om_parent'),msg_type:'image',body:{content:JSON.stringify({image_key:'img_test'})}};
+  c.transport.get=async()=>image;
+  c.transport.image=async()=>{
+    const e=new Error('Request failed with status code 400');
+    e.response={status:400,data:Readable.from([Buffer.from('{"code":14005,"msg":"Resource Has Been Deleted"}')])};
+    throw e;
+  };
+  const text=await resolveContext(item,c);
+  assert.match(text,/API 14005: Resource Has Been Deleted/);
+  assert.doesNotMatch(text,/读取失败或权限不足/);
+  assert.doesNotMatch(text,/补读目标/);
+  assert.doesNotMatch(text,/Request failed with status code 400/);
+});

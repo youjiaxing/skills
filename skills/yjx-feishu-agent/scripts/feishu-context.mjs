@@ -4,9 +4,38 @@ import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { imageKeys, messageView } from './feishu-content.mjs';
 
+const UNRECOVERABLE_IMAGE_CODES = new Set([14005]);
+
+async function resourceApiError(error) {
+  const response = error?.response;
+  if (!response) return error;
+  let payload;
+  const data = response.data;
+  if (typeof data === 'string') payload = data;
+  else if (Buffer.isBuffer(data)) payload = data.toString('utf8');
+  else if (data && typeof data[Symbol.asyncIterator] === 'function') {
+    const chunks = []; let size = 0;
+    for await (const chunk of data) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buf); size += buf.length;
+      if (size > 65536) break;
+    }
+    payload = Buffer.concat(chunks).toString('utf8');
+  } else if (data && typeof data === 'object' && Number.isInteger(data.code)) payload = JSON.stringify(data);
+  if (payload === undefined) return error;
+  let parsed;
+  try { parsed = JSON.parse(payload); } catch { return error; }
+  if (!Number.isInteger(parsed?.code)) return error;
+  const failure = new Error(`Feishu resource read failed (HTTP ${response.status ?? 'unknown'})`);
+  failure.apiCode = parsed.code;
+  if (typeof parsed.msg === 'string' && parsed.msg) failure.apiMsg = parsed.msg;
+  return failure;
+}
+
 export function safeApiError(error) {
   const code = error.apiCode ?? error.response?.data?.code;
-  return Number.isInteger(code) ? `API ${code}` : '读取失败或权限不足';
+  if (!Number.isInteger(code)) return '读取失败或权限不足';
+  return typeof error.apiMsg === 'string' && error.apiMsg ? `API ${code}: ${error.apiMsg}` : `API ${code}`;
 }
 
 function checked(result) {
@@ -44,7 +73,9 @@ export function verifyChat(message, chatId) {
 
 export async function saveImage(transport, message, key, directory) {
   if (!imageKeys(message).includes(key)) throw new Error('Image does not belong to message');
-  const resource = await transport.image(message.message_id, key);
+  let resource;
+  try { resource = await transport.image(message.message_id, key); }
+  catch (error) { throw await resourceApiError(error); }
   await mkdir(directory, { recursive:true, mode:0o700 });
   const name = createHash('sha256').update(`${message.message_id}:${key}`).digest('hex');
   const file = path.join(directory, `${name}.image`), temporary = `${file}.${process.pid}.part`;
@@ -89,7 +120,8 @@ export async function resolveContext(item, { transport, imageDirectory, contextS
       }
       catch(e) {
         results.push(`[图片未取得：${safeApiError(e)}]`);
-        retry.push({kind:'image',sourceChatId:message.chat_id,messageId:message.message_id,imageKey:key});
+        if (!UNRECOVERABLE_IMAGE_CODES.has(e.apiCode))
+          retry.push({kind:'image',sourceChatId:message.chat_id,messageId:message.message_id,imageKey:key});
       }
     }
     return results;
