@@ -101,28 +101,52 @@ export async function main(argv) {
         return result.image_key;
       },
       async send(chatId, type, content, uuid) {
+        const sendOnce = async () => {
+          try {
+            return await client.im.v1.message.create({ params: { receive_id_type: 'chat_id' },
+              data: { receive_id: chatId, msg_type: type, content: JSON.stringify(content), uuid } });
+          } catch (error) {
+            if (!Number.isSafeInteger(error?.apiCode) && Number.isSafeInteger(error?.response?.data?.code)) {
+              error.apiCode = error.response.data.code;
+            }
+            throw error;
+          }
+        };
         let response;
         try {
-          response = await client.im.v1.message.create({ params: { receive_id_type: 'chat_id' },
-            data: { receive_id: chatId, msg_type: type, content: JSON.stringify(content), uuid } });
+          response = await sendOnce();
         } catch (error) {
-          if (!Number.isSafeInteger(error?.apiCode) && Number.isSafeInteger(error?.response?.data?.code)) {
-            error.apiCode = error.response.data.code;
+          if (error?.apiCode === 230429) {
+            await new Promise(r => setTimeout(r, 1500));
+            response = await sendOnce();
+          } else {
+            throw error;
           }
-          throw error;
         }
         const data = check(response);
         if (!data?.message_id) throw new Error('Missing message receipt');
         return data.message_id;
       },
       async update(messageId, content) {
-        try {
-          check(await client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(content) } }));
-        } catch (error) {
-          if (!Number.isSafeInteger(error?.apiCode) && Number.isSafeInteger(error?.response?.data?.code)) {
-            error.apiCode = error.response.data.code;
+        const patchOnce = async () => {
+          try {
+            return check(await client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(content) } }));
+          } catch (error) {
+            if (!Number.isSafeInteger(error?.apiCode) && Number.isSafeInteger(error?.response?.data?.code)) {
+              error.apiCode = error.response.data.code;
+            }
+            throw error;
           }
-          throw error;
+        };
+        try {
+          await patchOnce();
+        } catch (error) {
+          if (error?.apiCode === 230429) {
+            await new Promise(r => setTimeout(r, 1500));
+            await patchOnce();
+          } else {
+            throw error;
+          }
         }
         return messageId;
       },
