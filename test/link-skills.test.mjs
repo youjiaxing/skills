@@ -16,6 +16,7 @@ import {
   applyAgentSelection,
   resolveInitialAgentSelection,
   runInit,
+  selectSkills,
   syncAntigravityConfig,
 } from '../scripts/link-skills.mjs';
 
@@ -80,6 +81,18 @@ test('创建链接后重复执行保持幂等', async (t) => {
   assert.equal(second.links.length, 0);
   assert.equal(second.unchanged.length, 1);
   assert.equal(path.resolve(path.dirname(path.join(work.target, 'yjx-one')), await readlink(path.join(work.target, 'yjx-one'))), path.resolve(skills[0].source));
+});
+
+test('按名称筛选 skill，并对未知名称报错', async (t) => {
+  const work = await fixture();
+  t.after(() => rm(work.root, { recursive: true, force: true }));
+  await mkdir(path.join(work.skills, 'yjx-two'), { recursive: true });
+  await writeFile(path.join(work.skills, 'yjx-two', 'SKILL.md'), '# two\n');
+
+  const skills = await scanSkills(work.skills);
+  assert.deepEqual(selectSkills(skills, ['yjx-two']).map((skill) => skill.name), ['yjx-two']);
+  assert.deepEqual(selectSkills(skills, ['yjx-two', 'yjx-two']).map((skill) => skill.name), ['yjx-two']);
+  assert.throws(() => selectSkills(skills, ['missing']), /未找到指定 skill: missing/);
 });
 
 test('--force 对冲突目录生成替换计划', async (t) => {

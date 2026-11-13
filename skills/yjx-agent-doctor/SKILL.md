@@ -1,6 +1,6 @@
 ---
 name: yjx-agent-doctor
-description: 面向不同 Agent 的故障诊断与新环境预检，重点排查第三方模型接入兼容问题，并依据会话要求给出修复建议或实施修复。
+description: 诊断 Agent 及其 CLI 的安装、升级、运行时和 provider 接入故障，或进行新环境预检；包括第三方模型与兼容 API 的接入问题，按会话授权给出建议或实施修复。
 ---
 
 # Agent Doctor

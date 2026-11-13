@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
 import crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 
 const RETRO_SKILL_NAME = "yjx-retro-skill";
 
@@ -19,15 +20,20 @@ function printHelp() {
   console.log(`Usage:
   node extract-session-evidence.mjs --session-id <thread-or-session-id> [options]
   node extract-session-evidence.mjs --file <rollout.jsonl> [--file <rollout2.jsonl> ...] [options]
+  node extract-session-evidence.mjs --item-id <turn-item-id> [--session-id <id>] [options]
 
 Options:
-  --session-id <id>       Locate rollout-*.jsonl files for this session/thread ID under <codex-home>/sessions
+  --session-id <id>       Locate T3 thread in <t3-db> or rollout-*.jsonl files under <codex-home>/sessions
+                          (defaults to $T3CODE_THREAD_ID or $CODEX_THREAD_ID when no --file is given)
   --file <path>           Explicit JSONL file path (can be specified multiple times)
   --codex-home <dir>      Codex home directory (default: $CODEX_HOME or ~/.codex)
+  --t3-home <dir>         T3 Code home directory (default: $T3CODE_HOME or ~/.t3)
+  --t3-db <path>          Explicit T3 statev2.sqlite path (default: <t3-home>/userdata/statev2.sqlite)
   --until-ordinal <n>     Exclude records with ordinal > <n> (fix retro cutoff point before the current call)
   --since-ordinal <n>     Exclude records with ordinal < <n> (start of a repeated retro range; session_meta is still read)
-  --preflight              Read only session metadata, compaction markers and yjx-retro-skill invocations,
+  --preflight             Read only session metadata, compaction/handoff markers and yjx-retro-skill invocations,
                            then print the review range start and routing decision
+  --item-id <id>          Fetch full un-truncated JSON record for a single T3 turn_item_id
   --format <json|md>      Output format: json (default) or md
   --output <path>         Write output to file instead of stdout
   --help, -h              Show this help message
@@ -39,9 +45,12 @@ function parseArgs(argv) {
     sessionId: null,
     files: [],
     codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+    t3Home: process.env.T3CODE_HOME || path.join(os.homedir(), ".t3"),
+    t3Db: null,
     untilOrdinal: null,
     sinceOrdinal: null,
     preflight: false,
+    itemId: null,
     format: "json",
     output: null,
     help: false,
@@ -56,12 +65,18 @@ function parseArgs(argv) {
       opts.files.push(argv[++i]);
     } else if (arg === "--codex-home") {
       opts.codexHome = argv[++i];
+    } else if (arg === "--t3-home") {
+      opts.t3Home = argv[++i];
+    } else if (arg === "--t3-db") {
+      opts.t3Db = argv[++i];
     } else if (arg === "--until-ordinal") {
       opts.untilOrdinal = parseOrdinalArg(arg, argv[++i]);
     } else if (arg === "--since-ordinal") {
       opts.sinceOrdinal = parseOrdinalArg(arg, argv[++i]);
     } else if (arg === "--preflight") {
       opts.preflight = true;
+    } else if (arg === "--item-id") {
+      opts.itemId = argv[++i];
     } else if (arg === "--format") {
       opts.format = argv[++i];
     } else if (arg === "--output") {
@@ -71,6 +86,9 @@ function parseArgs(argv) {
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
+  }
+  if (!opts.t3Db) {
+    opts.t3Db = path.join(opts.t3Home, "userdata", "statev2.sqlite");
   }
   return opts;
 }
@@ -82,6 +100,8 @@ export async function preflightFiles(filePaths, opts = {}) {
   const retroByOrdinal = new Map();
   const retroWithoutOrdinal = [];
   let sessionMeta = null;
+  let pendingHumanPreview = null;
+  let lastRetroEntry = null;
 
   for (let fIdx = 0; fIdx < filePaths.length; fIdx++) {
     const filePath = path.resolve(filePaths[fIdx]);
@@ -127,12 +147,43 @@ export async function preflightFiles(filePaths, opts = {}) {
         payload.type === "message" &&
         payload.role === "user"
       ) {
-        const cls = classifyUserMessage(extractContentText(payload.content));
+        const rawText = extractContentText(payload.content);
+        const cls = classifyUserMessage(rawText);
         if (cls.kind === "skill_injection" && cls.name === RETRO_SKILL_NAME) {
-          const inv = { location: `${tag}:L${lineNo}`, ordinal: ord, timestamp: obj.timestamp || null };
+          const inv = {
+            location: `${tag}:L${lineNo}`,
+            ordinal: ord,
+            timestamp: obj.timestamp || null,
+            userPreview: pendingHumanPreview,
+            assistantPreview: null,
+          };
+          lastRetroEntry = inv;
           if (ord === null) retroWithoutOrdinal.push(inv);
           else if (!retroByOrdinal.has(ord)) retroByOrdinal.set(ord, inv);
+        } else if (cls.kind === "human") {
+          pendingHumanPreview = cls.cleanText.slice(0, 240);
+          if (isRetroInvocationText(rawText)) {
+            const inv = {
+              location: `${tag}:L${lineNo}`,
+              ordinal: ord,
+              timestamp: obj.timestamp || null,
+              userPreview: pendingHumanPreview,
+              assistantPreview: null,
+            };
+            lastRetroEntry = inv;
+            if (ord === null) retroWithoutOrdinal.push(inv);
+            else if (!retroByOrdinal.has(ord)) retroByOrdinal.set(ord, inv);
+          }
         }
+      } else if (
+        obj.type === "response_item" &&
+        payload.type === "message" &&
+        payload.role === "assistant" &&
+        lastRetroEntry &&
+        !lastRetroEntry.assistantPreview
+      ) {
+        const aText = extractContentText(payload.content).trim();
+        if (aText) lastRetroEntry.assistantPreview = aText.slice(0, 240);
       }
     }
 
@@ -140,12 +191,10 @@ export async function preflightFiles(filePaths, opts = {}) {
   }
 
   const retroInvocations = [...retroByOrdinal.values()].sort((a, b) => a.ordinal - b.ordinal);
-  // Without --until-ordinal the preflight runs inside the current retro, so the last invocation is the current call.
   const currentRetro = untilOrdinal === null ? retroInvocations[retroInvocations.length - 1] ?? null : null;
   const previousRetros = currentRetro ? retroInvocations.slice(0, -1) : retroInvocations;
   const previousRetro = previousRetros[previousRetros.length - 1] ?? null;
-  const rangeStartOrdinal = previousRetro ? previousRetro.ordinal : null;
-  // Compactions without an ordinal cannot be placed, so they conservatively count as in range.
+  const rangeStartOrdinal = opts.sinceOrdinal ?? (previousRetro ? previousRetro.ordinal : null);
   const rangeCompactions = compactions.filter(
     (c) => rangeStartOrdinal === null || c.ordinal === null || c.ordinal > rangeStartOrdinal
   );
@@ -159,6 +208,8 @@ export async function preflightFiles(filePaths, opts = {}) {
     retroInvocationsWithoutOrdinal: retroWithoutOrdinal,
     rangeCompactions,
     compactions,
+    rangeHandoffs: [],
+    handoffs: [],
     forkedFrom: sessionMeta
       ? {
           id: sessionMeta.forkedFromId,
@@ -167,10 +218,639 @@ export async function preflightFiles(filePaths, opts = {}) {
       : null,
     files,
     cutoffOrdinal: untilOrdinal,
-    rule: "range starts at the previous retro invocation (session start if none); compaction inside the range selects full; Forked From is informational only",
+    rule: "range starts at the previous retro invocation (session start if none); compaction or cross-provider handoff inside the range selects full; Forked From is informational only",
+  };
+}
+function normalizeT3ThreadId(rawId) {
+  if (!rawId) return null;
+  const trimmed = String(rawId).trim();
+  return trimmed.startsWith("thread_") ? trimmed.slice("thread_".length) : trimmed;
+}
+
+function safeJsonParse(raw, fallback = {}) {
+  if (!raw || typeof raw !== "string") return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function isRetroInvocationText(text) {
+  if (!text || typeof text !== "string") return false;
+  const cls = classifyUserMessage(text);
+  if (cls.kind === "skill_injection" && cls.name === RETRO_SKILL_NAME) {
+    return true;
+  }
+  if (cls.kind === "human") {
+    return /(?:^|\s|\$|\/|\[)yjx-retro-skill(?:\b|\]|$)/i.test(cls.cleanText);
+  }
+  return false;
+}
+
+function decodeT3Citations(text) {
+  if (!text || typeof text !== "string" || !text.includes("t3-citation://")) {
+    return [];
+  }
+  const citations = [];
+  const re = /\[([^\]]*)\]\((t3-citation:\/\/[^\s)]+)\)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const label = m[1];
+    const rawUrl = m[2];
+    try {
+      const u = new URL(rawUrl);
+      const quotedText = u.searchParams.get("text");
+      const comment = u.searchParams.get("comment");
+      citations.push({
+        label,
+        quotedText: quotedText || null,
+        comment: comment || null,
+      });
+    } catch {
+      continue;
+    }
+  }
+  return citations;
+}
+
+function isCrossContextHandoff(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  if (payload.title === "Fork context") return false;
+  return true;
+}
+
+function loadT3ThreadItems(db, threadId) {
+  const hasPositions = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_v2_turn_item_positions'"
+    )
+    .get();
+  if (hasPositions) {
+    const rows = db
+      .prepare(
+        `SELECT ti.turn_item_id, ti.run_id, ti.provider_thread_id, ti.ordinal, ti.type, ti.status, ti.updated_at, ti.payload_json, p.ordinal AS pos_ordinal
+         FROM orchestration_v2_projection_turn_items ti
+         LEFT JOIN orchestration_v2_turn_item_positions p
+           ON p.thread_id = ti.thread_id AND p.turn_item_id = ti.turn_item_id
+         WHERE ti.thread_id = ?
+         ORDER BY COALESCE(p.ordinal, ti.ordinal), ti.ordinal`
+      )
+      .all(threadId);
+    return rows.map((r, idx) => ({ ...r, position: idx }));
+  }
+  const rows = db
+    .prepare(
+      `SELECT turn_item_id, run_id, provider_thread_id, ordinal, type, status, updated_at, payload_json
+       FROM orchestration_v2_projection_turn_items
+       WHERE thread_id = ?
+       ORDER BY ordinal`
+    )
+    .all(threadId);
+  return rows.map((r, idx) => ({ ...r, position: idx }));
+}
+
+export function hasT3Thread(dbPath, rawThreadId) {
+  const threadId = normalizeT3ThreadId(rawThreadId);
+  if (!threadId || !dbPath || !fs.existsSync(dbPath)) return false;
+  let db;
+  try {
+    db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+    const row = db
+      .prepare("SELECT thread_id FROM orchestration_v2_projection_threads WHERE thread_id = ?")
+      .get(threadId);
+    return Boolean(row);
+  } catch {
+    return false;
+  } finally {
+    try {
+      db?.close();
+    } catch {}
+  }
+}
+
+export function lookupT3Item(dbPath, itemId, rawThreadId = null) {
+  if (!dbPath || !fs.existsSync(dbPath)) {
+    throw new Error(`T3 database not found: ${dbPath}`);
+  }
+  const threadId = normalizeT3ThreadId(rawThreadId);
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+  try {
+    const row = threadId
+      ? db
+          .prepare(
+            "SELECT thread_id, turn_item_id, run_id, provider_thread_id, ordinal, type, status, updated_at, payload_json FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ? AND thread_id = ?"
+          )
+          .get(itemId, threadId)
+      : db
+          .prepare(
+            "SELECT thread_id, turn_item_id, run_id, provider_thread_id, ordinal, type, status, updated_at, payload_json FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ?"
+          )
+          .get(itemId);
+    if (!row) {
+      throw new Error(`Turn item not found in T3 database: ${itemId}`);
+    }
+    return {
+      threadId: row.thread_id,
+      itemId: row.turn_item_id,
+      runId: row.run_id,
+      providerThreadId: row.provider_thread_id,
+      ordinal: row.ordinal,
+      type: row.type,
+      status: row.status,
+      updatedAt: row.updated_at,
+      payload: safeJsonParse(row.payload_json, null),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
+  const threadId = normalizeT3ThreadId(rawThreadId);
+  const untilOrdinal = opts.untilOrdinal ?? null;
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+  try {
+    const threadRow = db
+      .prepare("SELECT thread_id, title, payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ?")
+      .get(threadId);
+    if (!threadRow) {
+      throw new Error(`T3 thread not found: ${threadId}`);
+    }
+    const threadPayload = safeJsonParse(threadRow.payload_json);
+    const items = loadT3ThreadItems(db, threadId);
+
+    const compactions = [];
+    const handoffs = [];
+    const retroByOrdinal = new Map();
+    let activeRetroCandidate = null;
+
+    for (const item of items) {
+      const ord = typeof item.ordinal === "number" ? item.ordinal : null;
+      if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) continue;
+      const loc = `T3:pos=${item.position}`;
+      const payload = safeJsonParse(item.payload_json);
+
+      if (item.type === "compaction") {
+        compactions.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: payload.completedAt || payload.startedAt || item.updated_at || null,
+          driver: payload.driver || null,
+          status: item.status || payload.status || null,
+        });
+      } else if (item.type === "handoff" && isCrossContextHandoff(payload)) {
+        handoffs.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: payload.completedAt || payload.startedAt || item.updated_at || null,
+          title: payload.title || null,
+          strategy: payload.strategy || null,
+          fromProviderInstanceIds: payload.fromProviderInstanceIds || [],
+          toProviderInstanceId: payload.toProviderInstanceId || null,
+        });
+      } else if (item.type === "user_message") {
+        activeRetroCandidate = null;
+        const text = typeof payload.text === "string" ? payload.text : "";
+        if (isRetroInvocationText(text) && ord !== null && !retroByOrdinal.has(ord)) {
+          const cls = classifyUserMessage(text);
+          const clean = cls.kind === "human" ? cls.cleanText : text.trim();
+          const entry = {
+            location: loc,
+            itemId: item.turn_item_id,
+            runId: item.run_id || null,
+            ordinal: ord,
+            timestamp: payload.startedAt || item.updated_at || null,
+            userPreview: clean.slice(0, 240),
+            assistantPreview: null,
+          };
+          retroByOrdinal.set(ord, entry);
+          activeRetroCandidate = entry;
+        }
+      } else if (
+        item.type === "assistant_message" &&
+        activeRetroCandidate &&
+        !activeRetroCandidate.assistantPreview &&
+        (!activeRetroCandidate.runId || item.run_id === activeRetroCandidate.runId)
+      ) {
+        const aText = typeof payload.text === "string" ? payload.text.trim() : "";
+        if (aText) activeRetroCandidate.assistantPreview = aText.slice(0, 240);
+      }
+    }
+
+    const retroInvocations = [...retroByOrdinal.values()].sort((a, b) => a.ordinal - b.ordinal);
+    const currentRetro =
+      untilOrdinal === null ? retroInvocations[retroInvocations.length - 1] ?? null : null;
+    const previousRetros = currentRetro ? retroInvocations.slice(0, -1) : retroInvocations;
+    const previousRetro = previousRetros[previousRetros.length - 1] ?? null;
+    const rangeStartOrdinal = opts.sinceOrdinal ?? (previousRetro ? previousRetro.ordinal : null);
+    const effectiveEndOrdinal =
+      untilOrdinal !== null
+        ? untilOrdinal
+        : currentRetro && currentRetro.ordinal !== null
+        ? currentRetro.ordinal - 1
+        : null;
+
+    const inReviewRange = (ord) => {
+      if (ord === null) return true;
+      if (rangeStartOrdinal !== null && ord <= rangeStartOrdinal) return false;
+      if (effectiveEndOrdinal !== null && ord > effectiveEndOrdinal) return false;
+      return true;
+    };
+
+    const rangeCompactions = compactions.filter((c) => inReviewRange(c.ordinal));
+    const rangeHandoffs = handoffs.filter((h) => inReviewRange(h.ordinal));
+
+    const rangeProviderThreads = new Set();
+    const rangeProviders = new Set();
+    const runs = db
+      .prepare(
+        "SELECT run_id, ordinal, provider_instance_id, provider_thread_id FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
+      )
+      .all(threadId);
+    const runById = new Map(runs.map((r) => [r.run_id, r]));
+    for (const item of items) {
+      const ord = typeof item.ordinal === "number" ? item.ordinal : null;
+      if (!inReviewRange(ord)) continue;
+      if (item.provider_thread_id) rangeProviderThreads.add(item.provider_thread_id);
+      const run = item.run_id ? runById.get(item.run_id) : null;
+      if (run?.provider_instance_id) rangeProviders.add(run.provider_instance_id);
+    }
+
+    const multiProviderInRange = rangeProviderThreads.size > 1 || rangeProviders.size > 1;
+    const route =
+      rangeCompactions.length > 0 || rangeHandoffs.length > 0 || multiProviderInRange
+        ? "full"
+        : "fast";
+
+    return {
+      source: "t3_sqlite",
+      threadId,
+      title: threadRow.title || null,
+      route,
+      rangeStartOrdinal,
+      previousRetro,
+      currentRetro,
+      retroInvocations,
+      retroInvocationsWithoutOrdinal: [],
+      rangeCompactions,
+      compactions,
+      rangeHandoffs,
+      handoffs,
+      rangeProviders: [...rangeProviders],
+      rangeProviderThreadCount: rangeProviderThreads.size,
+      forkedFrom: threadPayload.forkedFrom || null,
+      files: [{ path: path.resolve(dbPath), tag: "T3DB" }],
+      cutoffOrdinal: untilOrdinal,
+      rule: "range starts at the previous retro invocation (session start if none); compaction, cross-provider handoff, or multiple provider threads inside the range selects full; Forked From is informational only",
+    };
+  } finally {
+    db.close();
+  }
+}
+function parseT3ToolOutcome(itemType, itemStatus, payload) {
+  const exitCodes = [];
+  if (typeof payload.exitCode === "number" && !Number.isNaN(payload.exitCode)) {
+    exitCodes.push(payload.exitCode);
+  }
+  const rawOut =
+    typeof payload.output === "string"
+      ? payload.output
+      : payload.output !== undefined && payload.output !== null
+      ? JSON.stringify(payload.output)
+      : "";
+  const outSummary = parseToolOutputSummary(rawOut);
+  for (const code of outSummary.exitCodes) {
+    if (!exitCodes.includes(code)) exitCodes.push(code);
+  }
+  const isErrorObj =
+    payload.output && typeof payload.output === "object" && payload.output.isError === true;
+  const failed =
+    itemStatus === "failed" ||
+    isErrorObj ||
+    exitCodes.some((c) => c !== 0) ||
+    outSummary.failed;
+  return {
+    exitCodes,
+    failed,
+    truncated: outSummary.truncated,
+    preview: rawOut.slice(0, 320),
   };
 }
 
+export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
+  const threadId = normalizeT3ThreadId(rawThreadId);
+  const untilOrdinal = opts.untilOrdinal ?? null;
+  const sinceOrdinal = opts.sinceOrdinal ?? null;
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+  try {
+    const threadRow = db
+      .prepare(
+        "SELECT thread_id, title, created_at, updated_at, payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ?"
+      )
+      .get(threadId);
+    if (!threadRow) {
+      throw new Error(`T3 thread not found: ${threadId}`);
+    }
+    const threadPayload = safeJsonParse(threadRow.payload_json);
+    const runRows = db
+      .prepare(
+        "SELECT run_id, ordinal, provider, provider_instance_id, provider_thread_id, status, requested_at, completed_at, payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
+      )
+      .all(threadId);
+    const runs = runRows.map((r) => {
+      const rp = safeJsonParse(r.payload_json);
+      return {
+        runId: r.run_id,
+        ordinal: r.ordinal,
+        providerInstanceId: r.provider_instance_id || r.provider || null,
+        model: rp.modelSelection?.model || null,
+        providerThreadId: r.provider_thread_id || null,
+        status: r.status || null,
+        requestedAt: r.requested_at || null,
+        completedAt: r.completed_at || null,
+      };
+    });
+    const runById = new Map(runs.map((r) => [r.runId, r]));
+
+    const providerThreadRows = db
+      .prepare(
+        "SELECT provider_thread_id, provider_instance_id, driver, first_run_ordinal, last_run_ordinal, payload_json FROM orchestration_v2_projection_provider_threads WHERE thread_id = ? ORDER BY first_run_ordinal"
+      )
+      .all(threadId);
+    const providerThreads = providerThreadRows.map((pt) => {
+      const ptp = safeJsonParse(pt.payload_json);
+      return {
+        providerThreadId: pt.provider_thread_id,
+        providerInstanceId: pt.provider_instance_id,
+        driver: pt.driver,
+        nativeThreadId: ptp.nativeThreadRef?.nativeId || null,
+        firstRunOrdinal: pt.first_run_ordinal,
+        lastRunOrdinal: pt.last_run_ordinal,
+      };
+    });
+
+    const items = loadT3ThreadItems(db, threadId);
+    const allOrdinals = [];
+    const compactions = [];
+    const handoffs = [];
+    const turnAborts = [];
+    const subagents = [];
+    const skillInjections = [];
+    const skillReads = [];
+    const nonZeroTools = [];
+    const humanInputs = [];
+
+    let firstOrd = null;
+    let lastOrd = null;
+    let firstTs = null;
+    let lastTs = null;
+    let lastAssistant = null;
+
+    for (const item of items) {
+      const ord = typeof item.ordinal === "number" ? item.ordinal : null;
+      if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) continue;
+      if (sinceOrdinal !== null && ord !== null && ord < sinceOrdinal) continue;
+
+      const payload = safeJsonParse(item.payload_json);
+      const ts = payload.completedAt || payload.startedAt || item.updated_at || null;
+      const loc = `T3:pos=${item.position}`;
+      const run = item.run_id ? runById.get(item.run_id) : null;
+      const agentTag = run
+        ? `${run.providerInstanceId || "unknown"}${run.model ? `/${run.model}` : ""} (run #${run.ordinal})`
+        : null;
+
+      if (ord !== null) {
+        allOrdinals.push(ord);
+        if (firstOrd === null || ord < firstOrd) firstOrd = ord;
+        if (lastOrd === null || ord > lastOrd) lastOrd = ord;
+      }
+      if (ts) {
+        if (!firstTs) firstTs = ts;
+        lastTs = ts;
+      }
+
+      if (item.type === "compaction") {
+        compactions.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: ts,
+          driver: payload.driver || null,
+          status: item.status || payload.status || null,
+        });
+        continue;
+      }
+
+      if (item.type === "handoff") {
+        handoffs.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: ts,
+          title: payload.title || null,
+          strategy: payload.strategy || null,
+          fromProviderInstanceIds: payload.fromProviderInstanceIds || [],
+          toProviderInstanceId: payload.toProviderInstanceId || null,
+        });
+        continue;
+      }
+
+      if (item.type === "run_interrupt_request" || item.type === "error") {
+        turnAborts.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: ts,
+          reason:
+            payload.failure?.message ||
+            payload.reason ||
+            payload.title ||
+            item.type,
+        });
+        continue;
+      }
+
+      if (item.type === "subagent") {
+        subagents.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: ts,
+          title: payload.title || null,
+          origin: payload.origin || null,
+          driver: payload.driver || null,
+          providerInstanceId: payload.providerInstanceId || null,
+          childThreadId: payload.childThreadId || null,
+          status: item.status || payload.status || null,
+          resultPreview: typeof payload.result === "string" ? payload.result.slice(0, 300) : null,
+        });
+        continue;
+      }
+
+      if (item.type === "assistant_message") {
+        const text = typeof payload.text === "string" ? payload.text.trim() : "";
+        lastAssistant = {
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          agent: agentTag,
+          preview: text.slice(0, 300),
+        };
+        continue;
+      }
+
+      if (item.type === "user_message") {
+        const rawText = typeof payload.text === "string" ? payload.text : "";
+        const cls = classifyUserMessage(rawText);
+        if (cls.kind === "skill_injection") {
+          skillInjections.push({
+            location: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            timestamp: ts,
+            name: cls.name,
+            path: cls.path,
+            sha256: cls.sha256,
+          });
+        } else if (cls.kind === "human") {
+          const citations = decodeT3Citations(cls.cleanText);
+          const attachedContexts = Array.isArray(payload.context?.records)
+            ? payload.context.records.map((r) => ({
+                kind: r.kind || null,
+                threadId: r.threadId || null,
+                environmentId: r.environmentId || null,
+                title: r.title || r.label || null,
+              }))
+            : [];
+          humanInputs.push({
+            index: humanInputs.length + 1,
+            location: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            timestamp: ts,
+            agent: agentTag,
+            text: cls.cleanText,
+            citations,
+            attachedContexts,
+            precedingAssistant: lastAssistant ? { ...lastAssistant } : null,
+          });
+        }
+        continue;
+      }
+
+      if (item.type === "command_execution" || item.type === "dynamic_tool") {
+        if (item.turn_item_id.includes("workspace-preparation")) continue;
+        const toolName =
+          item.type === "command_execution"
+            ? "command_execution"
+            : payload.toolName || "dynamic_tool";
+        const cmdInput =
+          typeof payload.input === "string"
+            ? payload.input
+            : JSON.stringify(payload.input ?? "");
+        const outSummary = parseT3ToolOutcome(item.type, item.status || payload.status, payload);
+
+        if (toolName === "Skill" && payload.input && typeof payload.input === "object") {
+          const skName = payload.input.skill || payload.output?.commandName || null;
+          if (skName) {
+            skillInjections.push({
+              location: loc,
+              itemId: item.turn_item_id,
+              ordinal: ord,
+              timestamp: ts,
+              name: skName,
+              path: `Skill:${skName}`,
+              sha256: crypto.createHash("sha256").update(skName, "utf8").digest("hex"),
+            });
+          }
+        }
+
+        const skillPaths = extractSkillPathsFromCommand(cmdInput);
+        if (skillPaths.length > 0) {
+          skillReads.push({
+            callLocation: loc,
+            outputLocation: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            callId: item.turn_item_id,
+            paths: skillPaths,
+            exitCodes: outSummary.exitCodes,
+            truncated: outSummary.truncated,
+          });
+        }
+
+        if (outSummary.failed) {
+          nonZeroTools.push({
+            callLocation: loc,
+            outputLocation: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            callId: item.turn_item_id,
+            toolName,
+            agent: agentTag,
+            commandPreview: cmdInput.slice(0, 300),
+            exitCodes: outSummary.exitCodes,
+            truncated: outSummary.truncated,
+            outputPreview: outSummary.preview,
+          });
+        }
+      }
+    }
+
+    return {
+      session: {
+        source: "t3_sqlite",
+        id: threadId,
+        title: threadRow.title || null,
+        cwd: threadPayload.worktreePath || null,
+        forkedFromId: threadPayload.forkedFrom?.threadId || threadPayload.forkedFrom?.nodeId || null,
+        forkedFromOrdinalExclusive: null,
+        sinceOrdinal,
+        untilOrdinal,
+        minOrdinal: firstOrd,
+        maxOrdinal: lastOrd,
+        uniqueOrdinals: allOrdinals.length,
+        ordinalGaps: [],
+        ordinalCollisions: [],
+        firstTimestamp: firstTs || threadRow.created_at || null,
+        lastTimestamp: lastTs || threadRow.updated_at || null,
+        runs,
+        providerThreads,
+        files: [
+          {
+            tag: "T3DB",
+            path: path.resolve(dbPath),
+            sessionId: threadId,
+            lines: items.length,
+            sizeBytes: fs.statSync(dbPath).size,
+            firstOrdinal: firstOrd,
+            lastOrdinal: lastOrd,
+            firstTimestamp: firstTs,
+            lastTimestamp: lastTs,
+            historyBaseEndOrdinalExclusive: null,
+            sha256: null,
+          },
+        ],
+      },
+      compactions,
+      handoffs,
+      subagents,
+      turnAborts,
+      skills: {
+        injected: skillInjections,
+        fileReads: skillReads,
+      },
+      nonZeroTools,
+      wrapperCounts: {},
+      humanInputs,
+    };
+  } finally {
+    db.close();
+  }
+}
 function findSessionFiles(sessionsRoot, sessionId) {
   const results = [];
   if (!fs.existsSync(sessionsRoot)) return results;
@@ -241,7 +921,7 @@ function classifyUserMessage(text) {
     return { kind: "open_page" };
   }
   const withoutEnvAndInstructions = withoutOpenPage
-    .replace(/^#\s*AGENTS\.md instructions for [^\n]+\n\n<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>/g, "")
+    .replace(/^#\s*AGENTS\.md instructions(?: for [^\n]+)?\n\n<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>/g, "")
     .replace(/<environment_context>[\s\S]*?<\/environment_context>/g, "")
     .trim();
   if (!withoutEnvAndInstructions) {
@@ -365,7 +1045,6 @@ export async function analyzeFiles(filePaths, opts = {}) {
         continue;
       }
       if (sinceOrdinal !== null && ord !== null && ord < sinceOrdinal) {
-        // Keep session identity even when the range starts after the session_meta record.
         if (obj.type === "session_meta" && obj.payload) {
           fileSessionId ??= obj.payload.id || obj.payload.session_id || null;
           sessionMetaSummary ??= {
@@ -405,7 +1084,6 @@ export async function analyzeFiles(filePaths, opts = {}) {
         }
       }
 
-      // Deduplicate identical events across rollout files; retain diverged events with the same ordinal
       if (ord !== null) {
         const sig = eventSignature(obj);
         const existing = seenOrdinals.get(ord);
@@ -600,11 +1278,13 @@ export async function analyzeFiles(filePaths, opts = {}) {
     humanInputs,
   };
 }
-
 function formatMarkdown(report) {
   const lines = [];
   const s = report.session;
   lines.push(`# Session Evidence Report: ${s.id || "unknown"}`);
+  if (s.title) {
+    lines.push(`- Title: \`${s.title}\``);
+  }
   lines.push(`- Workspace: \`${s.cwd || "unknown"}\``);
   lines.push(
     `- Forked From: \`${s.forkedFromId || "none"}\` (ordinal exclusive: ${
@@ -629,6 +1309,15 @@ function formatMarkdown(report) {
       `- **${f.tag}**: \`${f.path}\` (${f.lines} lines, ${f.sizeBytes} bytes, ordinal \`${f.firstOrdinal}..${f.lastOrdinal}\`${baseNote})`
     );
   }
+  if (Array.isArray(s.runs) && s.runs.length > 0) {
+    lines.push("");
+    lines.push(`## Runs / Providers (${s.runs.length})`);
+    for (const r of s.runs) {
+      lines.push(
+        `- Run #${r.ordinal}: \`${r.providerInstanceId || "unknown"}\` / \`${r.model || "unknown"}\` (${r.status}, \`${r.runId}\`)`
+      );
+    }
+  }
   if (s.ordinalCollisions && s.ordinalCollisions.length > 0) {
     lines.push("");
     lines.push(`## Ordinal Collisions / Rewound Branches (${s.ordinalCollisions.length})`);
@@ -641,7 +1330,28 @@ function formatMarkdown(report) {
   lines.push("");
   lines.push(`## Compactions (${report.compactions.length})`);
   for (const c of report.compactions) {
-    lines.push(`- ${c.location} (ordinal ${c.ordinal}, ${c.timestamp})`);
+    const itemNote = c.itemId ? `, item \`${c.itemId}\`` : "";
+    lines.push(`- ${c.location} (ordinal ${c.ordinal}, ${c.timestamp}${itemNote})`);
+  }
+  if (Array.isArray(report.handoffs) && report.handoffs.length > 0) {
+    lines.push("");
+    lines.push(`## Context Handoffs (${report.handoffs.length})`);
+    for (const h of report.handoffs) {
+      lines.push(
+        `- ${h.location} (ordinal ${h.ordinal}, ${h.timestamp}): ${h.title || "handoff"} [${(
+          h.fromProviderInstanceIds || []
+        ).join(",")} -> ${h.toProviderInstanceId || "unknown"}] (\`${h.strategy || "unknown"}\`, item \`${h.itemId}\`)`
+      );
+    }
+  }
+  if (Array.isArray(report.subagents) && report.subagents.length > 0) {
+    lines.push("");
+    lines.push(`## Subagents (${report.subagents.length})`);
+    for (const sub of report.subagents) {
+      lines.push(
+        `- ${sub.location} (ordinal ${sub.ordinal}): \`${sub.driver || sub.providerInstanceId || "unknown"}\` ${sub.title || ""} -> \`${sub.childThreadId || "none"}\` (${sub.status}, item \`${sub.itemId}\`)`
+      );
+    }
   }
   lines.push("");
   lines.push(
@@ -662,8 +1372,10 @@ function formatMarkdown(report) {
   lines.push("");
   lines.push(`## Non-Zero / Failed Tool Calls (${report.nonZeroTools.length})`);
   for (const nz of report.nonZeroTools) {
+    const itemNote = nz.itemId ? ` [item \`${nz.itemId}\`]` : "";
+    const agentNote = nz.agent ? ` (${nz.agent})` : "";
     lines.push(
-      `- ${nz.callLocation}->${nz.outputLocation} (exit: ${nz.exitCodes.join(",")}): \`${(
+      `- ${nz.callLocation}->${nz.outputLocation}${itemNote}${agentNote} (exit: ${nz.exitCodes.join(",")}): \`${(
         nz.commandPreview || ""
       ).replace(/\s+/g, " ")}\``
     );
@@ -671,7 +1383,11 @@ function formatMarkdown(report) {
   lines.push("");
   lines.push(`## Human Inputs (${report.humanInputs.length})`);
   for (const h of report.humanInputs) {
-    lines.push(`### [${h.index}] ${h.location} (ordinal ${h.ordinal}, ${h.timestamp})`);
+    const agentNote = h.agent ? ` [${h.agent}]` : "";
+    const itemNote = h.itemId ? ` item \`${h.itemId}\`` : "";
+    lines.push(
+      `### [${h.index}] ${h.location} (ordinal ${h.ordinal}, ${h.timestamp})${agentNote}${itemNote}`
+    );
     if (h.precedingAssistant) {
       lines.push(
         `> Preceding Assistant (${h.precedingAssistant.location}): ${h.precedingAssistant.preview.replace(
@@ -680,6 +1396,20 @@ function formatMarkdown(report) {
         )}`
       );
     }
+    if (Array.isArray(h.citations) && h.citations.length > 0) {
+      for (const c of h.citations) {
+        lines.push(
+          `> Decoded Citation (${c.label}): quoted=${JSON.stringify(c.quotedText)} comment=${JSON.stringify(c.comment)}`
+        );
+      }
+    }
+    if (Array.isArray(h.attachedContexts) && h.attachedContexts.length > 0) {
+      for (const ctx of h.attachedContexts) {
+        lines.push(
+          `> Attached Context (${ctx.kind}): threadId=${ctx.threadId} env=${ctx.environmentId} title=${JSON.stringify(ctx.title)}`
+        );
+      }
+    }
     lines.push("```text");
     lines.push(h.text);
     lines.push("```");
@@ -687,11 +1417,42 @@ function formatMarkdown(report) {
   return lines.join("\n");
 }
 
+function writeOutput(outText, outputPath) {
+  if (outputPath) {
+    fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true });
+    fs.writeFileSync(outputPath, outText, "utf8");
+  } else {
+    process.stdout.write(outText + "\n");
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  if (opts.help || (!opts.sessionId && opts.files.length === 0)) {
+  if (!opts.sessionId && opts.files.length === 0 && !opts.itemId) {
+    opts.sessionId = process.env.T3CODE_THREAD_ID || process.env.CODEX_THREAD_ID || null;
+  }
+  if (opts.help || (!opts.sessionId && opts.files.length === 0 && !opts.itemId)) {
     printHelp();
     process.exit(opts.help ? 0 : 1);
+  }
+
+  if (opts.itemId) {
+    const itemRecord = lookupT3Item(opts.t3Db, opts.itemId, opts.sessionId);
+    writeOutput(JSON.stringify(itemRecord, null, 2), opts.output);
+    return;
+  }
+
+  if (opts.sessionId && opts.files.length === 0 && hasT3Thread(opts.t3Db, opts.sessionId)) {
+    if (opts.preflight) {
+      const result = preflightT3Thread(opts.t3Db, opts.sessionId, opts);
+      writeOutput(JSON.stringify(result, null, 2), opts.output);
+      return;
+    }
+    const report = analyzeT3Thread(opts.t3Db, opts.sessionId, opts);
+    const outText =
+      opts.format === "md" ? formatMarkdown(report) : JSON.stringify(report, null, 2);
+    writeOutput(outText, opts.output);
+    return;
   }
 
   let targetFiles = [...opts.files];
@@ -706,26 +1467,14 @@ async function main() {
 
   if (opts.preflight) {
     const result = await preflightFiles(targetFiles, opts);
-    const outText = JSON.stringify(result, null, 2);
-    if (opts.output) {
-      fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
-      fs.writeFileSync(opts.output, outText, "utf8");
-    } else {
-      process.stdout.write(outText + "\n");
-    }
+    writeOutput(JSON.stringify(result, null, 2), opts.output);
     return;
   }
 
   const report = await analyzeFiles(targetFiles, opts);
   const outText =
     opts.format === "md" ? formatMarkdown(report) : JSON.stringify(report, null, 2);
-
-  if (opts.output) {
-    fs.mkdirSync(path.dirname(path.resolve(opts.output)), { recursive: true });
-    fs.writeFileSync(opts.output, outText, "utf8");
-  } else {
-    process.stdout.write(outText + "\n");
-  }
+  writeOutput(outText, opts.output);
 }
 
 export { formatMarkdown };

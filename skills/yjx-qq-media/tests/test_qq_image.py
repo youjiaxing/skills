@@ -85,16 +85,18 @@ class ImageTests(unittest.TestCase):
         self.assertNotIn(KEY, str(result))
 
     def test_explicit_rkey_and_appid_mismatches_try_the_next_saved_key(self):
-        opener = Mock()
-        for retcode in (-5503010, -5503023, -5503007):
-            error = urllib.error.HTTPError(URL, 400, "bad key", {},
-                                           io.BytesIO(b'{"retcode": %d}' % retcode))
-            opener.open.side_effect = [error, io.BytesIO(PNG)]
-            with self.subTest(retcode=retcode), patch.object(
-                    media.urllib.request, "build_opener", return_value=opener):
-                media.fetch(self.resource, self.directory, lambda: [KEY + "a", KEY + "b"])
-            self.assertEqual(opener.open.call_count, 2)
-        self.assertTrue(any(self.directory.iterdir()))
+        for retcode in (-5503010, -5503011, -5503023, -5503007):
+            with self.subTest(retcode=retcode), tempfile.TemporaryDirectory() as sub_dir:
+                opener = Mock()
+                error = urllib.error.HTTPError(URL, 400, "bad key", {},
+                                               io.BytesIO(b'{"retcode": %d}' % retcode))
+                opener.open.side_effect = [error, io.BytesIO(PNG)]
+                with patch.object(media.urllib.request, "build_opener", return_value=opener):
+                    result = media.fetch(self.resource, Path(sub_dir),
+                                         lambda: [KEY + "a", KEY + "b"])
+                self.assertFalse(result["cached"])
+                self.assertEqual(opener.open.call_count, 2)
+                self.assertTrue(any(Path(sub_dir).iterdir()))
 
     def test_timeout_does_not_retry_or_expose_the_authenticated_url(self):
         opener = Mock()

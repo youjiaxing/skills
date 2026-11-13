@@ -202,3 +202,189 @@ test("完整提取：--since-ordinal 只保留起点之后的记录，仍保留�
   assert.deepEqual(report.humanInputs.map((h) => h.text), ["复盘结果太啰嗦", "new task"]);
   assert.match(formatMarkdown(report), /Review Range: since ordinal 3, until ordinal 5/);
 });
+
+test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 full，完整提取覆盖多 Agent Run、引用解码与单条回查", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const {
+    preflightT3Thread,
+    analyzeT3Thread,
+    lookupT3Item,
+  } = await import("../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs");
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-evidence-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dbPath = path.join(root, "statev2.sqlite");
+
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE orchestration_v2_projection_threads (
+      thread_id TEXT PRIMARY KEY,
+      title TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_runs (
+      run_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      ordinal INTEGER,
+      provider TEXT,
+      provider_instance_id TEXT,
+      provider_thread_id TEXT,
+      status TEXT,
+      requested_at TEXT,
+      completed_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_provider_threads (
+      provider_thread_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      provider_instance_id TEXT,
+      driver TEXT,
+      first_run_ordinal INTEGER,
+      last_run_ordinal INTEGER,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_turn_items (
+      turn_item_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      run_id TEXT,
+      provider_thread_id TEXT,
+      ordinal INTEGER,
+      type TEXT,
+      status TEXT,
+      updated_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_turn_item_positions (
+      thread_id TEXT,
+      turn_item_id TEXT,
+      ordinal INTEGER
+    );
+  `);
+
+  const threadId = "5f09ded6-ce6d-49b7-9e21-c0a9761830d3";
+  db.prepare(
+    "INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?)"
+  ).run(
+    threadId,
+    "多 Agent 测试会话",
+    "2026-11-13T07:54:42.000Z",
+    "2026-11-13T07:56:00.000Z",
+    JSON.stringify({ worktreePath: "D:/repo" })
+  );
+
+  const insertRun = db.prepare(
+    "INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  );
+  insertRun.run(
+    "run:1",
+    threadId,
+    1,
+    "codex",
+    "codex",
+    "pt:codex:1",
+    "completed",
+    "2026-11-13T07:54:42.000Z",
+    "2026-11-13T07:54:50.000Z",
+    JSON.stringify({ modelSelection: { instanceId: "codex", model: "gpt-6.1-sol-1m" } })
+  );
+  insertRun.run(
+    "run:2",
+    threadId,
+    2,
+    "claudeAgent",
+    "claudeAgent",
+    "pt:claude:2",
+    "completed",
+    "2026-11-13T07:54:51.000Z",
+    "2026-11-13T07:55:20.000Z",
+    JSON.stringify({ modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" } })
+  );
+
+  const insertItem = db.prepare(
+    "INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  );
+  const insertPos = db.prepare(
+    "INSERT INTO orchestration_v2_turn_item_positions VALUES (?, ?, ?)"
+  );
+  const addItem = (id, runId, ptId, ord, type, status, payload) => {
+    insertItem.run(id, threadId, runId, ptId, ord, type, status, "2026-11-13T07:55:00.000Z", JSON.stringify(payload));
+    insertPos.run(threadId, id, ord);
+  };
+
+  addItem("item:u1", "run:1", "pt:codex:1", 1000001, "user_message", "completed", {
+    text: "hi one",
+    startedAt: "2026-11-13T07:54:42.000Z",
+  });
+  addItem("item:a1", "run:1", "pt:codex:1", 1000002, "assistant_message", "completed", {
+    text: "你好，我是 Codex",
+    completedAt: "2026-11-13T07:54:50.000Z",
+  });
+  addItem("item:h2", "run:2", "pt:claude:2", 2000001, "handoff", "completed", {
+    title: "Provider handoff",
+    strategy: "full_thread_summary",
+    fromProviderInstanceIds: ["codex"],
+    toProviderInstanceId: "claudeAgent",
+    completedAt: "2026-11-13T07:54:51.000Z",
+  });
+  addItem("item:u2", "run:2", "pt:claude:2", 2000002, "user_message", "completed", {
+    text: "[Assistant quote](t3-citation://v1/env/thread/msg?text=%E9%94%99%E8%AF%AF%E5%81%87%E8%AE%BE&comment=%E8%BF%99%E9%87%8C%E4%B8%8D%E5%AF%B9)\n请重新检查",
+    startedAt: "2026-11-13T07:54:52.000Z",
+  });
+  addItem("item:cmd2", "run:2", "pt:claude:2", 2000003, "command_execution", "failed", {
+    input: "cat skills/yjx-grill/SKILL.md",
+    output: "Process exited with code 1\nError: failed",
+    exitCode: 1,
+    completedAt: "2026-11-13T07:55:00.000Z",
+  });
+  addItem("item:sk2", "run:2", "pt:claude:2", 2000004, "dynamic_tool", "completed", {
+    toolName: "Skill",
+    input: { skill: "writing-for-agents" },
+    output: { success: true, commandName: "writing-for-agents" },
+    completedAt: "2026-11-13T07:55:05.000Z",
+  });
+  addItem("item:u3", "run:2", "pt:claude:2", 2000005, "user_message", "completed", {
+    text: "$yjx-retro-skill 复盘刚才的修改",
+    startedAt: "2026-11-13T07:55:10.000Z",
+  });
+  addItem("item:a3", "run:2", "pt:claude:2", 2000006, "assistant_message", "completed", {
+    text: "我将使用 yjx-retro-skill 进行复盘。",
+    completedAt: "2026-11-13T07:55:15.000Z",
+  });
+  db.close();
+
+  // 1. 预检：虽无 compaction，但存在跨 Provider handoff，应返回 full，且候选复盘包含 userPreview 与 assistantPreview
+  const pre = preflightT3Thread(dbPath, `thread_${threadId}`);
+  assert.equal(pre.route, "full");
+  assert.equal(pre.rangeCompactions.length, 0);
+  assert.equal(pre.rangeHandoffs.length, 1);
+  assert.deepEqual(pre.rangeProviders, ["codex", "claudeAgent"]);
+  assert.equal(pre.retroInvocations.length, 1);
+  assert.match(pre.retroInvocations[0].userPreview, /\$yjx-retro-skill 复盘刚才的修改/);
+  assert.match(pre.retroInvocations[0].assistantPreview, /我将使用 yjx-retro-skill 进行复盘/);
+
+  // 2. 完整提取：包含两个 Run、1 个 handoff、解码后的 citation 批注、Skill 调用和失败命令
+  const report = analyzeT3Thread(dbPath, threadId);
+  assert.equal(report.session.runs.length, 2);
+  assert.equal(report.handoffs.length, 1);
+  assert.equal(report.humanInputs.length, 3);
+  assert.equal(report.humanInputs[1].citations.length, 1);
+  assert.equal(report.humanInputs[1].citations[0].quotedText, "错误假设");
+  assert.equal(report.humanInputs[1].citations[0].comment, "这里不对");
+  assert.equal(report.skills.injected.length, 1);
+  assert.equal(report.skills.injected[0].name, "writing-for-agents");
+  assert.equal(report.skills.fileReads.length, 1);
+  assert.equal(report.nonZeroTools.length, 1);
+  assert.equal(report.nonZeroTools[0].itemId, "item:cmd2");
+
+  const md = formatMarkdown(report);
+  assert.match(md, /## Runs \/ Providers \(2\)/);
+  assert.match(md, /## Context Handoffs \(1\)/);
+  assert.match(md, /Decoded Citation/);
+
+  // 3. 单条 itemId 回查
+  const item = lookupT3Item(dbPath, "item:cmd2", threadId);
+  assert.equal(item.type, "command_execution");
+  assert.equal(item.payload.exitCode, 1);
+});

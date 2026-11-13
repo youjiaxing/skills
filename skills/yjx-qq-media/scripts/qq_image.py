@@ -187,8 +187,8 @@ def fetch(resource, directory, key_loader=None):
             body = error.read(512)
             normalized = body.replace(b" ", b"")
             if error.code == 400 and any(marker in normalized for marker in (
-                    b'"retcode":-5503010', b'"retcode":-5503023',
-                    b'"retcode":-5503007')):
+                    b'"retcode":-5503010', b'"retcode":-5503011',
+                    b'"retcode":-5503023', b'"retcode":-5503007')):
                 continue
             raise ImageError("QQ image download failed (HTTP %d)" % error.code) from None
         except (OSError, ValueError):

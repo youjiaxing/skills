@@ -128,6 +128,20 @@ export async function scanSkills(root = skillsRoot) {
   return skills.sort((left, right) => left.name.localeCompare(right.name));
 }
 
+export function selectSkills(skills, requestedNames = []) {
+  const names = [...new Set(requestedNames.map((name) => name.trim()).filter(Boolean))];
+  if (names.length === 0) return skills;
+
+  const available = new Map(skills.map((skill) => [skill.name, skill]));
+  const missing = names.filter((name) => !available.has(name));
+  if (missing.length > 0) {
+    throw new Error(`未找到指定 skill: ${missing.join('、')}`);
+  }
+
+  const selected = new Set(names);
+  return skills.filter((skill) => selected.has(skill.name));
+}
+
 export async function readDeveloperConfig(configPath = localConfigPath) {
   const source = await readFile(configPath, 'utf8');
   const document = parseDocument(source);
@@ -504,7 +518,7 @@ export function formatPlan(plan) {
 function parseArgs(argv) {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith('-') ? args.shift() : 'link';
-  const options = { command, targets: [], promptTargets: [], force: false, prune: false, noConfig: false, help: false };
+  const options = { command, targets: [], promptTargets: [], skillNames: [], force: false, prune: false, noConfig: false, help: false };
 
   while (args.length > 0) {
     const argument = args.shift();
@@ -520,13 +534,21 @@ function parseArgs(argv) {
       if (args.length === 0) throw new Error('--prompt-target 缺少文件参数');
       options.promptTargets.push(args.shift());
     } else if (argument.startsWith('--prompt-target=')) options.promptTargets.push(argument.slice('--prompt-target='.length));
+    else if (argument === '--skill') {
+      if (args.length === 0) throw new Error('--skill 缺少名称参数');
+      options.skillNames.push(args.shift());
+    } else if (argument.startsWith('--skill=')) {
+      const name = argument.slice('--skill='.length);
+      if (!name.trim()) throw new Error('--skill 缺少名称参数');
+      options.skillNames.push(name);
+    }
     else throw new Error(`未知参数: ${argument}`);
   }
   return options;
 }
 
 function printHelp() {
-  console.log(`用法: node scripts/link-skills.mjs <command> [options]\n\n命令:\n  init      交互配置本机目标目录与全局提示词入口\n  link      创建或校验 skill 与全局提示词链接\n  status    只检查链接状态\n\n选项:\n  --target PATH          临时追加 skill 目标目录，可重复使用\n  --prompt-target PATH   临时追加全局提示词目标文件，可重复使用\n  --no-config            忽略本机配置，只使用命令行参数\n  --force                替换冲突路径并重建链接（提示词普通文件自动备份）\n  --prune                清理本仓库已删除 skill 的陈旧链接\n  -h, --help             显示帮助`);
+  console.log(`用法: node scripts/link-skills.mjs <command> [options]\n\n命令:\n  init      交互配置本机目标目录与全局提示词入口\n  link      创建或校验 skill 与全局提示词链接\n  status    只检查链接状态\n\n选项:\n  --target PATH          临时追加 skill 目标目录，可重复使用\n  --skill NAME           只处理指定 skill，可重复使用；默认处理全部 skill\n  --prompt-target PATH   临时追加全局提示词目标文件，可重复使用\n  --no-config            忽略本机配置，只使用命令行参数\n  --force                替换冲突路径并重建链接（提示词普通文件自动备份）\n  --prune                清理本仓库已删除 skill 的陈旧链接\n  -h, --help             显示帮助`);
 }
 
 async function ensureLocalConfig({ stopAfterCreate }) {
@@ -922,11 +944,18 @@ async function main() {
   if (targets.length === 0 && promptTargets.length === 0 && !antigravityEnabled) {
     throw new Error('没有配置 skill 目标目录、全局提示词目标或 Antigravity；请运行 npm run init、编辑本机配置，或传入 --target / --prompt-target');
   }
+  if (options.skillNames.length > 0 && options.prune) {
+    throw new Error('--skill 不能与 --prune 同时使用；定向挂载不会清理其它 skill');
+  }
+  if (options.skillNames.length > 0 && targets.length === 0) {
+    throw new Error('--skill 需要至少一个 skill 目标目录（可通过配置或 --target 提供）');
+  }
 
   let skills = [];
   if (targets.length > 0) {
     skills = await scanSkills();
     if (skills.length === 0) throw new Error('skills/ 下没有包含 SKILL.md 的直接子目录');
+    skills = selectSkills(skills, options.skillNames);
   }
 
   const plan = await buildPlan({
