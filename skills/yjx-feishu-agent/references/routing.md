@@ -4,6 +4,8 @@
 
 现有 `quoteRouting:true` 保持兼容，省略该字段同样启用；仅显式 `quoteRouting:false` 可停用某群的引用路由：引用消息一律沿用默认会话，不读取来源账本，不显示回退说明。关闭引用路由但没有默认会话时配置仍可加载，收到消息后按 `DEFAULT_UNCONFIGURED` 阻断。不提供新建、停止或管理其他会话的远程指令。
 
+已授权群默认必须 `@机器人` 才转发；仅当某群显式配置 `requireMention:false`（停服后运行 `bindings.mjs require-mention --chat oc_GROUP --enabled false`）时，允许该群白名单用户在未 `@机器人` 的情况下直接发送文本或富文本触发转发（前提是飞书应用已开通接收群内所有消息的权限并订阅 `im.message.receive_v1`）。白名单用户校验、机器人消息过滤与显式 `@机器人` 前缀剥离仍照常生效。
+
 ## 来源与投递
 
 出站 send/update 显式提供 `sourceThreadId`，由已授权的本机调用方取自实际 Codex 会话标识。它不是从消息正文、标题、最近聊天或群默认会话推断的，也不是授予群成员访问所有本机会话的入口。群用户白名单和明确 @ 条件保持不变。

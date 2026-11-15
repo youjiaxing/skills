@@ -183,3 +183,25 @@ test('binding fallback adds a fixed notice only to that route',async t=>{
 test('quote-disabled groups can start without a default and block per message',()=>{
   validateBindings({version:1,bindings:[{chatId:'oc_disabled',users:['ou_user'],quoteRouting:false}]});
 });
+
+test('requireMention false accepts unmentioned messages from allowlisted users only', () => {
+  const noMentionConfig = {
+    version: 1,
+    bindings: [{ ...config.bindings[0], requireMention: false }],
+  };
+  const unmentioned = event('om_nomention');
+  unmentioned.message.content = JSON.stringify({ text: '直接问个问题' });
+  unmentioned.message.mentions = [];
+
+  assert.equal(acceptedMessage(unmentioned, noMentionConfig, 'ou_bot')?.text, '直接问个问题');
+  assert.equal(acceptedMessage(unmentioned, config, 'ou_bot'), null);
+  assert.equal(acceptedMessage(event('om_still_at'), noMentionConfig, 'ou_bot')?.text, 'hello');
+
+  const nonAllowed = structuredClone(unmentioned);
+  nonAllowed.sender.sender_id.open_id = 'ou_other';
+  assert.equal(acceptedMessage(nonAllowed, noMentionConfig, 'ou_bot'), null);
+
+  const fromBot = structuredClone(unmentioned);
+  fromBot.sender.sender_type = 'app';
+  assert.equal(acceptedMessage(fromBot, noMentionConfig, 'ou_bot'), null);
+});

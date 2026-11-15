@@ -48,6 +48,7 @@ export function validateBindings(config) {
     groups.add(binding.chatId);
     if (binding.threadId !== undefined) validateThreadId(binding.threadId);
     if (binding.quoteRouting !== undefined && typeof binding.quoteRouting !== 'boolean') throw new Error('quoteRouting must be boolean');
+    if (binding.requireMention !== undefined && typeof binding.requireMention !== 'boolean') throw new Error('requireMention must be boolean');
     if (!Array.isArray(binding.users) || !binding.users.length || binding.users.some((id) => !/^ou_[\w]+$/.test(id))) {
       throw new Error('Each group requires an explicit user allowlist');
     }
@@ -65,7 +66,7 @@ export function messageDecision(data, config, botId) {
   if (sender?.sender_type !== 'user') return {reason:'NOT_HUMAN'};
   if (!binding.users.includes(sender.sender_id?.open_id)) return {reason:'USER_NOT_ALLOWED'};
   const mentions = (message.mentions ?? []).filter((mention) => mention.id?.open_id === botId);
-  if (!mentions.length) return {reason:'BOT_NOT_MENTIONED'};
+  if (binding.requireMention !== false && !mentions.length) return {reason:'BOT_NOT_MENTIONED'};
   if (!['text','post'].includes(message.message_type)) return {reason:'UNSUPPORTED_MESSAGE_TYPE'};
   if (!decodeBody(message)) return {reason:'INVALID_BODY'};
   let text = bodyText(message, botId);
