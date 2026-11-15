@@ -33,13 +33,13 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-
 
 独立投递目录需要支持引用追问时，核对发送端与接收器实际使用的来源记录及群级锁是否共享，并从接收器侧验证引用能选中登记的来源会话。`--credentials-dir` 只共享凭证，不会自动共享这些路由状态；仅发送端的本地 `followUp` 结果不足以证明接收器可读取它们。共享方式由部署配置确定，记录与锁的语义见 [引用路由](routing.md)。
 
-发送 JSON 示例（群 ID 替换为已授权目标，`sourceThreadId` 替换为当前实际会话 UUID）：
+发送 JSON 示例（群 ID 替换为已授权目标，`sourceThreadId` 按下文来源约定填入已核实的来源 UUID）：
 
 ```json
 {
   "requestId": "digest-20261016",
   "chatId": "oc_GROUP",
-  "sourceThreadId": "CURRENT_CODEX_CHAT_UUID",
+  "sourceThreadId": "VERIFIED_SOURCE_THREAD_UUID",
   "msgType": "interactive",
   "content": {
     "header": {"title": {"tag": "plain_text", "content": "当天汇总"}},
@@ -56,9 +56,11 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-
 
 图片映射名与 `local:` 引用使用相同名称，可包含字母、数字、下划线、连字符和扩展名点号，例如 `notice-photo.jpg`；名称不能作为目录路径。它与图片文件的实际存放路径是两个独立字段。
 
-已接入群的新 send/update 必须显式提供 `sourceThreadId`（当前已授权的本机 Codex 聊天 UUID），或以 `oneWay:true` 明确只需单向发送；二者互斥，`oneWay:false` 不豁免来源要求。缺少来源返回 `SOURCE_REQUIRED`，在上传和消息写入之前阻断。update 根据原卡片账本中的群判断，不继承旧卡片来源。未接入群的独立投递保持兼容。
+已接入群的新 send/update 必须显式提供 `sourceThreadId`（已授权的来源会话 UUID；T3 映射时为来源键），或以 `oneWay:true` 明确只需单向发送；二者互斥，`oneWay:false` 不豁免来源要求。缺少来源返回 `SOURCE_REQUIRED`，在上传和消息写入之前阻断。update 根据原卡片账本中的群判断，不继承旧卡片来源。未接入群的独立投递保持兼容。
 
-调用方从实际当前会话标识（如该会话进程的 `CODEX_THREAD_ID`）取得来源，不从群默认绑定或最近聊天猜测；仅校验 UUID 形态不代表已验证目标存在。字段随输入生成后固定，消费已有输入不补环境变量，不因换会话而更改旧指纹。已有请求仍按原输入去重，status/recheck/reconcile 不要求补来源。来源在本地成功记账后生效，结果未知时暂停新引用；恢复只补原请求的元数据，不换编号重发。单向更新会清除该版本的有效来源，详见 [引用路由](routing.md)。
+调用方核实已授权的来源会话后，统一通过任务或角色专用的 `YJX_*_SOURCE_THREAD` 环境变量保存来源 UUID（例如 `YJX_DIGEST_SOURCE_THREAD`），生成新输入时显式写入 `sourceThreadId`。弃用 `CODEX_THREAD_ID`，既不读取兜底，也不将专用变量回填到该运行时变量；运行时注入值可能随主会话、子代理或 Provider 切换而变化。缺少专用变量或来源无法核实时暂停，核对来源配置，不从群默认绑定或最近聊天猜测；仅校验 UUID 形态不代表已验证目标存在。T3 来源键与执行目标的核对见 [T3 接入](t3.md#配置与切换)。
+
+字段随输入生成后固定，消费已有输入不补环境变量，不因换会话而更改旧指纹。已有请求仍按原输入去重，status/recheck/reconcile 不要求补来源。来源在本地成功记账后生效，结果未知时暂停新引用；恢复只补原请求的元数据，不换编号重发。单向更新会清除该版本的有效来源，详见 [引用路由](routing.md)。
 
 send/update、status、recheck、reconcile 在原字段之外分别返回 `delivery` 与实时 `followUp`。`delivery:confirmed` 表示有持久成功证据，`not_submitted` 表示有原尝试未提交证明，其余为 unknown；不要用预检结果判断历史投递。`followUp.state:ready` 表示查询时群已接入且有效路由仍指向该请求来源；`changed` 表示来源已换，`unavailable` 表示未登记/群未接入/路由禁用，`unknown` 表示记录缺失、pending 或不可读。附 `checkedAt`，只说明本地路由快照，不保证未来会话可用性或机器人权限。`sent` 和退出码 0 不单独证明可追问。
 
