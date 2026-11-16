@@ -8,6 +8,59 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 const RETRO_SKILL_NAME = "yjx-retro-skill";
+const RUN_OUTCOME_FOLLOWING_RUNS = 3;
+
+function oneLine(text, max) {
+  return String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+// Drop a leading shell launcher (e.g. "C:\...\pwsh.exe" -Command, bash -lc) so previews show the actual command.
+function stripShellWrapper(cmd) {
+  return String(cmd ?? "").replace(
+    /^\s*(?:"(?:[^"]*[\\/])?(?:pwsh|powershell|bash|sh|zsh|cmd)(?:\.exe)?"|(?:[^"\s]*[\\/])?(?:pwsh|powershell|bash|sh|zsh|cmd)(?:\.exe)?)\s+(?:-NoProfile\s+)?(?:-Command|-lc|-c|\/c)\s+/i,
+    ""
+  );
+}
+
+// $name tokens in user messages are skill references (T3 stores user-picked skills this way).
+// Whether a token is an invocation or a mention is a semantic call left to the model.
+function extractSkillTokens(text) {
+  if (!text) return [];
+  const names = [];
+  const re = /(?:^|[^\w$])\$([a-z][a-z0-9]*(?:[-_:.][a-z0-9]+)*)(?![\w-])/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (!names.includes(m[1])) names.push(m[1]);
+  }
+  return names;
+}
+
+const WRITE_TOOL_NAMES = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]);
+const WRITE_COMMAND_RE =
+  /WriteAllText|WriteAllLines|AppendAllText|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bapply_patch\b|\*\*\* (?:Update|Add|Delete) File|\bsed\s+-i|\btee\b|(?:^|[^>=-])>>?\s*["']?[^\s|&;]*skills[\\/]/i;
+
+function classifySkillFileAccess(toolName, cmdText) {
+  if (toolName && WRITE_TOOL_NAMES.has(toolName)) return "write";
+  return WRITE_COMMAND_RE.test(cmdText || "") ? "write" : "read";
+}
+
+function buildRunOutcomes(runs, startIndex, endIndexExclusive) {
+  const out = [];
+  const end = Math.min(endIndexExclusive, startIndex + 1 + RUN_OUTCOME_FOLLOWING_RUNS);
+  for (let i = startIndex; i < end; i++) {
+    const r = runs[i];
+    out.push({
+      run: r.run,
+      status: r.status || null,
+      tools: r.tools,
+      assistantOutput: r.assistantMessages > 0,
+      aborts: r.aborts,
+      userPreview: i === startIndex ? null : r.userPreview,
+      lastAssistantPreview: r.lastAssistant ? oneLine(r.lastAssistant, 160) : null,
+    });
+  }
+  return out;
+}
 
 function parseOrdinalArg(name, value) {
   const n = Number(value);
@@ -33,7 +86,9 @@ Options:
   --until-ordinal <n>     Exclude records with ordinal > <n> (fix retro cutoff point before the current call)
   --since-ordinal <n>     Exclude records with ordinal < <n> (start of a repeated retro range; session_meta is still read)
   --preflight             Read only session metadata, compaction/handoff markers and yjx-retro-skill invocations,
-                           then print the review range start and routing decision
+                           then print the review range start and routing decision; each earlier invocation
+                           carries runOutcomes (its run plus up to 3 following runs: status, tool count,
+                           assistant output, last reply preview) for judging whether it delivered
   --item-id <id>          Fetch full un-truncated JSON record for a single T3 turn_item_id
   --format <json|md>      Output format: json (default) or md
   --output <path>         Write output to file instead of stdout
@@ -103,6 +158,13 @@ export async function preflightFiles(filePaths, opts = {}) {
   let sessionMeta = null;
   let pendingHumanPreview = null;
   let lastRetroEntry = null;
+  const turns = [];
+  let currentTurn = null;
+  const turnIndexByEntry = new Map();
+  const registerRetro = (inv) => {
+    lastRetroEntry = inv;
+    if (currentTurn) turnIndexByEntry.set(inv, currentTurn.index);
+  };
 
   for (let fIdx = 0; fIdx < filePaths.length; fIdx++) {
     const filePath = path.resolve(filePaths[fIdx]);
@@ -143,6 +205,45 @@ export async function preflightFiles(filePaths, opts = {}) {
           windowNumber: payload.window_number ?? null,
         });
       }
+      if (obj.type === "event_msg" && payload.type === "task_started") {
+        currentTurn = {
+          index: turns.length,
+          run: turns.length + 1,
+          status: "running",
+          tools: 0,
+          assistantMessages: 0,
+          aborts: 0,
+          userPreview: null,
+          lastAssistant: null,
+        };
+        turns.push(currentTurn);
+      } else if (obj.type === "event_msg" && payload.type === "task_complete" && currentTurn) {
+        currentTurn.status = "completed";
+        if (typeof payload.last_agent_message === "string" && payload.last_agent_message.trim()) {
+          currentTurn.lastAssistant = payload.last_agent_message.trim();
+        }
+      } else if (obj.type === "event_msg" && payload.type === "turn_aborted" && currentTurn) {
+        currentTurn.status = "interrupted";
+        currentTurn.aborts++;
+      } else if (
+        obj.type === "response_item" &&
+        (payload.type === "function_call" || payload.type === "custom_tool_call") &&
+        currentTurn
+      ) {
+        currentTurn.tools++;
+      }
+      if (
+        obj.type === "response_item" &&
+        payload.type === "message" &&
+        payload.role === "assistant" &&
+        currentTurn
+      ) {
+        const aText = extractContentText(payload.content).trim();
+        if (aText) {
+          currentTurn.assistantMessages++;
+          currentTurn.lastAssistant = aText;
+        }
+      }
       if (
         obj.type === "response_item" &&
         payload.type === "message" &&
@@ -158,11 +259,14 @@ export async function preflightFiles(filePaths, opts = {}) {
             userPreview: pendingHumanPreview,
             assistantPreview: null,
           };
-          lastRetroEntry = inv;
+          registerRetro(inv);
           if (ord === null) retroWithoutOrdinal.push(inv);
           else if (!retroByOrdinal.has(ord)) retroByOrdinal.set(ord, inv);
         } else if (cls.kind === "human") {
           pendingHumanPreview = cls.cleanText.slice(0, 240);
+          if (currentTurn && currentTurn.userPreview === null) {
+            currentTurn.userPreview = oneLine(cls.cleanText, 60);
+          }
           if (isRetroInvocationText(rawText)) {
             const inv = {
               location: `${tag}:L${lineNo}`,
@@ -171,7 +275,7 @@ export async function preflightFiles(filePaths, opts = {}) {
               userPreview: pendingHumanPreview,
               assistantPreview: null,
             };
-            lastRetroEntry = inv;
+            registerRetro(inv);
             if (ord === null) retroWithoutOrdinal.push(inv);
             else if (!retroByOrdinal.has(ord)) retroByOrdinal.set(ord, inv);
           }
@@ -192,8 +296,28 @@ export async function preflightFiles(filePaths, opts = {}) {
   }
 
   const retroInvocations = [...retroByOrdinal.values()].sort((a, b) => a.ordinal - b.ordinal);
-  const currentRetro = untilOrdinal === null ? retroInvocations[retroInvocations.length - 1] ?? null : null;
-  const previousRetros = currentRetro ? retroInvocations.slice(0, -1) : retroInvocations;
+  // One invocation can leave several candidates in the same turn (the `$skill` message plus the
+  // injected <skill> body); all of them belong to the current call, never to a previous retro.
+  const lastCandidate = untilOrdinal === null ? retroInvocations[retroInvocations.length - 1] ?? null : null;
+  const lastTurnIndex = lastCandidate ? turnIndexByEntry.get(lastCandidate) : undefined;
+  const isCurrentInvocation = (inv) =>
+    Boolean(lastCandidate) &&
+    (inv === lastCandidate || (lastTurnIndex !== undefined && turnIndexByEntry.get(inv) === lastTurnIndex));
+  const currentRetro = retroInvocations.find(isCurrentInvocation) ?? null;
+  retroInvocations.forEach((inv, idx) => {
+    if (isCurrentInvocation(inv) || !turnIndexByEntry.has(inv)) return;
+    const startIndex = turnIndexByEntry.get(inv);
+    let endIndex = turns.length;
+    for (const later of retroInvocations.slice(idx + 1)) {
+      const laterIndex = turnIndexByEntry.get(later);
+      if (laterIndex !== undefined && laterIndex > startIndex) {
+        endIndex = laterIndex;
+        break;
+      }
+    }
+    inv.runOutcomes = buildRunOutcomes(turns, startIndex, endIndex);
+  });
+  const previousRetros = retroInvocations.filter((inv) => !isCurrentInvocation(inv));
   const previousRetro = previousRetros[previousRetros.length - 1] ?? null;
   const rangeStartOrdinal = opts.sinceOrdinal ?? (previousRetro ? previousRetro.ordinal : null);
   const rangeCompactions = compactions.filter(
@@ -219,7 +343,7 @@ export async function preflightFiles(filePaths, opts = {}) {
       : null,
     files,
     cutoffOrdinal: untilOrdinal,
-    rule: "range starts at the previous retro invocation (session start if none); compaction or cross-provider handoff inside the range selects full; Forked From is informational only",
+    rule: "rangeStartOrdinal defaults to the latest retro candidate from an earlier turn (session start if none) and is unconfirmed: confirm the last delivered retro from userPreview/assistantPreview/runOutcomes and rerun with --since-ordinal if it differs; candidates in the current call's turn belong to the current call; compaction inside the range selects full; Forked From is informational only",
   };
 }
 function normalizeT3ThreadId(rawId) {
@@ -452,12 +576,43 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
     const handoffs = [];
     const retroByOrdinal = new Map();
     let activeRetroCandidate = null;
+    const preRunStats = new Map();
+    const statsFor = (runId) => {
+      if (!runId) return null;
+      let rs = preRunStats.get(runId);
+      if (!rs) {
+        rs = { tools: 0, assistantMessages: 0, aborts: 0, userPreview: null, lastAssistant: null };
+        preRunStats.set(runId, rs);
+      }
+      return rs;
+    };
 
     for (const item of items) {
       const ord = typeof item.ordinal === "number" ? item.ordinal : null;
       if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) continue;
       const loc = `T3:pos=${item.position}`;
       const payload = safeJsonParse(item.payload_json);
+      const rs = statsFor(item.run_id);
+      if (rs) {
+        if (
+          (item.type === "command_execution" || item.type === "dynamic_tool") &&
+          !item.turn_item_id.includes("workspace-preparation")
+        ) {
+          rs.tools++;
+        } else if (item.type === "run_interrupt_request" || item.type === "error") {
+          rs.aborts++;
+        } else if (item.type === "assistant_message") {
+          const aText = typeof payload.text === "string" ? payload.text.trim() : "";
+          if (aText) {
+            rs.assistantMessages++;
+            rs.lastAssistant = aText;
+          }
+        } else if (item.type === "user_message" && rs.userPreview === null) {
+          const uText = typeof payload.text === "string" ? payload.text : "";
+          const uCls = classifyUserMessage(uText);
+          if (uCls.kind === "human") rs.userPreview = oneLine(uCls.cleanText, 60);
+        }
+      }
 
       if (item.type === "compaction") {
         compactions.push({
@@ -510,9 +665,15 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
     }
 
     const retroInvocations = [...retroByOrdinal.values()].sort((a, b) => a.ordinal - b.ordinal);
-    const currentRetro =
+    // One invocation can leave several candidate messages in the same run (e.g. `$skill` plus its
+    // arguments); all of them belong to the current call, never to a previous retro.
+    const lastCandidate =
       untilOrdinal === null ? retroInvocations[retroInvocations.length - 1] ?? null : null;
-    const previousRetros = currentRetro ? retroInvocations.slice(0, -1) : retroInvocations;
+    const isCurrentInvocation = (inv) =>
+      Boolean(lastCandidate) &&
+      (inv === lastCandidate || (Boolean(lastCandidate.runId) && inv.runId === lastCandidate.runId));
+    const currentRetro = retroInvocations.find(isCurrentInvocation) ?? null;
+    const previousRetros = retroInvocations.filter((inv) => !isCurrentInvocation(inv));
     const previousRetro = previousRetros[previousRetros.length - 1] ?? null;
     const rangeStartOrdinal = opts.sinceOrdinal ?? (previousRetro ? previousRetro.ordinal : null);
     const effectiveEndOrdinal =
@@ -542,7 +703,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
 
     const runs = db
       .prepare(
-        "SELECT run_id, ordinal, provider_instance_id, provider_thread_id, payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
+        "SELECT run_id, ordinal, provider_instance_id, provider_thread_id, status, payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
       )
       .all(threadId)
       .map((r) => {
@@ -553,6 +714,36 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
         };
       });
     const runById = new Map(runs.map((r) => [r.run_id, r]));
+
+    const outcomeRuns = runs
+      .filter((r) => preRunStats.has(r.run_id))
+      .map((r) => {
+        const st = preRunStats.get(r.run_id);
+        return {
+          runId: r.run_id,
+          run: r.ordinal,
+          status: r.status || null,
+          tools: st.tools,
+          assistantMessages: st.assistantMessages,
+          aborts: st.aborts,
+          userPreview: st.userPreview,
+          lastAssistant: st.lastAssistant,
+        };
+      });
+    const runIndexById = new Map(outcomeRuns.map((r, idx) => [r.runId, idx]));
+    retroInvocations.forEach((inv, idx) => {
+      if (isCurrentInvocation(inv) || !runIndexById.has(inv.runId)) return;
+      const startIndex = runIndexById.get(inv.runId);
+      let endIndex = outcomeRuns.length;
+      for (const later of retroInvocations.slice(idx + 1)) {
+        const laterIndex = runIndexById.get(later.runId);
+        if (laterIndex !== undefined && laterIndex > startIndex) {
+          endIndex = laterIndex;
+          break;
+        }
+      }
+      inv.runOutcomes = buildRunOutcomes(outcomeRuns, startIndex, endIndex);
+    });
     for (const item of items) {
       const ord = typeof item.ordinal === "number" ? item.ordinal : null;
       if (!inReviewRange(ord)) continue;
@@ -629,7 +820,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       forkedFrom: threadPayload.forkedFrom || null,
       files: [{ path: path.resolve(dbPath), tag: "T3DB" }],
       cutoffOrdinal: untilOrdinal,
-      rule: "range starts at the previous retro invocation (session start if none); compaction, cross-provider handoff, freshContext reset, or multiple provider threads inside the range selects full; Forked From is informational only",
+      rule: "rangeStartOrdinal defaults to the latest retro candidate from an earlier run (session start if none) and is unconfirmed: confirm the last delivered retro from userPreview/assistantPreview/runOutcomes and rerun with --since-ordinal if it differs; candidates in the current call's run belong to the current call; compaction, cross-provider handoff, freshContext reset, or multiple provider threads inside the range selects full; Forked From is informational only",
     };
   } finally {
     db.close();
@@ -652,16 +843,25 @@ function parseT3ToolOutcome(itemType, itemStatus, payload) {
   }
   const isErrorObj =
     payload.output && typeof payload.output === "object" && payload.output.isError === true;
-  const failed =
-    itemStatus === "failed" ||
-    isErrorObj ||
-    exitCodes.some((c) => c !== 0) ||
-    outSummary.failed;
+  const statusFailed = itemStatus === "failed";
+  const exitFailed = exitCodes.some((c) => c !== 0);
+  const failed = statusFailed || isErrorObj || exitFailed || outSummary.failed;
+  const failureReason = !failed
+    ? null
+    : statusFailed
+    ? "status failed"
+    : isErrorObj
+    ? "tool error"
+    : exitFailed
+    ? "exit code"
+    : "output pattern";
   return {
     exitCodes,
     failed,
+    failureReason,
     truncated: outSummary.truncated,
     preview: rawOut.slice(0, 320),
+    outputChars: rawOut.length,
   };
 }
 
@@ -728,6 +928,9 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
     const subagents = [];
     const skillInjections = [];
     const skillReads = [];
+    const skillWrites = [];
+    const skillTokens = [];
+    const toolCalls = [];
     const nonZeroTools = [];
     const humanInputs = [];
     const scheduledTriggers = [];
@@ -761,6 +964,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
           subagentCount: 0,
           assistantMessageCount: 0,
           errorOrAbortCount: 0,
+          lastAssistantPreview: null,
         };
         runStatsMap.set(runObj.runId, rs);
       }
@@ -916,7 +1120,10 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
 
       if (item.type === "assistant_message") {
         const text = typeof payload.text === "string" ? payload.text.trim() : "";
-        if (text && runStats) runStats.assistantMessageCount++;
+        if (text && runStats) {
+          runStats.assistantMessageCount++;
+          runStats.lastAssistantPreview = oneLine(text, 160);
+        }
         lastAssistant = {
           location: loc,
           itemId: item.turn_item_id,
@@ -978,6 +1185,17 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             runStats.triggerOrdinal = ord;
           }
           const citations = decodeT3Citations(cls.cleanText);
+          const tokens = extractSkillTokens(cls.cleanText);
+          if (tokens.length > 0) {
+            skillTokens.push({
+              location: loc,
+              itemId: item.turn_item_id,
+              ordinal: ord,
+              runOrdinal: run?.ordinal ?? null,
+              names: tokens,
+              userPreview: oneLine(cls.cleanText, 80),
+            });
+          }
           const attachedContexts = Array.isArray(payload.context?.records)
             ? payload.context.records.map((r) => ({
                 kind: r.kind || null,
@@ -1018,6 +1236,18 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             : JSON.stringify(payload.input ?? "");
         const outSummary = parseT3ToolOutcome(item.type, item.status || payload.status, payload);
         if (outSummary.failed && runStats) runStats.failedToolCount++;
+        toolCalls.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: ts,
+          runOrdinal: run?.ordinal ?? null,
+          toolName,
+          commandPreview: oneLine(stripShellWrapper(cmdInput), 100),
+          exitCodes: outSummary.exitCodes,
+          failed: outSummary.failed,
+          outputChars: outSummary.outputChars,
+        });
 
         if (toolName === "Skill" && payload.input && typeof payload.input === "object") {
           const skName = payload.input.skill || payload.output?.commandName || null;
@@ -1036,12 +1266,14 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
 
         const skillPaths = extractSkillPathsFromCommand(cmdInput);
         if (skillPaths.length > 0) {
-          skillReads.push({
+          const access = classifySkillFileAccess(toolName, cmdInput);
+          (access === "write" ? skillWrites : skillReads).push({
             callLocation: loc,
             outputLocation: loc,
             itemId: item.turn_item_id,
             ordinal: ord,
             callId: item.turn_item_id,
+            access,
             paths: skillPaths,
             exitCodes: outSummary.exitCodes,
             truncated: outSummary.truncated,
@@ -1059,6 +1291,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             agent: agentTag,
             commandPreview: cmdInput.slice(0, 300),
             exitCodes: outSummary.exitCodes,
+            failureReason: outSummary.failureReason,
             truncated: outSummary.truncated,
             outputPreview: outSummary.preview,
           });
@@ -1218,6 +1451,21 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
         ],
       },
       contextSegments: finalizedSegments,
+      runStats: [...runStatsMap.values()]
+        .sort((a, b) => a.runOrdinal - b.runOrdinal)
+        .map((rs) => ({
+          runId: rs.runId,
+          runOrdinal: rs.runOrdinal,
+          status: rs.status,
+          triggerKind: rs.triggerKind,
+          toolCallCount: rs.toolCallCount,
+          failedToolCount: rs.failedToolCount,
+          subagentCount: rs.subagentCount,
+          assistantMessageCount: rs.assistantMessageCount,
+          errorOrAbortCount: rs.errorOrAbortCount,
+          lastAssistantPreview: rs.lastAssistantPreview,
+        })),
+      toolCalls,
       scheduledTasks,
       scheduledTriggers,
       compactions,
@@ -1226,7 +1474,9 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       turnAborts,
       skills: {
         injected: skillInjections,
+        userTokens: skillTokens,
         fileReads: skillReads,
+        fileWrites: skillWrites,
       },
       nonZeroTools,
       wrapperCounts: {},
@@ -1324,7 +1574,14 @@ function extractSkillPathsFromCommand(cmdText) {
   const re = /[A-Za-z0-9_./\\:-]*skills[\\/][A-Za-z0-9_./\\:-]*\.md/gi;
   let m;
   while ((m = re.exec(cmdText)) !== null) {
-    matches.add(m[0]);
+    let found = m[0];
+    // Shell quote concatenation such as "D:'"\\repo\\skills\\x.md splits the drive letter off.
+    if (/^[\\/]/.test(found)) {
+      const before = cmdText.slice(0, m.index).replace(/["'`]+$/, "");
+      const drive = before.match(/(?:^|[^A-Za-z0-9])([A-Za-z]:)$/);
+      if (drive) found = drive[1] + found;
+    }
+    matches.add(found);
   }
   return [...matches];
 }
@@ -1338,15 +1595,17 @@ function parseToolOutputSummary(outputArr) {
     const code = Number(m[1] ?? m[2]);
     if (!Number.isNaN(code)) exitCodes.push(code);
   }
-  const failed =
-    exitCodes.some((c) => c !== 0) ||
+  const exitFailed = exitCodes.some((c) => c !== 0);
+  const patternFailed =
     /Script failed|exec_command failed|ParserError:|Traceback \(most recent call last\)|ModuleNotFoundError:|AssertionError|ValueError:/i.test(
       raw
     );
+  const failed = exitFailed || patternFailed;
   const truncated = /truncated output|chars truncated|tokens truncated/i.test(raw);
   return {
     exitCodes,
     failed,
+    failureReason: exitFailed ? "exit code" : patternFailed ? "output pattern" : null,
     truncated,
     preview: raw.slice(0, 320),
   };
@@ -1576,6 +1835,7 @@ export async function analyzeFiles(filePaths, opts = {}) {
               outputLocation: null,
               ordinal: ord,
               callId,
+              access: classifySkillFileAccess(payload.name || null, cmdInput),
               paths: skillPaths,
               exitCodes: [],
               truncated: false,
@@ -1602,6 +1862,7 @@ export async function analyzeFiles(filePaths, opts = {}) {
               toolName: priorCall ? priorCall.name : null,
               commandPreview: priorCall ? priorCall.cmdPreview : null,
               exitCodes: outSummary.exitCodes,
+              failureReason: outSummary.failureReason,
               truncated: outSummary.truncated,
               outputPreview: outSummary.preview,
             });
@@ -1654,7 +1915,8 @@ export async function analyzeFiles(filePaths, opts = {}) {
     turnAborts,
     skills: {
       injected: skillInjections,
-      fileReads: skillReads,
+      fileReads: skillReads.filter((r) => r.access !== "write"),
+      fileWrites: skillReads.filter((r) => r.access === "write"),
     },
     nonZeroTools,
     wrapperCounts: Object.fromEntries(
@@ -1695,12 +1957,21 @@ function formatMarkdown(report) {
     );
   }
   if (Array.isArray(s.runs) && s.runs.length > 0) {
+    const statsByRun = new Map((report.runStats || []).map((rs) => [rs.runId, rs]));
     lines.push("");
     lines.push(`## Runs / Providers (${s.runs.length})`);
     for (const r of s.runs) {
       const freshNote = r.freshContext ? ", freshContext=true" : "";
+      const rs = statsByRun.get(r.runId);
+      const statsNote = !report.runStats
+        ? ""
+        : rs
+        ? ` | tools=${rs.toolCallCount} failed=${rs.failedToolCount} output=${
+            rs.assistantMessageCount > 0 ? "yes" : "no"
+          } aborts=${rs.errorOrAbortCount}${rs.subagentCount ? ` subagents=${rs.subagentCount}` : ""}`
+        : " | outside range";
       lines.push(
-        `- Run #${r.ordinal}: \`${r.providerInstanceId || "unknown"}\` / \`${r.model || "unknown"}\` (${r.status}${freshNote}, \`${r.runId}\`)`
+        `- Run #${r.ordinal}: \`${r.providerInstanceId || "unknown"}\` / \`${r.model || "unknown"}\` (${r.status}${freshNote}, \`${r.runId}\`)${statsNote}`
       );
     }
   }
@@ -1764,17 +2035,32 @@ function formatMarkdown(report) {
     }
   }
   lines.push("");
+  const userTokens = report.skills.userTokens || [];
+  const fileWrites = report.skills.fileWrites || [];
   lines.push(
-    `## Skills (Injected: ${report.skills.injected.length}, File Reads: ${report.skills.fileReads.length})`
+    `## Skills (Injected/Skill tool: ${report.skills.injected.length}, User $tokens: ${userTokens.length}, File Reads: ${report.skills.fileReads.length}, File Writes: ${fileWrites.length})`
   );
+  if (s.source === "t3_sqlite") {
+    lines.push(
+      "- Note: T3 does not store Codex `<skill>` injection bodies; `$name` tokens in user messages are skill references — judge invocation vs. mention from context."
+    );
+  }
   for (const inj of report.skills.injected) {
     lines.push(
       `- [Injected] ${inj.location} \`${inj.name}\` (\`${inj.path}\`, sha256: \`${inj.sha256.slice(0, 12)}\`)`
     );
   }
-  for (const sr of report.skills.fileReads) {
+  for (const tk of userTokens) {
     lines.push(
-      `- [Read] ${sr.callLocation}->${sr.outputLocation || "?"} ${sr.paths
+      `- [$token] ${tk.location} (run #${tk.runOrdinal ?? "?"}) ${tk.names.map((n) => `\`$${n}\``).join(", ")}: ${JSON.stringify(
+        tk.userPreview
+      )}`
+    );
+  }
+  for (const sr of [...report.skills.fileReads, ...fileWrites]) {
+    const label = sr.access === "write" ? "Write" : "Read";
+    lines.push(
+      `- [${label}] ${sr.callLocation}->${sr.outputLocation || "?"} ${sr.paths
         .map((p) => `\`${p}\``)
         .join(", ")} (exit: ${sr.exitCodes.join(",") || "0"}, truncated: ${sr.truncated})`
     );
@@ -1784,8 +2070,9 @@ function formatMarkdown(report) {
   for (const nz of report.nonZeroTools) {
     const itemNote = nz.itemId ? ` [item \`${nz.itemId}\`]` : "";
     const agentNote = nz.agent ? ` (${nz.agent})` : "";
+    const reasonNote = nz.failureReason ? `; by: ${nz.failureReason}` : "";
     lines.push(
-      `- ${nz.callLocation}->${nz.outputLocation}${itemNote}${agentNote} (exit: ${nz.exitCodes.join(",")}): \`${(
+      `- ${nz.callLocation}->${nz.outputLocation}${itemNote}${agentNote} (exit: ${nz.exitCodes.join(",")}${reasonNote}): \`${(
         nz.commandPreview || ""
       ).replace(/\s+/g, " ")}\``
     );
@@ -1835,6 +2122,22 @@ function formatMarkdown(report) {
     lines.push("```text");
     lines.push(h.text);
     lines.push("```");
+  }
+  if (Array.isArray(report.toolCalls) && report.toolCalls.length > 0) {
+    lines.push("");
+    lines.push(`## Tool Calls by Run (${report.toolCalls.length})`);
+    let currentRun;
+    for (const tc of report.toolCalls) {
+      if (tc.runOrdinal !== currentRun) {
+        currentRun = tc.runOrdinal;
+        lines.push(`### Run #${currentRun ?? "?"}`);
+      }
+      const time = typeof tc.timestamp === "string" ? tc.timestamp.slice(11, 19) : "?";
+      const exitNote = tc.exitCodes.length > 0 ? tc.exitCodes.join(",") : "-";
+      lines.push(
+        `- ${tc.location} ${time} \`${tc.toolName}\` exit=${exitNote}${tc.failed ? " FAILED" : ""} out=${tc.outputChars}: \`${tc.commandPreview.replace(/`/g, "'")}\``
+      );
+    }
   }
   return lines.join("\n");
 }

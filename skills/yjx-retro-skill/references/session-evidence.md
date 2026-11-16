@@ -15,7 +15,7 @@
 
 ## 分段读取与覆盖
 
-对本机 T3 Code 会话（SQLite）或 Codex 本地会话（JSONL），取证子代理优先运行本技能内置的确定性提取脚本生成结构化证据索引，避免手写解析器或发起十几轮 `t3_thread_read` 分页调用。脚本自动完成跨 Provider / 跨文件 `ordinal` 校验、`compaction` / `handoff` / `freshContext` / `providerThreadId` 上下文分段切分、多定时器触发（`scheduled` 自动 / `scheduled-manual` 手动试跑）与真人输入分离及各定时器工具经济性聚合、Skill 注入与文件读取提取、非零/失败工具调用索引、`subagent` 子线程条目与失败计数、`t3-citation://` 引用批注自动解码，以及剥离系统包装后的完整真人输入原文与前置回复定位：
+对本机 T3 Code 会话（SQLite）或 Codex 本地会话（JSONL），取证子代理优先运行本技能内置的确定性提取脚本生成结构化证据索引，避免手写解析器或发起十几轮 `t3_thread_read` 分页调用。脚本自动完成跨 Provider / 跨文件 `ordinal` 校验、`compaction` / `handoff` / `freshContext` / `providerThreadId` 上下文分段切分、多定时器触发（`scheduled` 自动 / `scheduled-manual` 手动试跑）与真人输入分离及各定时器工具经济性聚合、逐轮工具统计与按轮工具调用列表（时间、工具、命令摘要、退出码、输出规模）、Skill 注入与文件读写区分、T3 用户消息中的 `$skill` 引用候选（调用还是提及由模型判断）、非零/失败工具调用索引及判定依据、`subagent` 子线程条目与失败计数、`t3-citation://` 引用批注自动解码，以及剥离系统包装后的完整真人输入原文与前置回复定位：
 
 ```bash
 node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-or-session-id>" --since-ordinal "<range-start-ordinal>" --format md --output "<temp-evidence-index.md>"
@@ -38,7 +38,7 @@ node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<child-thr
 - 实际使用的 skill 及执行时版本依据（未使用记为无；同时留存与本次任务痛点相关的候选 skill 线索，并注明是否有证据表明其在任务执行时已可用）；
 - 已覆盖区段内**每一次用户纠正行为**的简要内容、上下文及文件/消息定位（含 `t3-citation://` 解码批注及疑似纠偏的方向切换，不在子代理阶段静默筛除）；
 - 候选问题、影响、关键原文小段与文件/消息定位；
-- 重复或周期流程中的模型参与方式、固定规则处理与原始输出规模等工具经济性线索，附调用或产物定位；即使未发生错误也保留；
+- 脚本与模型职责边界线索（两个方向）：重复或周期流程中的模型参与方式、固定规则处理与原始输出规模，以及脚本或规则以关键词、正则、固定条件代替语义判定的位置，附调用或产物定位；即使未发生错误也保留；
 - 归因依据、反证、未解决疑点及按 [SKILL.md 第 3 节](../SKILL.md) 划分的最小改进方向线索。
 
 临时索引确有必要时放在任务专属临时位置，由创建者负责清理。报告与交接仅包含判断必要的信息，脱敏凭据和无关私人内容。

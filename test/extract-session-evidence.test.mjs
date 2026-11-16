@@ -678,3 +678,172 @@ test("T3 SQLite 无 scheduled_tasks 表时仍可从 turn_item_id 解码历史定
   assert.equal(report.scheduledTasks[0].scheduledTaskId, "scheduled-task:legacy-1");
   assert.equal(report.scheduledTasks[0].inRangeStats.scheduledAutoRuns, 1);
 });
+
+test("JSONL 预检：较早的复盘调用附带后续轮次结果，供模型判断是否已交付", async (t) => {
+  const ev = (ordinal, type, extra = {}) => ({ ordinal, type: "event_msg", payload: { type, ...extra } });
+  const assistant = (ordinal, text) => ({
+    ordinal,
+    type: "response_item",
+    payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] },
+  });
+  const file = await writeSession(t, [
+    meta(0),
+    ev(1, "task_started", { turn_id: "t1" }),
+    human(2, "$yjx-retro-skill"),
+    assistant(3, "我将先执行预检。"),
+    ev(4, "task_complete", { last_agent_message: "我将先执行预检。" }),
+    ev(5, "task_started", { turn_id: "t2" }),
+    human(6, "继续"),
+    { ordinal: 7, type: "response_item", payload: { type: "function_call", name: "shell", call_id: "c1", arguments: "{}" } },
+    ev(8, "turn_aborted", { reason: "interrupted" }),
+    ev(9, "task_started", { turn_id: "t3" }),
+    human(10, "$yjx-retro-skill"),
+  ]);
+  const pre = await preflightFiles([file]);
+  assert.equal(pre.previousRetro.ordinal, 2);
+  assert.equal(pre.currentRetro.ordinal, 10);
+  assert.equal(pre.currentRetro.runOutcomes, undefined);
+  assert.deepEqual(
+    pre.previousRetro.runOutcomes.map((o) => [o.run, o.status, o.tools, o.aborts, o.userPreview]),
+    [
+      [1, "completed", 0, 0, null],
+      [2, "interrupted", 1, 1, "继续"],
+    ]
+  );
+  assert.equal(pre.previousRetro.runOutcomes[0].lastAssistantPreview, "我将先执行预检。");
+});
+
+test("JSONL 预检：同一轮里的 $skill 消息与 skill 注入属于同一次调用，上一次复盘只从更早的轮次选，范围内压缩仍分流到 full", async (t) => {
+  const ev = (ordinal, type, extra = {}) => ({ ordinal, type: "event_msg", payload: { type, ...extra } });
+  const assistant = (ordinal, text) => ({
+    ordinal,
+    type: "response_item",
+    payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] },
+  });
+  const file = await writeSession(t, [
+    meta(0),
+    ev(1, "task_started", { turn_id: "t1" }),
+    human(2, "$yjx-retro-skill"),
+    skill(3, "yjx-retro-skill"),
+    assistant(4, "复盘报告：2 项建议"),
+    ev(5, "task_complete", { last_agent_message: "复盘报告：2 项建议" }),
+    ev(6, "task_started", { turn_id: "t2" }),
+    human(7, "按建议修改"),
+    compacted(8),
+    ev(9, "task_complete", {}),
+    ev(10, "task_started", { turn_id: "t3" }),
+    human(11, "$yjx-retro-skill"),
+    skill(12, "yjx-retro-skill"),
+  ]);
+  const pre = await preflightFiles([file]);
+  assert.equal(pre.currentRetro.ordinal, 11);
+  assert.equal(pre.previousRetro.ordinal, 3);
+  assert.deepEqual(pre.rangeCompactions.map((c) => c.ordinal), [8]);
+  assert.equal(pre.route, "full");
+  assert.equal(pre.retroInvocations.find((r) => r.ordinal === 12).runOutcomes, undefined);
+  assert.equal(pre.previousRetro.runOutcomes[0].lastAssistantPreview, "复盘报告：2 项建议");
+});
+
+test("T3 SQLite：预检附带后续轮次结果；完整提取输出逐轮工具统计、工具调用列表、Skill 文件读写区分、$skill 候选与失败判定依据", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { preflightT3Thread, analyzeT3Thread } = await import(
+    "../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs"
+  );
+  const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-outcome-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dbPath = path.join(root, "statev2.sqlite");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT, payload_json TEXT);
+    CREATE TABLE orchestration_v2_projection_runs (run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, provider TEXT, provider_instance_id TEXT, provider_thread_id TEXT, status TEXT, requested_at TEXT, completed_at TEXT, payload_json TEXT);
+    CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, provider_instance_id TEXT, driver TEXT, first_run_ordinal INTEGER, last_run_ordinal INTEGER, payload_json TEXT);
+    CREATE TABLE orchestration_v2_projection_turn_items (turn_item_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, provider_thread_id TEXT, ordinal INTEGER, type TEXT, status TEXT, updated_at TEXT, payload_json TEXT);
+    CREATE TABLE orchestration_v2_turn_item_positions (thread_id TEXT, turn_item_id TEXT, ordinal INTEGER);
+  `);
+  const threadId = "7d3c0e3a-0000-4000-8000-000000000001";
+  db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?)").run(
+    threadId,
+    "复盘结果测试",
+    "2026-11-16T00:00:00.000Z",
+    "2026-11-16T00:10:00.000Z",
+    "{}"
+  );
+  const insertRun = db.prepare("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const [n, status] of [[1, "completed"], [2, "completed"], [3, "interrupted"], [4, "running"]]) {
+    insertRun.run(`run:${n}`, threadId, n, "codex", "codex", "pt:1", status, null, null, JSON.stringify({ modelSelection: { model: "m" } }));
+  }
+  const insertItem = db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  const insertPos = db.prepare("INSERT INTO orchestration_v2_turn_item_positions VALUES (?, ?, ?)");
+  const add = (id, run, ord, type, status, payload) => {
+    insertItem.run(id, threadId, run, "pt:1", ord, type, status, "2026-11-16T00:05:00.000Z", JSON.stringify(payload));
+    insertPos.run(threadId, id, ord);
+  };
+  const pwshWrite =
+    String.raw`"C:\Program Files\PowerShell\7\pwsh.exe" -Command '$p = "D:'"\repo\skills\demo\SKILL.md"; [IO.File]::WriteAllText($p, "x")'`;
+  add("u1", "run:1", 1000001, "user_message", "completed", { text: "修改 demo skill" });
+  add("c1", "run:1", 1000002, "command_execution", "completed", {
+    input: "cat D:/repo/skills/demo/SKILL.md",
+    output: "body",
+    exitCode: 0,
+    completedAt: "2026-11-16T00:01:00.000Z",
+  });
+  add("c2", "run:1", 1000003, "command_execution", "completed", {
+    input: pwshWrite,
+    output: "",
+    exitCode: 0,
+    completedAt: "2026-11-16T00:02:00.000Z",
+  });
+  add("c3", "run:1", 1000004, "command_execution", "completed", {
+    input: "node --test",
+    output: "AssertionError [ERR_ASSERTION]: expected",
+    exitCode: 0,
+    completedAt: "2026-11-16T00:03:00.000Z",
+  });
+  add("a1", "run:1", 1000005, "assistant_message", "completed", { text: "已修改。" });
+  add("u2", "run:2", 2000001, "user_message", "completed", { text: "$yjx-retro-skill" });
+  add("a2", "run:2", 2000002, "assistant_message", "completed", { text: "我将先执行预检。" });
+  add("u3", "run:3", 3000001, "user_message", "completed", { text: "继续" });
+  add("x3", "run:3", 3000002, "run_interrupt_request", "completed", { reason: "Stopped by user" });
+  add("u4", "run:4", 4000001, "user_message", "completed", { text: "$yjx-retro-skill 再来一次，$HOME 不是 skill" });
+  add("u4b", "run:4", 4000002, "user_message", "completed", { text: "$yjx-retro-skill 同一次调用的参数消息" });
+  db.close();
+
+  // 预检：较早的复盘调用附带本轮与后续轮次结果；同一轮里的多条候选都属于本次调用，不当作上一次复盘
+  const pre = preflightT3Thread(dbPath, threadId);
+  assert.equal(pre.previousRetro.itemId, "u2");
+  assert.equal(pre.currentRetro.itemId, "u4");
+  assert.equal(pre.rangeStartOrdinal, 2000001);
+  assert.equal(pre.currentRetro.runOutcomes, undefined);
+  assert.equal(pre.retroInvocations.find((r) => r.itemId === "u4b").runOutcomes, undefined);
+  assert.match(pre.rule, /unconfirmed/);
+  assert.deepEqual(
+    pre.previousRetro.runOutcomes.map((o) => [o.run, o.status, o.tools, o.aborts, o.userPreview]),
+    [
+      [2, "completed", 0, 0, null],
+      [3, "interrupted", 0, 1, "继续"],
+    ]
+  );
+  assert.equal(pre.previousRetro.runOutcomes[0].lastAssistantPreview, "我将先执行预检。");
+  assert.equal(preflightT3Thread(dbPath, threadId, { sinceOrdinal: 1000001 }).rangeStartOrdinal, 1000001);
+
+  // 完整提取：逐轮统计、工具调用列表、读写区分（含被引号拆开的盘符）、$skill 候选、失败判定依据
+  const report = analyzeT3Thread(dbPath, threadId);
+  const run1 = report.runStats.find((r) => r.runOrdinal === 1);
+  assert.equal(run1.toolCallCount, 3);
+  assert.equal(run1.failedToolCount, 1);
+  assert.equal(run1.lastAssistantPreview, "已修改。");
+  assert.deepEqual(report.toolCalls.map((c) => c.itemId), ["c1", "c2", "c3"]);
+  assert.match(report.toolCalls[1].commandPreview, /^'\$p = "D:/);
+  assert.deepEqual(report.skills.fileReads.map((r) => r.paths), [["D:/repo/skills/demo/SKILL.md"]]);
+  assert.deepEqual(report.skills.fileWrites.map((r) => r.paths), [[String.raw`D:\repo\skills\demo\SKILL.md`]]);
+  assert.deepEqual(report.skills.userTokens.map((tk) => tk.names), [["yjx-retro-skill"], ["yjx-retro-skill"], ["yjx-retro-skill"]]);
+  assert.deepEqual(report.nonZeroTools.map((nz) => [nz.itemId, nz.failureReason]), [["c3", "output pattern"]]);
+
+  const md = formatMarkdown(report);
+  assert.match(md, /Run #1: .* \| tools=3 failed=1 output=yes aborts=0/);
+  assert.match(md, /Run #3: .* \| tools=0 failed=0 output=no aborts=1/);
+  assert.match(md, /\[Write\] T3:pos=2/);
+  assert.match(md, /\[\$token\] T3:pos=5 \(run #2\) `\$yjx-retro-skill`/);
+  assert.match(md, /exit: 0; by: output pattern/);
+  assert.match(md, /## Tool Calls by Run \(3\)\n### Run #1\n- T3:pos=1 00:01:00 `command_execution` exit=0 out=4: `cat D:\/repo/);
+});
