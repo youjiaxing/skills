@@ -12,11 +12,20 @@
 
 - 固定提交：[9f85cf0](https://github.com/heygen-com/hyperframes/tree/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/skills)。本地工具实现另按 CLI 0.9.53 核查，不能将 GitHub main 的文件自动当作本机行为。
 - 已读 `hyperframes`、`hyperframes-cli`、`hyperframes-registry`、`media-use` 正文，以及分镜、角色表演、motion、captions、review、format、runtimes、CLI检查、资产复用和组件挂载/质量参考。
+- 注册表补充已读 `search.md`、`wiring-blocks.md`、`wiring-components.md`、`install-locations.md`、`component-quality-bar.md`，并对照本地0.9.53的catalog与add实现。采用用途检索、按项选择、检查真实挂载与组件版本；不继承搜索未命中自动外发反馈、批量安装或默认下载语义搜索模型。
 - 决定性源码：本地 snapshot 的场景推导、media-use 的 candidates/cache/manifest/media-home；固定提交下注册表的 [camera-shake](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/registry/components/camera-shake/camera-shake.html)、[beat-freeze-cut](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/registry/blocks/beat-freeze-cut/beat-freeze-cut.html)、[caption-editorial-emphasis](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/registry/components/caption-editorial-emphasis/caption-editorial-emphasis.html)。三者仅源码核查，未挂载实测。
 - 借鉴：明确镜头与阅读窗口、确定性时间轴、组件边界、切点/小屏审片、局部返修、可追溯资产。具体使用边界见 [HyperFrames工作方法](hyperframes-workflow.md)。
 - 不直接采用：固定宣传片节奏、英文逐词字幕配方、表情永不硬切、轮廓抖动；账号/Pro模板、生成服务、遥测及不主动披露费用的供应商规则不由本 Skill 继承。
 - 旧技能退役依据：[skillsManifest.ts](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/packages/cli/src/utils/skillsManifest.ts#L147)。旧 animation/creative/keyframes/studio 和多个工作流整合进综合参考；audio 指向 media-use mixing。安装目录可能仍保留历史名称，不能据此要求逐个补装。
 - [根许可证 Apache-2.0](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/LICENSE)；[CREDITS](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/CREDITS.md)另列依赖、字体和素材来源。具体素材、第三方代码及服务模板分别核查，不将根许可扩大到整个生态。
+
+### 其他官方方法的借鉴
+
+- [reverse-any-video](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/skills/reverse-any-video/SKILL.md)：已读正文及start、people、animated、match参考。借鉴连续原帧定位切点、短促特效与硬切；其人物/绘制动画流程包含重拍或生成视频，代码有限动画项目不继承该步骤，也不将复刻相似度当表演质量。
+- [remotion-to-hyperframes](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/skills/remotion-to-hyperframes/SKILL.md)：已读正文、api-map、escape-hatch、eval、timing、limitations、sequencing、transitions及lint_source.py。借鉴迁移后可编辑范围和近似项记录；正则扫描不是运行正确性证明，弹性与定格映射须保留原状态，不把映射表当无损转换器。只有真实外部工程迁移任务才考虑完整接入。
+- [style-sampling](https://github.com/heygen-com/hyperframes/blob/9f85cf0a252b25dcf70b08c3c0bbbaebb4cbff92/skills/style-sampling/SKILL.md)：已读正文及remix参考；实际是五类Pro系列模板入口，未拉取或审查受服务控制的模板内部。只参考前期规划与草稿验收顺序，不继承其模板声音/画面规则、服务流程及文件覆盖要求。
+
+上述方法按候选写入[HyperFrames工作方法](hyperframes-workflow.md)，未新增工程迁移、复刻渲染或成片验证；本来源记录不触发安装。
 
 ## short-drama-storyboard
 
