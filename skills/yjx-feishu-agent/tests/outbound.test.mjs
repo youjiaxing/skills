@@ -374,3 +374,53 @@ test('preparation failure submits no message and CLI rejects ambiguous input', a
   assert.throws(() => parseArgs(['send','--input','a','--input','b']), /repeated/);
   assert.throws(() => parseArgs(['status','--input','a']), /incompatible/);
 });
+
+test('rate-limit rejection (230429/230020/99991400/HTTP 429) is blocked as not_submitted and releases target pending gate', async t => {
+  const c = await setup(t);
+  await deliver(c.initial, c.options);
+
+  for (const [idx, spec] of [
+    { apiCode: 230429 },
+    { apiCode: 230020 },
+    { apiCode: 99991400 },
+    { httpStatus: 429 },
+  ].entries()) {
+    const reqId = `change-rl-${idx}`;
+    c.transport.update = async () => {
+      const error = new Error('rate limited');
+      if (spec.apiCode) error.apiCode = spec.apiCode;
+      if (spec.httpStatus) error.httpStatus = spec.httpStatus;
+      throw error;
+    };
+    const res = await deliver({ ...c.update, requestId: reqId }, c.options);
+    assert.equal(res.status, 'blocked');
+    assert.equal(res.submitted, false);
+    assert.equal(res.failureProof?.kind, 'rate-limited');
+    assert.equal(res.error?.rateLimited, true);
+    assert.equal(res.error?.rejected, true);
+    assert.equal(res.error?.stage, 'submit');
+    assert.equal(submissionOutcome(res), 'not_submitted');
+    const rechecked = await recheckOutbound({ ...c.options, requestId: reqId });
+    assert.equal(rechecked.outcome, 'not_submitted');
+    const target = JSON.parse(await readFile(outboundPaths(c.stateDir, c.options.appId).target('daily'), 'utf8'));
+    assert.equal(target.pending, null);
+    assert.equal(target.revision, 1);
+  }
+
+  // Subsequent update using the unchanged revision succeeds without manual reconcile.
+  c.transport.update = async (id) => { c.calls.push(['update', id]); return id; };
+  const recovered = await deliver({ ...c.update, requestId: 'change-recovered' }, c.options);
+  assert.equal(recovered.status, 'sent');
+  assert.equal(recovered.revision, 2);
+
+  // Quota exhaustion (99991403) must NOT be classified as transient rate-limited.
+  c.transport.update = async () => {
+    const error = new Error('quota exhausted');
+    error.apiCode = 99991403;
+    error.httpStatus = 429;
+    throw error;
+  };
+  const quotaRes = await deliver({ ...c.update, requestId: 'change-quota', expectedRevision: 2 }, c.options);
+  assert.equal(quotaRes.status, 'unconfirmed');
+  assert.equal(submissionOutcome(quotaRes), 'unknown');
+});

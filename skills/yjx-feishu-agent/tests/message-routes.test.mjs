@@ -116,6 +116,14 @@ test('definitive provider rejection restores the prior route instead of transfer
   assert.equal((await deliver(c.update,c.options)).status,'blocked');
   await c.router.admit({binding,parentId:'om_card'},route=>assert.equal(route.threadId,A));
 });
+test('rate-limit rejection restores the prior route instead of transferring ownership',async t=>{
+  const c=await setup(t);await deliver(c.initial,c.options);
+  c.options.transport.update=async()=>{throw Object.assign(Error('rate limited'),{apiCode:230429});};
+  const res=await deliver(c.update,c.options);
+  assert.equal(res.status,'blocked');
+  assert.equal(res.failureProof?.kind,'rate-limited');
+  await c.router.admit({binding,parentId:'om_card'},route=>assert.equal(route.threadId,A));
+});
 test('durable acknowledgement repairs pending ownership locally without a second transport call',async t=>{
   const c=await setup(t);await deliver(c.initial,c.options);const changed=await deliver(c.update,c.options);
   const paths=outboundPaths(c.options.stateDir,'cli_test');

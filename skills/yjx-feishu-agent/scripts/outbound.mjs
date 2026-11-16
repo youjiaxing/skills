@@ -9,6 +9,7 @@ import { defaultStateDir } from './codex.mjs';
 import { deliver, outboundStatus, prepareContent, recheckOutbound, reconcileOutbound, submissionOutcome } from './outbound-core.mjs';
 import { readTransport } from './feishu-context.mjs';
 import { describePush } from './push-contract.mjs';
+import { createFeishuRateLimiter, parseRetryAfterHeaders } from './feishu-rate-limit.mjs';
 
 export const HELP = `Usage:
   node outbound.mjs send --input request.json [--state-dir PATH] [--credentials-dir PATH]
@@ -91,63 +92,56 @@ export async function main(argv) {
     Lark.defaultHttpInstance.defaults.timeout = 15000;
     const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
     const client = new Lark.Client({ ...credentials, logger });
+    const invocationDeadlineMs = Date.now() + 70000;
+    const rateLimiter = createFeishuRateLimiter({
+      gateDir: credentialsDir,
+      appId: credentials.appId,
+      attemptHeadroomMs: 15000,
+    });
+    const callSdk = async fn => {
+      try {
+        const response = await fn();
+        if (response && typeof response === 'object' && 'code' in response && response.code !== 0) {
+          const error = new Error('API rejected');
+          error.apiCode = response.code;
+          throw error;
+        }
+        return response;
+      } catch (error) {
+        if (!Number.isSafeInteger(error?.apiCode) && Number.isSafeInteger(error?.response?.data?.code)) {
+          error.apiCode = error.response.data.code;
+        }
+        if (!Number.isSafeInteger(error?.httpStatus) && Number.isSafeInteger(error?.response?.status)) {
+          error.httpStatus = error.response.status;
+        }
+        if (error?.response?.headers && error.retryAfterMs === undefined) {
+          const retryAfterMs = parseRetryAfterHeaders(error.response.headers);
+          if (retryAfterMs !== null) error.retryAfterMs = retryAfterMs;
+        }
+        throw error;
+      }
+    };
     const transport = {
       async upload(bytes) {
-        const result = await client.im.v1.image.create({ data: { image_type: 'message', image: bytes } });
-        if (Number.isSafeInteger(result?.code) && result.code !== 0) {
-          const error = new Error('API rejected'); error.apiCode = result.code; throw error;
-        }
+        const result = await rateLimiter.execute(() =>
+          callSdk(() => client.im.v1.image.create({ data: { image_type: 'message', image: bytes } })),
+          { deadlineMs: invocationDeadlineMs });
         if (typeof result?.image_key !== 'string' || !result.image_key) throw new Error('Missing image key');
         return result.image_key;
       },
       async send(chatId, type, content, uuid) {
-        const sendOnce = async () => {
-          try {
-            return await client.im.v1.message.create({ params: { receive_id_type: 'chat_id' },
-              data: { receive_id: chatId, msg_type: type, content: JSON.stringify(content), uuid } });
-          } catch (error) {
-            if (!Number.isSafeInteger(error?.apiCode) && Number.isSafeInteger(error?.response?.data?.code)) {
-              error.apiCode = error.response.data.code;
-            }
-            throw error;
-          }
-        };
-        let response;
-        try {
-          response = await sendOnce();
-        } catch (error) {
-          if (error?.apiCode === 230429) {
-            await new Promise(r => setTimeout(r, 1500));
-            response = await sendOnce();
-          } else {
-            throw error;
-          }
-        }
+        const response = await rateLimiter.execute(() =>
+          callSdk(() => client.im.v1.message.create({ params: { receive_id_type: 'chat_id' },
+            data: { receive_id: chatId, msg_type: type, content: JSON.stringify(content), uuid } })),
+          { deadlineMs: invocationDeadlineMs });
         const data = check(response);
         if (!data?.message_id) throw new Error('Missing message receipt');
         return data.message_id;
       },
       async update(messageId, content) {
-        const patchOnce = async () => {
-          try {
-            return check(await client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(content) } }));
-          } catch (error) {
-            if (!Number.isSafeInteger(error?.apiCode) && Number.isSafeInteger(error?.response?.data?.code)) {
-              error.apiCode = error.response.data.code;
-            }
-            throw error;
-          }
-        };
-        try {
-          await patchOnce();
-        } catch (error) {
-          if (error?.apiCode === 230429) {
-            await new Promise(r => setTimeout(r, 1500));
-            await patchOnce();
-          } else {
-            throw error;
-          }
-        }
+        await rateLimiter.execute(() =>
+          callSdk(() => client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(content) } })),
+          { deadlineMs: invocationDeadlineMs });
         return messageId;
       },
     };

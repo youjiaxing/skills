@@ -77,7 +77,7 @@ send/update、status、recheck、reconcile 在原字段之外分别返回 `deliv
 | outcome | 证据与处理 |
 |---|---|
 | sent | 已有成功回执，或 version:2 中持久化的 acknowledgement；不再发送。若目标状态尚未写完，可用 reconcile 修复本地记录 |
-| not_submitted | version:2 对原尝试的明确失败证明：消息写调用之前失败，或已经核定的服务端拒绝（当前仅230099卡片内容拒绝）；修正输入后调用方可在原任务授权内建立关联的新尝试，保留旧记录 |
+| not_submitted | version:2 对原尝试的明确失败证明：消息写调用之前失败，或已经核定的服务端前置拒绝（`230099` 卡片内容拒绝，或 `230429`/`230020`/`99991400`/HTTP `429` 限流拒绝，不含 `99991403` 配额耗尽）；修正输入或待限流冷却后，调用方可在原任务授权内建立关联的新尝试，保留旧记录 |
 | unknown | 缺回执、未知提交、旧 blocked 无新证据、无法关联原请求；保持 pending 和依赖门禁，不生成新编号绕过 |
 
 `preflight` 无凭据检查当前输入，scope 为 current-preflight；它的 submitted:false 只表示这次预检没有发消息，不能证明更早的请求未提交。也不能用“缺账本＋当前预检失败”解除历史门禁。未知业务错误不能统一归为明确拒绝；原卡片更新结果未知时，看到旧内容不能证明更新从未执行。
@@ -112,7 +112,7 @@ send/update、status、recheck、reconcile 在原字段之外分别返回 `deliv
 
 ## 传输适配维护
 
-普通 API 用法与卡片组件复用 `lark-im` 参考；本工具的 SDK 调用实现以 `scripts/outbound.mjs` 为准，使用已锁定的 `@larksuiteoapi/node-sdk`。调整传输实现时保留本页的提交前记账、成功 acknowledgement、版本锁与未知结果语义；已有账本任务继续从 outbound 入口执行。
+普通 API 用法与卡片组件复用 `lark-im` 参考；本工具的 SDK 调用实现以 `scripts/outbound.mjs` 为准，使用已锁定的 `@larksuiteoapi/node-sdk`。调整传输实现时保留本页的提交前记账、成功 acknowledgement、版本锁与未知结果语义；已有账本任务继续从 outbound 入口执行。 `outbound.mjs` 与 `feishu.mjs` 写入/回复/表情反馈通过同应用共享跨进程限流门（按 `credentialsDir`/`stateDir` 下的 `appId` 间隔排队、共享退避冷却并做指数退避抖动重试），避免多会话与多定时任务并发撞限。
 
 图片上传实测返回的是顶层 `{ image_key }`，不要把所有 SDK 方法一律按 `{ code, data }` 解析。消息创建实测返回 `code: 0` 和 `data.message_id`。对当前方法的实际结构核对成功，不用“未抛异常”代替回执确认。
 

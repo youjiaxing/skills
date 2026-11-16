@@ -1,12 +1,19 @@
+import { parseRetryAfterHeaders } from './feishu-rate-limit.mjs';
+
 // Dedicated abortable transport: marker calls never change the SDK's timeout.
-export function reactionTransport({ appId, appSecret }, { fetchImpl = fetch, timeoutMs = 3000 } = {}) {
+export function reactionTransport({ appId, appSecret }, { fetchImpl = fetch, timeoutMs = 3000, rateLimiter = null } = {}) {
   let token, expiresAt = 0;
   function rejected(response, body) {
     const error = new Error('Reaction API failed');
     if (Number.isSafeInteger(body?.code)) error.apiCode = body.code;
     if (Number.isSafeInteger(response.status)) error.httpStatus = response.status;
+    const retryAfterMs = parseRetryAfterHeaders(response.headers);
+    if (retryAfterMs !== null) error.retryAfterMs = retryAfterMs;
     return error;
   }
+  const runWrite = fn => rateLimiter
+    ? rateLimiter.execute(fn, { maxRetries: timeoutMs >= 3000 ? 2 : 0 })
+    : fn();
   async function request(messageId, { method = 'GET', emoji, reactionId, pageToken, signal }) {
     if (!token || Date.now() >= expiresAt) {
       const response = await fetchImpl('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
@@ -33,8 +40,8 @@ export function reactionTransport({ appId, appSecret }, { fetchImpl = fetch, tim
     return body.data;
   }
   return {
-    create: (id, emoji) => request(id, {method:'POST', emoji, signal:AbortSignal.timeout(timeoutMs)}),
-    remove: (id, reactionId) => request(id, {method:'DELETE', reactionId, signal:AbortSignal.timeout(timeoutMs)}),
+    create: (id, emoji) => runWrite(() => request(id, {method:'POST', emoji, signal:AbortSignal.timeout(timeoutMs)})),
+    remove: (id, reactionId) => runWrite(() => request(id, {method:'DELETE', reactionId, signal:AbortSignal.timeout(timeoutMs)})),
     async list(id, emoji) {
       const signal = AbortSignal.timeout(timeoutMs), items = [], seen = new Set();
       let pageToken;

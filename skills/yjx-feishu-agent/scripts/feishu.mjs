@@ -15,6 +15,7 @@ import { readTransport, resolveContext } from './feishu-context.mjs';
 import { createMessageRouter } from './message-routes.mjs';
 import { createProcessingFeedback } from './processing-feedback.mjs';
 import { reactionTransport } from './reaction-transport.mjs';
+import { createFeishuRateLimiter, parseRetryAfterHeaders } from './feishu-rate-limit.mjs';
 import { safeFailure } from './message-diagnostics.mjs';
 import { renderReply } from './reply-renderer.mjs';
 import { withReceiverControl, recoveryEnabled, recordRuntimeFailure, runtimeFailure, recoverManagedReceiver } from './receiver-recovery.mjs';
@@ -63,6 +64,9 @@ async function api(operation) {
     const failure = new Error(`Feishu API failed (HTTP ${status}, code ${code})`);
     failure.safe = true;
     failure.apiCode = Number(code);
+    if (typeof status === 'number') failure.httpStatus = status;
+    const retryAfterMs = parseRetryAfterHeaders(error.response?.headers);
+    if (retryAfterMs !== null) failure.retryAfterMs = retryAfterMs;
     throw failure;
   }
 }
@@ -214,9 +218,10 @@ export async function main(argv) {
     imageDirectory:path.join(stateDir,'feishu',digest(credentials.appId),'images'),
     contextStateDir:path.resolve(stateDir)===defaultStateDir({}) ? undefined : stateDir,
   };
+  const rateLimiter = createFeishuRateLimiter({ gateDir: stateDir, appId: credentials.appId });
   const router = createMessageRouter({stateDir,appId:credentials.appId});
   const feedback = createProcessingFeedback({stateDir, appId:credentials.appId,
-    transport:reactionTransport(credentials), log:print});
+    transport:reactionTransport(credentials, { rateLimiter }), log:print});
   const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
     feedback,
     prepareReply: renderReply,
@@ -224,8 +229,8 @@ export async function main(argv) {
     async reply(messageId, answer, requestId, prepared) {
       // One bounded text response; keep UUID stable for Feishu deduplication.
       const rendered = prepared ?? renderReply(answer.length > 12000 ? `${answer.slice(0, 12000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : answer);
-      const response = await api(() => client.im.v1.message.reply({ path: { message_id: messageId },
-        data: { msg_type: rendered.msgType, content: JSON.stringify(rendered.content), uuid: digest(requestId).slice(0, 32) } }));
+      const response = await rateLimiter.execute(() => api(() => client.im.v1.message.reply({ path: { message_id: messageId },
+        data: { msg_type: rendered.msgType, content: JSON.stringify(rendered.content), uuid: digest(requestId).slice(0, 32) } })));
       return {message_id:response.data?.message_id,msg_type:rendered.msgType,body:{content:JSON.stringify(rendered.content)},renderMode:rendered.mode};
     },
   });

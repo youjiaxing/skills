@@ -5,6 +5,7 @@ import { lockThread, validateRequestId } from './state.mjs';
 import { validateThreadId } from './codex.mjs';
 import { withRoutes } from './message-routes.mjs';
 import { requirePushSource } from './push-contract.mjs';
+import { isRateLimitError } from './feishu-rate-limit.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v)
@@ -95,6 +96,11 @@ export function submissionOutcome(record) {
     if (proof?.kind==='message-not-called' && !record.firstSubmittedAt && record.error?.stage==='prepare') return 'not_submitted';
     if (proof?.kind==='provider-rejected' && proof.apiCode===230099 && record.error?.code===230099 &&
         record.error?.rejected===true && record.error?.stage==='submit' && record.firstSubmittedAt) return 'not_submitted';
+    if (proof?.kind==='rate-limited' && record.error?.rejected===true && record.error?.rateLimited===true &&
+        record.error?.stage==='submit' && record.firstSubmittedAt &&
+        isRateLimitError({ apiCode: proof.apiCode ?? record.error?.code, httpStatus: proof.httpStatus ?? record.error?.httpStatus })) {
+      return 'not_submitted';
+    }
   }
   return 'unknown';
 }
@@ -284,21 +290,31 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
           await saveRoutes();
         }
       } catch (error) {
-        // Only a verified invalid-card rejection proves this message call had no effect.
-        // Unknown business errors, HTTP failures and local commit failures stay unresolved.
+        // Only verified pre-effect rejections (invalid card 230099 or rate-limit rejection)
+        // prove this message call had no effect. Other errors stay unresolved.
         const apiCode = Number.isSafeInteger(error?.apiCode) ? error.apiCode
           : Number.isSafeInteger(error?.response?.data?.code) ? error.response.data.code : null;
+        const httpStatus = Number.isSafeInteger(error?.httpStatus) ? error.httpStatus
+          : Number.isSafeInteger(error?.response?.status) ? error.response.status : null;
         const messageCalled = record.submitted;
         const rejected = !record.acknowledgement && messageCalled && apiCode === 230099;
-        record.status = messageCalled && !rejected ? 'unconfirmed' : 'blocked';
+        const rateLimited = !record.acknowledgement && messageCalled && !rejected && isRateLimitError({ apiCode, httpStatus });
+        const provenNotSubmitted = !messageCalled || rejected || rateLimited;
+        record.status = provenNotSubmitted ? 'blocked' : 'unconfirmed';
         record.submitted = record.status === 'unconfirmed';
-        if (record.status==='blocked') record.failureProof = {
-          kind:rejected ? 'provider-rejected' : 'message-not-called',
-          ...(rejected ? {apiCode} : {}),recordedAt:new Date().toISOString()};
-        record.error = { code: apiCode, rejected,
+        if (record.status === 'blocked') record.failureProof = {
+          kind: rateLimited ? 'rate-limited' : rejected ? 'provider-rejected' : 'message-not-called',
+          ...(apiCode !== null && (rejected || rateLimited) ? { apiCode } : {}),
+          ...(httpStatus !== null && rateLimited ? { httpStatus } : {}),
+          recordedAt: new Date().toISOString() };
+        record.error = { code: apiCode,
+          ...(httpStatus !== null ? { httpStatus } : {}),
+          rejected: rejected || rateLimited,
+          ...(rateLimited ? { rateLimited: true } : {}),
           stage: messageCalled ? 'submit' : 'prepare',
           message: record.status === 'unconfirmed'
             ? 'Delivery unknown; inspect message and journal, do not resend'
+            : rateLimited ? 'Provider rate-limited the request; no message submitted'
             : rejected ? 'Provider rejected the request; no message submitted'
             : 'Preparation failed; no message submitted' };
         await save(paths.request(id), record);
