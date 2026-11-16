@@ -90,11 +90,12 @@ synchronized (app) {
     registry = app.getUserData(key)
     if (registry == null) {
         registry = [
-            boot: uuid(), requests: [:], busy: [:], runs: new IdentityHashMap(), debugs: new IdentityHashMap(), knownSecrets: new HashSet<String>(),
+            boot: uuid(), keyRef: key, requests: [:], busy: [:], runs: new IdentityHashMap(), debugs: new IdentityHashMap(), knownSecrets: new HashSet<String>(),
             projects: new IdentityHashMap(), breakpoints: new IdentityHashMap(), consoleDocuments: new IdentityHashMap(),
         ]
         app.putUserData(key, registry)
     }
+    if (registry.keyRef == null) registry.keyRef = key
 }
 if (registry.knownSecrets == null) registry.knownSecrets = new HashSet<String>()
 if (registry.consoleDocuments == null) registry.consoleDocuments = new IdentityHashMap()
@@ -318,7 +319,8 @@ def chooseRun = { p ->
         def settings = selectedConfig(p)
         matches = entries.findAll { !it.handler.processTerminated && it.configurations.any { it.uniqueID == settings.uniqueID } }
     }
-    if (matches.size() != 1) fail('SESSION_AMBIGUOUS', '会话未唯一匹配，先查询 run status 并指定 --session')
+    if (matches.isEmpty()) fail('SESSION_NOT_FOUND', '未找到匹配运行会话，先查询 run status')
+    if (matches.size() > 1) fail('SESSION_AMBIGUOUS', '会话未唯一匹配，先查询 run status 并指定 --session')
     if (matches[0].executors.contains('Debug')) fail('DEBUG_SESSION_REQUIRES_DEBUG_COMMAND', '目标是 Debug 会话；使用 debug list 后通过 Debug 命令控制')
     if (!matches[0].executors.contains('Run')) fail('RUN_EXECUTOR_UNVERIFIED', '无法证明目标是普通 Run 会话，未执行控制')
     matches[0]
@@ -634,7 +636,8 @@ def execute = {
     if (operation == 'logs') {
         def entries = runSessions(p)
         def matches = args.session ? entries.findAll { it.token == args.session } : entries.findAll { it.configurations.any { it.name == args.config || it.uniqueID == args.config } }
-        if (matches.size() != 1) fail('SESSION_AMBIGUOUS', 'logs 需要唯一 --session，或唯一 --config 会话')
+        if (matches.isEmpty()) fail('SESSION_NOT_FOUND', 'logs 未找到匹配运行会话，先查询 run status')
+        if (matches.size() > 1) fail('SESSION_AMBIGUOUS', 'logs 需要唯一 --session，或唯一 --config 会话')
         def entry = matches[0]
         entry.configurations.each { rememberSecrets(it.configuration) }
         def console = consoleObject(entry.descriptor)
@@ -726,7 +729,8 @@ chooseDebug = { p ->
         def settings = selectedConfig(p)
         matches = entries.findAll { !it.session.stopped && it.settings?.uniqueID == settings.uniqueID }
     } else matches = entries.findAll { !it.session.stopped }
-    if (matches.size() != 1) fail('DEBUG_SESSION_AMBIGUOUS', '先 debug list，使用 --session 选择唯一调试会话')
+    if (matches.isEmpty()) fail('DEBUG_SESSION_NOT_FOUND', '未找到匹配调试会话，先查询 debug list')
+    if (matches.size() > 1) fail('DEBUG_SESSION_AMBIGUOUS', '先 debug list，使用 --session 选择唯一调试会话')
     refreshPause(matches[0])
 }
 pauseContext = { entry, boolean required ->
@@ -792,7 +796,7 @@ debugAction = { p ->
         def prior = entry.pending
         def interrupt = operation in ['debug.pause', 'debug.stop']
         if (prior && !prior.done && !interrupt) fail('BUSY', '调试会话有未决请求 ' + prior.id)
-        if (operation in ['debug.continue', 'debug.step-over'] || (operation == 'debug.stop' && s.suspended)) pauseContext(entry, true)
+        if (operation in ['debug.continue', 'debug.step-over']) pauseContext(entry, true)
         if (operation == 'debug.pause' && s.suspended) { finish([outcome: 'ok', debug: debugInfo(entry)]); return }
         def oldPause = entry.pause
         def key = configKey(p, entry.settings)

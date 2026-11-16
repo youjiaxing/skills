@@ -198,7 +198,11 @@ test('real isolated IDE: configuration, Run, diagnostics, logs and Debug', { ski
     const interrupted = await command('debug.pause', { session: longDebug.debug.session });
     const stepOutcome = await command('attempt.show', { request: stepPending.requestId });
     assert.equal(stepOutcome.attempt.result.code, 'INTERRUPTED');
-    await command('debug.stop', { session: longDebug.debug.session, pause: interrupted.debug.pause });
+    await fixtureScript('System.gc(); System.runFinalization()', 'gc-key-ref', false);
+    const afterGC = await command('debug.status', { session: longDebug.debug.session });
+    assert.equal(afterGC.debug.session, longDebug.debug.session);
+    // Stopping a suspended debug session must not require --pause.
+    await command('debug.stop', { session: longDebug.debug.session });
     await command('breakpoint.cleanup', { task: 'long-step' });
 
     // A manual Run is created outside the tool's launch listener, then discovered and controlled.
@@ -234,6 +238,10 @@ test('real isolated IDE: configuration, Run, diagnostics, logs and Debug', { ski
     await command('breakpoint.set', { file: 'main.go', line: 5, config: 'Probe Debug', task: 'ambiguous-test' }, 'failed');
     const runDebug = (await command('run.status')).sessions.find(s => s.executor.includes('Debug') && s.state === 'running');
     await command('run.stop', { session: runDebug?.session || debugSessions[0].session }, 'failed');
+    const missingRun = await command('run.stop', { session: 'missing-session-token' }, 'failed');
+    assert.equal(missingRun.code, 'SESSION_NOT_FOUND');
+    const missingDebug = await command('debug.status', { session: 'missing-session-token' }, 'failed');
+    assert.equal(missingDebug.code, 'DEBUG_SESSION_NOT_FOUND');
     const pausedOne = await command('debug.pause', { session: debugSessions[0].session });
     assert.equal(pausedOne.debug.state, 'paused');
     assert.equal((await command('debug.status', { session: debugSessions[1].session })).debug.state, 'running');
