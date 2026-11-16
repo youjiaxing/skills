@@ -41,10 +41,10 @@ MCP 返回的 `content[].text` 通常是 JSON：先检查工具错误及业务 `
 ## 已跟踪刷新
 
 完整读取 Notion 全库，建立 `taskId → 页面集合`；重复标识阻断该项全部写入。刷新集合为全部合法 TB 来源记录（包括人工完成与自动完成项）并集 watchedTasks：
-1. 每项通过 `QueryTaskV3(taskId)` 读完整最新详情；
+1. 通过 `QueryTaskV3(taskId)` 读取每项最新详情；可按逗号分隔 ID 分批查询，逐项核对 ID 唯一匹配、必需字段和业务响应，缺失或失败项单独报告；
 2. 按项目去重批量调用 `SearchTaskflowStatusesV3`（映射 `statusName`）与 `SearchSprintsV3`（核实非空 `sprintId` 对应的迭代名称，禁止不查 TB 直接把 Notion 旧迭代值原样塞回）；
 3. 对非本人的非空 `executorId` 去重后调用 `PostV3MemberQuery(userIds="<id1>,<id2>")` 批量映射 `executorName`；
-4. 对刷新集合中的**每一项**调用协调器 `plan`：无实质变化项由协调器直接返回 `unchanged: true, committed: true` 并更新本地基线，无需外部写入 Notion；仅存在实际变化或新建项才进入 `prepare → dispatch → Notion 写入 → commit`。
+4. 对刷新集合中的**每一项**调用协调器 `plan` 或 `plan-batch`：无实质变化项由协调器直接返回 `unchanged: true, committed: true` 并更新本地基线，无需外部写入 Notion；仅存在实际变化或新建项才进入 `prepare → dispatch → Notion 写入 → commit`。批量结果逐项检查，失败项保持未覆盖。
 
 新 watched 尚无页面时按明确收录指令或待确认候选处理。列表未出现、权限丢失、空结果、字段缺失不证明转派或完成，保留原状态并报告。同步结束调用 `stop` 时，必须确认返回的 `syncCoverage.unplannedTrackedKeys` 为空且 `candidatesChecked === true`。
 

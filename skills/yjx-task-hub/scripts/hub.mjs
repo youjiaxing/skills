@@ -11,6 +11,13 @@ import { Coordinator } from './coordinator.mjs';
 const script = fileURLToPath(import.meta.url);
 const address = root => process.platform === 'win32' ? `\\\\.\\pipe\\yjx-task-hub-${createHash('sha256').update(root.toLowerCase()).digest('hex').slice(0, 24)}` : path.join(root, 'hub.sock');
 const print = value => process.stdout.write(JSON.stringify(value) + '\n');
+function saveSyncRun(root, record) {
+  const stored = readJson(root, 'sync-run.json', { version: 1, runs: [] });
+  const runs = Array.isArray(stored.runs) ? stored.runs : (stored.session ? [stored] : []);
+  const index = runs.findIndex(run => run.session === record.session);
+  if (index < 0) runs.push(record); else runs[index] = record;
+  atomicJson(root, 'sync-run.json', { version: 1, runs });
+}
 
 function optionValue(args, flag) {
   const index = args.indexOf(flag);
@@ -56,13 +63,15 @@ async function request(root, payload) {
   });
 }
 
-async function serve(root) {
+async function serve(root, syncRun = false) {
   const lock = acquireLock(root);
   let coordinator;
   let server;
   const socketPath = address(root);
   try {
     coordinator = new Coordinator(root);
+    const startedAt = new Date().toISOString();
+    if (syncRun) saveSyncRun(root, { session: lock.lockId, startedAt, status: 'running' });
     if (process.platform !== 'win32' && fs.existsSync(socketPath)) {
       if (!fs.lstatSync(socketPath).isSocket()) throw new Error('IPC 路径不是 socket，停止');
       fs.unlinkSync(socketPath);
@@ -83,7 +92,11 @@ async function serve(root) {
             const payload = JSON.parse(raw.slice(0, raw.indexOf('\n')));
             if (payload.session !== lock.lockId) throw new Error('会话令牌不符；仅当前持锁会话可写入');
             if (payload.action === 'stop') {
-              client.end(JSON.stringify({ stopped: true, pending: coordinator.pending(), syncCoverage: coordinator.syncCoverage() }) + '\n');
+              const pending = coordinator.pending();
+              const coverage = coordinator.syncCoverage();
+              const attested = coordinator.syncAttested && pending.length === 0 && coordinator.plans.size === 0;
+              if (syncRun) saveSyncRun(root, { session: lock.lockId, startedAt, stoppedAt: new Date().toISOString(), status: attested ? 'verified' : 'incomplete', syncCoverage: coverage, pendingCount: pending.length, uncommittedPlans: coordinator.plans.size });
+              client.end(JSON.stringify({ stopped: true, pending, syncCoverage: coverage, ...(syncRun ? { syncStatus: attested ? 'verified' : 'incomplete' } : {}) }) + '\n');
               server.close(() => { lock.release(); process.exit(0); });
               return;
             }
@@ -106,9 +119,10 @@ async function serve(root) {
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   if (!cmd || cmd === '--help') {
-    print({ usage: 'node <skill-dir>/scripts/hub.mjs init [--file <json-path>]|status|start|request --session <token> [--file <json-path>]|stop --session <token>', input: 'init/request 支持 --file <json-path> 或从 stdin 读取 JSON；start 持有本地锁直到 stop；外部 MCP 调用由 Agent 执行', home: '~/.yjx-task-hub/ 或绝对路径 YJX_TASK_HUB_HOME' }); return;
+    print({ usage: 'node <skill-dir>/scripts/hub.mjs init [--file <json-path>]|status|history|start [--sync]|request --session <token> [--file <json-path>]|stop --session <token>', input: 'init/request 支持 --file <json-path> 或从 stdin 读取 JSON；start 持有本地锁直到 stop；--sync 记录本轮同步；外部 MCP 调用由 Agent 执行', home: '~/.yjx-task-hub/ 或绝对路径 YJX_TASK_HUB_HOME' }); return;
   }
   const root = privateRoot(undefined, cmd === 'init');
+  if (cmd === 'history') { print(readJson(root, 'sync-run.json', { version: 1, runs: [] })); return; }
   if (cmd === 'init') {
     const config = validateConfig({ version: 1, activeWindowDays: 90, watchedTasks: [], ignoredTaskIds: [], ...await inputJson(args) });
     const lock = acquireLock(root);
@@ -124,11 +138,13 @@ async function main() {
   if (cmd === 'status') {
     const config = validateConfig(readJson(root, 'config.json'));
     const state = readJson(root, 'state.json');
-    print({ root, config, entries: Object.keys(state.entries).length, pending: Object.entries(state.entries).filter(([, e]) => e.pendingOp).map(([key, e]) => ({ key, ...e.pendingOp })), lock: readJson(root, 'lock.json', null) }); return;
+    const history = readJson(root, 'sync-run.json', { runs: [] });
+    const lastSync = Array.isArray(history.runs) ? history.runs.at(-1) ?? null : history;
+    print({ root, config, entries: Object.keys(state.entries).length, pending: Object.entries(state.entries).filter(([, e]) => e.pendingOp).map(([key, e]) => ({ key, ...e.pendingOp })), lock: readJson(root, 'lock.json', null), lastSync }); return;
   }
-  if (cmd === '_serve') return serve(root);
+  if (cmd === '_serve') return serve(root, args.includes('--sync'));
   if (cmd === 'start') {
-    const child = spawn(process.execPath, [script, '_serve'], { detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, YJX_TASK_HUB_HOME: root } });
+    const child = spawn(process.execPath, [script, '_serve', ...(args.includes('--sync') ? ['--sync'] : [])], { detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, YJX_TASK_HUB_HOME: root } });
     const result = await new Promise((resolve, reject) => {
       let stdout = '', stderr = '';
       child.once('error', reject);

@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 const RETRO_SKILL_NAME = "yjx-retro-skill";
@@ -280,6 +281,72 @@ function isCrossContextHandoff(payload) {
   return true;
 }
 
+function safeDecodeURIComponent(str) {
+  if (typeof str !== "string") return "";
+  try {
+    return decodeURIComponent(str);
+  } catch {
+    return str;
+  }
+}
+
+function parseScheduledTaskMessage(turnItemId, payload) {
+  const decodedId = safeDecodeURIComponent(turnItemId || "");
+  const m = decodedId.match(
+    /^turn-item:message:scheduled-task-message:(.+):(\d+):(scheduled|manual)$/
+  );
+  const payloadTaskId =
+    payload && typeof payload.scheduledTaskId === "string" && payload.scheduledTaskId
+      ? payload.scheduledTaskId
+      : null;
+  if (!m && !payloadTaskId) return null;
+  const scheduledTaskId = m ? m[1] : payloadTaskId;
+  const triggerAtMs = m ? Number(m[2]) : null;
+  const modeSuffix = m ? m[3] : null;
+  return {
+    scheduledTaskId,
+    triggerKind: modeSuffix === "manual" ? "scheduled-manual" : "scheduled",
+    triggerMode: modeSuffix || "scheduled",
+    triggerAtMs: Number.isFinite(triggerAtMs) ? triggerAtMs : null,
+  };
+}
+
+function loadT3ScheduledTasks(db, threadId) {
+  const hasTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_tasks'")
+    .get();
+  if (!hasTable) return new Map();
+  const rows = db
+    .prepare("SELECT * FROM scheduled_tasks WHERE thread_id = ?")
+    .all(threadId);
+  const map = new Map();
+  for (const r of rows) {
+    if (!r.task_id) continue;
+    map.set(r.task_id, {
+      scheduledTaskId: r.task_id,
+      title: r.title || null,
+      threadMode: r.thread_mode || null,
+      schedule: safeJsonParse(r.schedule_json, null),
+      enabled: r.enabled !== undefined && r.enabled !== null ? Boolean(r.enabled) : null,
+      lastRunStatus: r.last_run_status || null,
+    });
+  }
+  return map;
+}
+
+function loadT3ChildThreadStats(db, childThreadId) {
+  if (!childThreadId) return { childItemCount: 0, childFailedCount: 0 };
+  const row = db
+    .prepare(
+      "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed FROM orchestration_v2_projection_turn_items WHERE thread_id = ?"
+    )
+    .get(childThreadId);
+  return {
+    childItemCount: Number(row?.total) || 0,
+    childFailedCount: Number(row?.failed) || 0,
+  };
+}
+
 function loadT3ThreadItems(db, threadId) {
   const hasPositions = db
     .prepare(
@@ -379,6 +446,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
     }
     const threadPayload = safeJsonParse(threadRow.payload_json);
     const items = loadT3ThreadItems(db, threadId);
+    const scheduledTasksMap = loadT3ScheduledTasks(db, threadId);
 
     const compactions = [];
     const handoffs = [];
@@ -413,8 +481,9 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
         });
       } else if (item.type === "user_message") {
         activeRetroCandidate = null;
+        const schedInfo = parseScheduledTaskMessage(item.turn_item_id, payload);
         const text = typeof payload.text === "string" ? payload.text : "";
-        if (isRetroInvocationText(text) && ord !== null && !retroByOrdinal.has(ord)) {
+        if (!schedInfo && isRetroInvocationText(text) && ord !== null && !retroByOrdinal.has(ord)) {
           const cls = classifyUserMessage(text);
           const clean = cls.kind === "human" ? cls.cleanText : text.trim();
           const entry = {
@@ -465,11 +534,24 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
 
     const rangeProviderThreads = new Set();
     const rangeProviders = new Set();
+    const rangeFreshContextRuns = [];
+    const seenFreshRunIds = new Set();
+    const rangeScheduledByTask = new Map();
+    let rangeScheduledTaskCount = 0;
+    let rangeHumanInputCount = 0;
+
     const runs = db
       .prepare(
-        "SELECT run_id, ordinal, provider_instance_id, provider_thread_id FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
+        "SELECT run_id, ordinal, provider_instance_id, provider_thread_id, payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
       )
-      .all(threadId);
+      .all(threadId)
+      .map((r) => {
+        const rp = safeJsonParse(r.payload_json);
+        return {
+          ...r,
+          freshContext: Boolean(rp.freshContext),
+        };
+      });
     const runById = new Map(runs.map((r) => [r.run_id, r]));
     for (const item of items) {
       const ord = typeof item.ordinal === "number" ? item.ordinal : null;
@@ -477,11 +559,49 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       if (item.provider_thread_id) rangeProviderThreads.add(item.provider_thread_id);
       const run = item.run_id ? runById.get(item.run_id) : null;
       if (run?.provider_instance_id) rangeProviders.add(run.provider_instance_id);
+      if (run && run.freshContext && !seenFreshRunIds.has(run.run_id)) {
+        seenFreshRunIds.add(run.run_id);
+        rangeFreshContextRuns.push({
+          runId: run.run_id,
+          runOrdinal: run.ordinal,
+          providerInstanceId: run.provider_instance_id || null,
+          providerThreadId: run.provider_thread_id || null,
+        });
+      }
+      if (item.type === "user_message") {
+        const payload = safeJsonParse(item.payload_json);
+        const schedInfo = parseScheduledTaskMessage(item.turn_item_id, payload);
+        if (schedInfo) {
+          rangeScheduledTaskCount++;
+          let entry = rangeScheduledByTask.get(schedInfo.scheduledTaskId);
+          if (!entry) {
+            const meta = scheduledTasksMap.get(schedInfo.scheduledTaskId);
+            entry = {
+              scheduledTaskId: schedInfo.scheduledTaskId,
+              title: meta?.title || null,
+              threadMode: meta?.threadMode || null,
+              scheduledCount: 0,
+              manualCount: 0,
+            };
+            rangeScheduledByTask.set(schedInfo.scheduledTaskId, entry);
+          }
+          if (schedInfo.triggerKind === "scheduled-manual") entry.manualCount++;
+          else entry.scheduledCount++;
+        } else {
+          const text = typeof payload.text === "string" ? payload.text : "";
+          const cls = classifyUserMessage(text);
+          if (cls.kind === "human") rangeHumanInputCount++;
+        }
+      }
     }
 
     const multiProviderInRange = rangeProviderThreads.size > 1 || rangeProviders.size > 1;
+    const hasFreshContextInRange = rangeFreshContextRuns.length > 0;
     const route =
-      rangeCompactions.length > 0 || rangeHandoffs.length > 0 || multiProviderInRange
+      rangeCompactions.length > 0 ||
+      rangeHandoffs.length > 0 ||
+      multiProviderInRange ||
+      hasFreshContextInRange
         ? "full"
         : "fast";
 
@@ -501,10 +621,15 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       handoffs,
       rangeProviders: [...rangeProviders],
       rangeProviderThreadCount: rangeProviderThreads.size,
+      rangeFreshContextCount: rangeFreshContextRuns.length,
+      rangeFreshContextRuns,
+      rangeScheduledTaskCount,
+      rangeScheduledTasks: [...rangeScheduledByTask.values()],
+      rangeHumanInputCount,
       forkedFrom: threadPayload.forkedFrom || null,
       files: [{ path: path.resolve(dbPath), tag: "T3DB" }],
       cutoffOrdinal: untilOrdinal,
-      rule: "range starts at the previous retro invocation (session start if none); compaction, cross-provider handoff, or multiple provider threads inside the range selects full; Forked From is informational only",
+      rule: "range starts at the previous retro invocation (session start if none); compaction, cross-provider handoff, freshContext reset, or multiple provider threads inside the range selects full; Forked From is informational only",
     };
   } finally {
     db.close();
@@ -560,6 +685,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
         "SELECT run_id, ordinal, provider, provider_instance_id, provider_thread_id, status, requested_at, completed_at, payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
       )
       .all(threadId);
+    const scheduledTasksMap = loadT3ScheduledTasks(db, threadId);
     const runs = runRows.map((r) => {
       const rp = safeJsonParse(r.payload_json);
       return {
@@ -568,6 +694,8 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
         providerInstanceId: r.provider_instance_id || r.provider || null,
         model: rp.modelSelection?.model || null,
         providerThreadId: r.provider_thread_id || null,
+        freshContext: Boolean(rp.freshContext),
+        contextHandoffId: rp.contextHandoffId || null,
         status: r.status || null,
         requestedAt: r.requested_at || null,
         completedAt: r.completed_at || null,
@@ -602,6 +730,42 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
     const skillReads = [];
     const nonZeroTools = [];
     const humanInputs = [];
+    const scheduledTriggers = [];
+    const runStatsMap = new Map();
+    const contextSegments = [];
+    let currentSegment = null;
+    let pendingContextResetReason = null;
+
+    const getOrInitRunStats = (runObj) => {
+      if (!runObj) return null;
+      let rs = runStatsMap.get(runObj.runId);
+      if (!rs) {
+        rs = {
+          runId: runObj.runId,
+          runOrdinal: runObj.ordinal,
+          providerInstanceId: runObj.providerInstanceId || null,
+          model: runObj.model || null,
+          providerThreadId: runObj.providerThreadId || null,
+          freshContext: Boolean(runObj.freshContext),
+          status: runObj.status || null,
+          triggerKind: "unknown",
+          scheduledTaskId: null,
+          scheduledTitle: null,
+          threadMode: null,
+          triggerLocation: null,
+          triggerItemId: null,
+          triggerOrdinal: null,
+          toolCallCount: 0,
+          failedToolCount: 0,
+          fileChangeCount: 0,
+          subagentCount: 0,
+          assistantMessageCount: 0,
+          errorOrAbortCount: 0,
+        };
+        runStatsMap.set(runObj.runId, rs);
+      }
+      return rs;
+    };
 
     let firstOrd = null;
     let lastOrd = null;
@@ -617,10 +781,6 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       const payload = safeJsonParse(item.payload_json);
       const ts = payload.completedAt || payload.startedAt || item.updated_at || null;
       const loc = `T3:pos=${item.position}`;
-      const run = item.run_id ? runById.get(item.run_id) : null;
-      const agentTag = run
-        ? `${run.providerInstanceId || "unknown"}${run.model ? `/${run.model}` : ""} (run #${run.ordinal})`
-        : null;
 
       if (ord !== null) {
         allOrdinals.push(ord);
@@ -633,6 +793,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       }
 
       if (item.type === "compaction") {
+        pendingContextResetReason = "compaction";
         compactions.push({
           location: loc,
           itemId: item.turn_item_id,
@@ -645,6 +806,9 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       }
 
       if (item.type === "handoff") {
+        if (isCrossContextHandoff(payload)) {
+          pendingContextResetReason = "handoff";
+        }
         handoffs.push({
           location: loc,
           itemId: item.turn_item_id,
@@ -658,7 +822,58 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
         continue;
       }
 
+      const run = item.run_id ? runById.get(item.run_id) : null;
+      const runStats = getOrInitRunStats(run);
+      const agentTag = run
+        ? `${run.providerInstanceId || "unknown"}${run.model ? `/${run.model}` : ""} (run #${run.ordinal})`
+        : null;
+
+      if (run) {
+        const boundaryReasons = [];
+        if (!currentSegment) {
+          boundaryReasons.push("initial");
+          if (pendingContextResetReason) boundaryReasons.push(pendingContextResetReason);
+        } else {
+          if (pendingContextResetReason) boundaryReasons.push(pendingContextResetReason);
+          if (run.runId !== currentSegment.lastRunId && run.freshContext) {
+            boundaryReasons.push("fresh_context");
+          }
+          if ((run.providerThreadId || null) !== currentSegment.providerThreadId) {
+            boundaryReasons.push("provider_thread_change");
+          }
+          if ((run.providerInstanceId || null) !== currentSegment.providerInstanceId) {
+            boundaryReasons.push("provider_change");
+          }
+          if ((run.model || null) !== currentSegment.model) {
+            boundaryReasons.push("model_change");
+          }
+        }
+        if (boundaryReasons.length > 0) {
+          currentSegment = {
+            segmentIndex: contextSegments.length + 1,
+            boundaryReasons,
+            providerInstanceId: run.providerInstanceId || null,
+            model: run.model || null,
+            providerThreadId: run.providerThreadId || null,
+            firstRunOrdinal: run.ordinal,
+            lastRunOrdinal: run.ordinal,
+            lastRunId: run.runId,
+            runIds: new Set([run.runId]),
+            firstItemOrdinal: ord,
+            lastItemOrdinal: ord,
+          };
+          contextSegments.push(currentSegment);
+        } else {
+          currentSegment.lastRunOrdinal = run.ordinal;
+          currentSegment.lastRunId = run.runId;
+          currentSegment.runIds.add(run.runId);
+          if (ord !== null) currentSegment.lastItemOrdinal = ord;
+        }
+        pendingContextResetReason = null;
+      }
+
       if (item.type === "run_interrupt_request" || item.type === "error") {
+        if (runStats) runStats.errorOrAbortCount++;
         turnAborts.push({
           location: loc,
           itemId: item.turn_item_id,
@@ -673,7 +888,14 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
         continue;
       }
 
+      if (item.type === "file_change") {
+        if (runStats) runStats.fileChangeCount++;
+        continue;
+      }
+
       if (item.type === "subagent") {
+        if (runStats) runStats.subagentCount++;
+        const childStats = loadT3ChildThreadStats(db, payload.childThreadId || null);
         subagents.push({
           location: loc,
           itemId: item.turn_item_id,
@@ -684,6 +906,8 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
           driver: payload.driver || null,
           providerInstanceId: payload.providerInstanceId || null,
           childThreadId: payload.childThreadId || null,
+          childItemCount: childStats.childItemCount,
+          childFailedCount: childStats.childFailedCount,
           status: item.status || payload.status || null,
           resultPreview: typeof payload.result === "string" ? payload.result.slice(0, 300) : null,
         });
@@ -692,6 +916,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
 
       if (item.type === "assistant_message") {
         const text = typeof payload.text === "string" ? payload.text.trim() : "";
+        if (text && runStats) runStats.assistantMessageCount++;
         lastAssistant = {
           location: loc,
           itemId: item.turn_item_id,
@@ -704,6 +929,36 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
 
       if (item.type === "user_message") {
         const rawText = typeof payload.text === "string" ? payload.text : "";
+        const schedInfo = parseScheduledTaskMessage(item.turn_item_id, payload);
+        if (schedInfo) {
+          const taskMeta = scheduledTasksMap.get(schedInfo.scheduledTaskId);
+          if (runStats) {
+            runStats.triggerKind = schedInfo.triggerKind;
+            runStats.scheduledTaskId = schedInfo.scheduledTaskId;
+            runStats.scheduledTitle = taskMeta?.title || null;
+            runStats.threadMode = taskMeta?.threadMode || null;
+            runStats.triggerLocation = loc;
+            runStats.triggerItemId = item.turn_item_id;
+            runStats.triggerOrdinal = ord;
+          }
+          scheduledTriggers.push({
+            index: scheduledTriggers.length + 1,
+            location: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            timestamp: ts,
+            runId: item.run_id || null,
+            runOrdinal: run?.ordinal ?? null,
+            freshContext: Boolean(run?.freshContext),
+            agent: agentTag,
+            triggerKind: schedInfo.triggerKind,
+            scheduledTaskId: schedInfo.scheduledTaskId,
+            scheduledTitle: taskMeta?.title || null,
+            threadMode: taskMeta?.threadMode || null,
+            text: rawText.trim(),
+          });
+          continue;
+        }
         const cls = classifyUserMessage(rawText);
         if (cls.kind === "skill_injection") {
           skillInjections.push({
@@ -716,6 +971,12 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             sha256: cls.sha256,
           });
         } else if (cls.kind === "human") {
+          if (runStats && runStats.triggerKind === "unknown") {
+            runStats.triggerKind = "human";
+            runStats.triggerLocation = loc;
+            runStats.triggerItemId = item.turn_item_id;
+            runStats.triggerOrdinal = ord;
+          }
           const citations = decodeT3Citations(cls.cleanText);
           const attachedContexts = Array.isArray(payload.context?.records)
             ? payload.context.records.map((r) => ({
@@ -731,6 +992,9 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             itemId: item.turn_item_id,
             ordinal: ord,
             timestamp: ts,
+            runId: item.run_id || null,
+            runOrdinal: run?.ordinal ?? null,
+            freshContext: Boolean(run?.freshContext),
             agent: agentTag,
             text: cls.cleanText,
             citations,
@@ -743,6 +1007,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
 
       if (item.type === "command_execution" || item.type === "dynamic_tool") {
         if (item.turn_item_id.includes("workspace-preparation")) continue;
+        if (runStats) runStats.toolCallCount++;
         const toolName =
           item.type === "command_execution"
             ? "command_execution"
@@ -752,6 +1017,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             ? payload.input
             : JSON.stringify(payload.input ?? "");
         const outSummary = parseT3ToolOutcome(item.type, item.status || payload.status, payload);
+        if (outSummary.failed && runStats) runStats.failedToolCount++;
 
         if (toolName === "Skill" && payload.input && typeof payload.input === "object") {
           const skName = payload.input.skill || payload.output?.commandName || null;
@@ -800,6 +1066,122 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       }
     }
 
+    for (const tr of scheduledTriggers) {
+      const rs = tr.runId ? runStatsMap.get(tr.runId) : null;
+      tr.runStatus = rs?.status || null;
+      tr.toolCallCount = rs?.toolCallCount ?? 0;
+      tr.failedToolCount = rs?.failedToolCount ?? 0;
+      tr.subagentCount = rs?.subagentCount ?? 0;
+      tr.hasAssistantOutput = Boolean(rs && rs.assistantMessageCount > 0);
+    }
+
+    const finalizedSegments = contextSegments.map((seg) => {
+      let humanRuns = 0;
+      let scheduledRuns = 0;
+      let manualScheduledRuns = 0;
+      let failedRuns = 0;
+      for (const rId of seg.runIds) {
+        const rs = runStatsMap.get(rId);
+        if (!rs) continue;
+        if (rs.triggerKind === "human") humanRuns++;
+        else if (rs.triggerKind === "scheduled") scheduledRuns++;
+        else if (rs.triggerKind === "scheduled-manual") manualScheduledRuns++;
+        if (
+          rs.status === "failed" ||
+          rs.status === "interrupted" ||
+          rs.status === "canceled" ||
+          rs.errorOrAbortCount > 0
+        ) {
+          failedRuns++;
+        }
+      }
+      return {
+        segmentIndex: seg.segmentIndex,
+        boundaryReasons: seg.boundaryReasons,
+        providerInstanceId: seg.providerInstanceId,
+        model: seg.model,
+        providerThreadId: seg.providerThreadId,
+        firstRunOrdinal: seg.firstRunOrdinal,
+        lastRunOrdinal: seg.lastRunOrdinal,
+        runCount: seg.runIds.size,
+        firstItemOrdinal: seg.firstItemOrdinal,
+        lastItemOrdinal: seg.lastItemOrdinal,
+        humanRuns,
+        scheduledRuns,
+        manualScheduledRuns,
+        failedRuns,
+      };
+    });
+
+    const allTaskIds = new Set(scheduledTasksMap.keys());
+    for (const tr of scheduledTriggers) {
+      allTaskIds.add(tr.scheduledTaskId);
+    }
+    const scheduledTasks = [];
+    for (const taskId of allTaskIds) {
+      const meta = scheduledTasksMap.get(taskId);
+      const triggersForTask = scheduledTriggers.filter((tr) => tr.scheduledTaskId === taskId);
+      let scheduledAutoRuns = 0;
+      let manualTriggerRuns = 0;
+      let completedRuns = 0;
+      let failedOrInterruptedRuns = 0;
+      let zeroToolRuns = 0;
+      let nonZeroToolRuns = 0;
+      let failedToolRuns = 0;
+      let subagentRuns = 0;
+      let silentRuns = 0;
+      let outputRuns = 0;
+      let totalToolCalls = 0;
+      for (const tr of triggersForTask) {
+        if (tr.triggerKind === "scheduled-manual") manualTriggerRuns++;
+        else scheduledAutoRuns++;
+        const rs = tr.runId ? runStatsMap.get(tr.runId) : null;
+        const st = rs?.status || null;
+        if (
+          st === "failed" ||
+          st === "interrupted" ||
+          st === "canceled" ||
+          (rs && rs.errorOrAbortCount > 0)
+        ) {
+          failedOrInterruptedRuns++;
+        } else if (st === "completed") {
+          completedRuns++;
+        }
+        const tools = rs?.toolCallCount ?? 0;
+        totalToolCalls += tools;
+        if (tools === 0) zeroToolRuns++;
+        else nonZeroToolRuns++;
+        if ((rs?.failedToolCount ?? 0) > 0) failedToolRuns++;
+        if ((rs?.subagentCount ?? 0) > 0) subagentRuns++;
+        if ((rs?.assistantMessageCount ?? 0) > 0) outputRuns++;
+        else silentRuns++;
+      }
+      scheduledTasks.push({
+        scheduledTaskId: taskId,
+        title: meta?.title || null,
+        threadMode: meta?.threadMode || null,
+        schedule: meta?.schedule || null,
+        enabled: meta?.enabled ?? null,
+        lastRunStatus: meta?.lastRunStatus || null,
+        inRangeStats: {
+          totalRuns: triggersForTask.length,
+          scheduledAutoRuns,
+          manualTriggerRuns,
+          completedRuns,
+          failedOrInterruptedRuns,
+          zeroToolRuns,
+          nonZeroToolRuns,
+          failedToolRuns,
+          subagentRuns,
+          silentRuns,
+          outputRuns,
+          totalToolCalls,
+          firstLocation: triggersForTask[0]?.location || null,
+          lastLocation: triggersForTask[triggersForTask.length - 1]?.location || null,
+        },
+      });
+    }
+
     return {
       session: {
         source: "t3_sqlite",
@@ -835,6 +1217,9 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
           },
         ],
       },
+      contextSegments: finalizedSegments,
+      scheduledTasks,
+      scheduledTriggers,
       compactions,
       handoffs,
       subagents,
@@ -1313,8 +1698,28 @@ function formatMarkdown(report) {
     lines.push("");
     lines.push(`## Runs / Providers (${s.runs.length})`);
     for (const r of s.runs) {
+      const freshNote = r.freshContext ? ", freshContext=true" : "";
       lines.push(
-        `- Run #${r.ordinal}: \`${r.providerInstanceId || "unknown"}\` / \`${r.model || "unknown"}\` (${r.status}, \`${r.runId}\`)`
+        `- Run #${r.ordinal}: \`${r.providerInstanceId || "unknown"}\` / \`${r.model || "unknown"}\` (${r.status}${freshNote}, \`${r.runId}\`)`
+      );
+    }
+  }
+  if (Array.isArray(report.contextSegments) && report.contextSegments.length > 0) {
+    lines.push("");
+    lines.push(`## Context Segments (${report.contextSegments.length})`);
+    for (const seg of report.contextSegments) {
+      lines.push(
+        `- Segment #${seg.segmentIndex} [${seg.boundaryReasons.join(", ")}]: runs #${seg.firstRunOrdinal}..#${seg.lastRunOrdinal} (${seg.runCount} runs, \`${seg.providerInstanceId || "unknown"}\` / \`${seg.model || "unknown"}\`, pt \`${seg.providerThreadId || "none"}\`) | human=${seg.humanRuns}, scheduled=${seg.scheduledRuns}, manual=${seg.manualScheduledRuns}, failed=${seg.failedRuns}`
+      );
+    }
+  }
+  if (Array.isArray(report.scheduledTasks) && report.scheduledTasks.length > 0) {
+    lines.push("");
+    lines.push(`## Scheduled Tasks (${report.scheduledTasks.length})`);
+    for (const t of report.scheduledTasks) {
+      const st = t.inRangeStats || {};
+      lines.push(
+        `- \`${t.scheduledTaskId}\` (${t.title || "untitled"}, mode=\`${t.threadMode || "unknown"}\`, enabled=${t.enabled ?? "unknown"}): inRange=${st.totalRuns ?? 0} (auto=${st.scheduledAutoRuns ?? 0}, manual=${st.manualTriggerRuns ?? 0}, completed=${st.completedRuns ?? 0}, failed/aborted=${st.failedOrInterruptedRuns ?? 0}, zeroTool=${st.zeroToolRuns ?? 0}, toolUsing=${st.nonZeroToolRuns ?? 0}, failedTools=${st.failedToolRuns ?? 0}, subagent=${st.subagentRuns ?? 0}, silent=${st.silentRuns ?? 0}, output=${st.outputRuns ?? 0}, totalTools=${st.totalToolCalls ?? 0})`
       );
     }
   }
@@ -1348,8 +1753,13 @@ function formatMarkdown(report) {
     lines.push("");
     lines.push(`## Subagents (${report.subagents.length})`);
     for (const sub of report.subagents) {
+      const childNote =
+        sub.childItemCount > 0
+          ? `, childItems=${sub.childItemCount}, childFailed=${sub.childFailedCount || 0}`
+          : "";
+      const cleanTitle = (sub.title || "").replace(/\s+/g, " ").trim().slice(0, 120);
       lines.push(
-        `- ${sub.location} (ordinal ${sub.ordinal}): \`${sub.driver || sub.providerInstanceId || "unknown"}\` ${sub.title || ""} -> \`${sub.childThreadId || "none"}\` (${sub.status}, item \`${sub.itemId}\`)`
+        `- ${sub.location} (ordinal ${sub.ordinal}): \`${sub.driver || sub.providerInstanceId || "unknown"}\` ${cleanTitle} -> \`${sub.childThreadId || "none"}\` (${sub.status}${childNote}, item \`${sub.itemId}\`)`
       );
     }
   }
@@ -1380,13 +1790,25 @@ function formatMarkdown(report) {
       ).replace(/\s+/g, " ")}\``
     );
   }
+  if (Array.isArray(report.scheduledTriggers) && report.scheduledTriggers.length > 0) {
+    lines.push("");
+    lines.push(`## Scheduled Triggers (${report.scheduledTriggers.length})`);
+    for (const tr of report.scheduledTriggers) {
+      const agentNote = tr.agent ? ` [${tr.agent}]` : "";
+      const freshNote = tr.freshContext ? " freshContext=true" : "";
+      lines.push(
+        `- [${tr.index}] ${tr.location} (ordinal ${tr.ordinal}, ${tr.timestamp})${agentNote} \`${tr.triggerKind}\` task=\`${tr.scheduledTaskId}\`${freshNote} tools=${tr.toolCallCount ?? 0} failedTools=${tr.failedToolCount ?? 0} output=${tr.hasAssistantOutput ? "yes" : "no"} status=${tr.runStatus || "unknown"} item \`${tr.itemId}\``
+      );
+    }
+  }
   lines.push("");
   lines.push(`## Human Inputs (${report.humanInputs.length})`);
   for (const h of report.humanInputs) {
     const agentNote = h.agent ? ` [${h.agent}]` : "";
+    const freshNote = h.freshContext ? " [freshContext]" : "";
     const itemNote = h.itemId ? ` item \`${h.itemId}\`` : "";
     lines.push(
-      `### [${h.index}] ${h.location} (ordinal ${h.ordinal}, ${h.timestamp})${agentNote}${itemNote}`
+      `### [${h.index}] ${h.location} (ordinal ${h.ordinal}, ${h.timestamp})${agentNote}${freshNote}${itemNote}`
     );
     if (h.precedingAssistant) {
       lines.push(
@@ -1479,7 +1901,8 @@ async function main() {
 
 export { formatMarkdown };
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const resolveReal = (targetPath) => { try { return fs.realpathSync(path.resolve(targetPath)); } catch { return path.resolve(targetPath); } };
+const isMain = Boolean(process.argv[1]) && resolveReal(process.argv[1]) === resolveReal(fileURLToPath(import.meta.url));
 if (isMain) {
   main().catch((err) => {
     console.error(err.message || err);

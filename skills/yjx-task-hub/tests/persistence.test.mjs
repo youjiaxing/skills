@@ -46,6 +46,26 @@ test('real coordinator holds exclusive lock across CLI calls, supports --file in
   assert.equal(fs.existsSync(path.join(root, 'lock.json')), false);
 });
 
+test('sync record stays incomplete until coverage and external checks are attested', t => {
+  const { run, root } = fixture(t);
+  run(['init'], { notionDatabaseId: '11111111-1111-4111-8111-111111111111', notionDataSourceId: 'collection://22222222-2222-4222-8222-222222222222', tbUserId: 'aaaaaaaaaaaaaaaaaaaaaaaa' });
+  let { session } = run(['start', '--sync']);
+  assert.equal(run(['status']).lastSync.status, 'running');
+  assert.throws(() => run(['request', '--session', session], { action: 'sync-attest', identityVerified: true, paginationVerified: true, iterationsVerified: true, writesVerified: true, candidatesHandled: true }), /覆盖/);
+  assert.equal(run(['stop', '--session', session]).syncStatus, 'incomplete');
+  assert.equal(run(['status']).lastSync.status, 'incomplete');
+  ({ session } = run(['start', '--sync']));
+  run(['request', '--session', session], { action: 'inventory', complete: true, pages: [] });
+  run(['request', '--session', session], { action: 'candidates', complete: true, tasks: [] });
+  assert.throws(() => run(['request', '--session', session], { action: 'sync-attest' }), /核实/);
+  run(['request', '--session', session], { action: 'sync-attest', identityVerified: true, paginationVerified: true, iterationsVerified: true, writesVerified: true, candidatesHandled: true });
+  assert.throws(() => run(['request', '--session', session], { action: 'sync-attest' }), /核实/);
+  run(['request', '--session', session], { action: 'sync-attest', identityVerified: true, paginationVerified: true, iterationsVerified: true, writesVerified: true, candidatesHandled: true });
+  assert.equal(run(['stop', '--session', session]).syncStatus, 'verified');
+  assert.equal(run(['status']).lastSync.status, 'verified');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'sync-run.json'))).runs.map(x => x.status), ['incomplete', 'verified']);
+});
+
 test('a second owner cannot acquire a live lock', t => {
   const { root } = fixture(t);
   const lock = acquireLock(root);

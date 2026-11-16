@@ -388,3 +388,293 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
   assert.equal(item.type, "command_execution");
   assert.equal(item.payload.exitCode, 1);
 });
+test("T3 SQLite 多定时器与 freshContext 分段：预检分流 full，剥离定时触发并聚合工具经济性与子代理子线程统计", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const {
+    preflightT3Thread,
+    analyzeT3Thread,
+    formatMarkdown,
+  } = await import("../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs");
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-timers-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dbPath = path.join(root, "statev2.sqlite");
+
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE orchestration_v2_projection_threads (
+      thread_id TEXT PRIMARY KEY,
+      title TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_runs (
+      run_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      ordinal INTEGER,
+      provider TEXT,
+      provider_instance_id TEXT,
+      provider_thread_id TEXT,
+      status TEXT,
+      requested_at TEXT,
+      completed_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_provider_threads (
+      provider_thread_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      provider_instance_id TEXT,
+      driver TEXT,
+      first_run_ordinal INTEGER,
+      last_run_ordinal INTEGER,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_turn_items (
+      turn_item_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      run_id TEXT,
+      provider_thread_id TEXT,
+      ordinal INTEGER,
+      type TEXT,
+      status TEXT,
+      updated_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_turn_item_positions (
+      thread_id TEXT,
+      turn_item_id TEXT,
+      ordinal INTEGER
+    );
+    CREATE TABLE scheduled_tasks (
+      task_id TEXT PRIMARY KEY,
+      title TEXT,
+      thread_id TEXT,
+      thread_mode TEXT,
+      schedule_json TEXT,
+      enabled INTEGER,
+      last_run_status TEXT
+    );
+  `);
+
+  const threadId = "11111111-2222-3333-4444-555555555555";
+  const childId = "thread:delegated-task:child-1";
+  const taskA = "scheduled-task:command:mcp:aaa:schedule-task:morning-sync";
+  const taskB = "scheduled-task:command:mcp:bbb:schedule-task:evening-check";
+
+  db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?)").run(
+    threadId,
+    "多定时器测试",
+    "2026-11-15T00:00:00.000Z",
+    "2026-11-15T02:00:00.000Z",
+    JSON.stringify({ worktreePath: "D:/repo" })
+  );
+  db.prepare("INSERT INTO scheduled_tasks VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    taskA,
+    "早间同步",
+    threadId,
+    "fresh_session",
+    JSON.stringify({ kind: "cron", expr: "0 8 * * *" }),
+    1,
+    "succeeded"
+  );
+  db.prepare("INSERT INTO scheduled_tasks VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    taskB,
+    "晚间检查",
+    threadId,
+    "continue",
+    JSON.stringify({ kind: "interval", everyMs: 600000 }),
+    1,
+    "failed"
+  );
+
+  const insertRun = db.prepare("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  // 同一 provider(codex) 下：Run 1 正常，Run 2 freshContext=true（保持同 providerThreadId 以专门验证 freshContext 单独触发 full），Run 3 沿用上下文，Run 4 另一定时器失败
+  insertRun.run("run:1", threadId, 1, "codex", "codex", "pt:codex:1", "completed", "2026-11-15T00:00:00.000Z", "2026-11-15T00:01:00.000Z", JSON.stringify({ modelSelection: { model: "gpt-6.1-sol" } }));
+  insertRun.run("run:2", threadId, 2, "codex", "codex", "pt:codex:1", "completed", "2026-11-15T00:10:00.000Z", "2026-11-15T00:11:00.000Z", JSON.stringify({ modelSelection: { model: "gpt-6.1-sol" }, freshContext: true }));
+  insertRun.run("run:3", threadId, 3, "codex", "codex", "pt:codex:1", "completed", "2026-11-15T00:20:00.000Z", "2026-11-15T00:21:00.000Z", JSON.stringify({ modelSelection: { model: "gpt-6.1-sol" } }));
+  insertRun.run("run:4", threadId, 4, "codex", "codex", "pt:codex:1", "failed", "2026-11-15T00:30:00.000Z", "2026-11-15T00:31:00.000Z", JSON.stringify({ modelSelection: { model: "gpt-6.1-sol" } }));
+
+  const insertItem = db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  const insertPos = db.prepare("INSERT INTO orchestration_v2_turn_item_positions VALUES (?, ?, ?)");
+  const addItem = (id, runId, ptId, ord, type, status, payload, tId = threadId) => {
+    insertItem.run(id, tId, runId, ptId, ord, type, status, "2026-11-15T00:10:00.000Z", JSON.stringify(payload));
+    if (tId === threadId) insertPos.run(tId, id, ord);
+  };
+
+  // Run 1: 真人输入 + subagent
+  addItem("turn-item:message:human-1", "run:1", "pt:codex:1", 1000001, "user_message", "completed", { text: "帮我配置两个定时同步任务" });
+  addItem("item:sub1", "run:1", "pt:codex:1", 1000002, "subagent", "completed", { title: "调研同步脚本", driver: "codex", childThreadId: childId });
+  addItem("item:a1", "run:1", "pt:codex:1", 1000003, "assistant_message", "completed", { text: "已配置完成" });
+  // 子线程记录：2 条记录，其中 1 条失败
+  addItem("child:1", null, null, 1, "command_execution", "completed", { input: "ls" }, childId);
+  addItem("child:2", null, null, 2, "command_execution", "failed", { input: "bad" }, childId);
+
+  // Run 2: taskA 手动试跑 + freshContext=true + prompt 中故意提及 yjx-retro-skill（不得被误判为复盘调用）+ 0 工具静默
+  addItem(
+    `turn-item:message:scheduled-task-message:${encodeURIComponent(taskA)}:1794000000000:manual`,
+    "run:2",
+    "pt:codex:1",
+    2000001,
+    "user_message",
+    "completed",
+    { scheduledTaskId: taskA, text: "执行早间同步，不要调用 yjx-retro-skill" }
+  );
+
+  // Run 3: taskA 定时触发 + 1 次成功命令 + 助手回复
+  addItem(
+    `turn-item:message:scheduled-task-message:${encodeURIComponent(taskA)}:1794000600000:scheduled`,
+    "run:3",
+    "pt:codex:1",
+    3000001,
+    "user_message",
+    "completed",
+    { scheduledTaskId: taskA, text: "执行早间同步" }
+  );
+  addItem("item:cmd3", "run:3", "pt:codex:1", 3000002, "command_execution", "completed", { input: "python sync.py", exitCode: 0, output: "ok" });
+  addItem("item:a3", "run:3", "pt:codex:1", 3000003, "assistant_message", "completed", { text: "早间同步完成" });
+
+  // Run 4: taskB 定时触发 + 1 次失败命令 + run 失败
+  addItem(
+    `turn-item:message:scheduled-task-message:${encodeURIComponent(taskB)}:1794001200000:scheduled`,
+    "run:4",
+    "pt:codex:1",
+    4000001,
+    "user_message",
+    "completed",
+    { scheduledTaskId: taskB, text: "执行晚间检查" }
+  );
+  addItem("item:cmd4", "run:4", "pt:codex:1", 4000002, "command_execution", "failed", { input: "python check.py", exitCode: 1, output: "Process exited with code 1" });
+  db.close();
+
+  // 1. 预检：同 provider / 同 providerThreadId 下，仅凭 freshContext=true 应分流到 full；且定时 prompt 提及 yjx-retro-skill 不算复盘调用
+  const pre = preflightT3Thread(dbPath, threadId);
+  assert.equal(pre.route, "full");
+  assert.equal(pre.retroInvocations.length, 0);
+  assert.equal(pre.rangeFreshContextCount, 1);
+  assert.equal(pre.rangeScheduledTaskCount, 3);
+  assert.equal(pre.rangeHumanInputCount, 1);
+  assert.equal(pre.rangeScheduledTasks.length, 2);
+
+  // 2. 完整提取：contextSegments 应按 freshContext 拆分为 2 段；humanInputs 仅含 1 条真人输入；scheduledTriggers 含 3 条
+  const report = analyzeT3Thread(dbPath, threadId);
+  assert.equal(report.humanInputs.length, 1);
+  assert.equal(report.humanInputs[0].text, "帮我配置两个定时同步任务");
+  assert.equal(report.scheduledTriggers.length, 3);
+  assert.deepEqual(
+    report.scheduledTriggers.map((x) => x.triggerKind),
+    ["scheduled-manual", "scheduled", "scheduled"]
+  );
+  assert.equal(report.contextSegments.length, 2);
+  assert.deepEqual(report.contextSegments[0].boundaryReasons, ["initial"]);
+  assert.deepEqual(report.contextSegments[1].boundaryReasons, ["fresh_context"]);
+  assert.equal(report.contextSegments[0].humanRuns, 1);
+  assert.equal(report.contextSegments[1].manualScheduledRuns, 1);
+  assert.equal(report.contextSegments[1].scheduledRuns, 2);
+
+  const statA = report.scheduledTasks.find((x) => x.scheduledTaskId === taskA).inRangeStats;
+  assert.equal(statA.totalRuns, 2);
+  assert.equal(statA.manualTriggerRuns, 1);
+  assert.equal(statA.scheduledAutoRuns, 1);
+  assert.equal(statA.zeroToolRuns, 1);
+  assert.equal(statA.nonZeroToolRuns, 1);
+  assert.equal(statA.silentRuns, 1);
+  assert.equal(statA.outputRuns, 1);
+  assert.equal(statA.totalToolCalls, 1);
+
+  const statB = report.scheduledTasks.find((x) => x.scheduledTaskId === taskB).inRangeStats;
+  assert.equal(statB.totalRuns, 1);
+  assert.equal(statB.failedOrInterruptedRuns, 1);
+  assert.equal(statB.failedToolRuns, 1);
+
+  assert.equal(report.subagents.length, 1);
+  assert.equal(report.subagents[0].childItemCount, 2);
+  assert.equal(report.subagents[0].childFailedCount, 1);
+
+  const md = formatMarkdown(report);
+  assert.match(md, /## Context Segments \(2\)/);
+  assert.match(md, /## Scheduled Tasks \(2\)/);
+  assert.match(md, /## Scheduled Triggers \(3\)/);
+  assert.match(md, /childItems=2, childFailed=1/);
+});
+
+test("T3 SQLite 无 scheduled_tasks 表时仍可从 turn_item_id 解码历史定时触发", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const {
+    preflightT3Thread,
+    analyzeT3Thread,
+  } = await import("../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs");
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-noschedtable-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dbPath = path.join(root, "statev2.sqlite");
+
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE orchestration_v2_projection_threads (
+      thread_id TEXT PRIMARY KEY,
+      title TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_runs (
+      run_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      ordinal INTEGER,
+      provider TEXT,
+      provider_instance_id TEXT,
+      provider_thread_id TEXT,
+      status TEXT,
+      requested_at TEXT,
+      completed_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_provider_threads (
+      provider_thread_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      provider_instance_id TEXT,
+      driver TEXT,
+      first_run_ordinal INTEGER,
+      last_run_ordinal INTEGER,
+      payload_json TEXT
+    );
+    CREATE TABLE orchestration_v2_projection_turn_items (
+      turn_item_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      run_id TEXT,
+      provider_thread_id TEXT,
+      ordinal INTEGER,
+      type TEXT,
+      status TEXT,
+      updated_at TEXT,
+      payload_json TEXT
+    );
+  `);
+  const tid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?)").run(tid, "无表兼容测试", "2026-11-15T00:00:00.000Z", "2026-11-15T00:01:00.000Z", "{}");
+  db.prepare("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("r1", tid, 1, "codex", "codex", "pt:1", "completed", "2026-11-15T00:00:00.000Z", "2026-11-15T00:01:00.000Z", "{}");
+  db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "turn-item:message:scheduled-task-message:scheduled-task:legacy-1:1794000000000:scheduled",
+    tid,
+    "r1",
+    "pt:1",
+    1000001,
+    "user_message",
+    "completed",
+    "2026-11-15T00:00:00.000Z",
+    JSON.stringify({ text: "legacy timer" })
+  );
+  db.close();
+
+  const pre = preflightT3Thread(dbPath, tid);
+  assert.equal(pre.route, "fast");
+  assert.equal(pre.rangeScheduledTaskCount, 1);
+  assert.equal(pre.rangeHumanInputCount, 0);
+
+  const report = analyzeT3Thread(dbPath, tid);
+  assert.equal(report.humanInputs.length, 0);
+  assert.equal(report.scheduledTriggers.length, 1);
+  assert.equal(report.scheduledTasks[0].scheduledTaskId, "scheduled-task:legacy-1");
+  assert.equal(report.scheduledTasks[0].inRangeStats.scheduledAutoRuns, 1);
+});

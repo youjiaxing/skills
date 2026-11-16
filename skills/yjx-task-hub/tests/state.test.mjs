@@ -6,12 +6,32 @@ import path from 'node:path';
 import { Coordinator } from '../scripts/coordinator.mjs';
 import { planTask, planPersonal, candidateTasks } from '../scripts/engine.mjs';
 import { atomicJson, privateRoot, readJson } from '../scripts/storage.mjs';
+import { adaptTasks } from '../scripts/adapt.mjs';
 
 const me = 'aaaaaaaaaaaaaaaaaaaaaaaa', other = 'cccccccccccccccccccccccc', id = 'bbbbbbbbbbbbbbbbbbbbbbbb';
 const config = { version: 1, notionDatabaseId: '11111111-1111-4111-8111-111111111111', notionDataSourceId: 'collection://22222222-2222-4222-8222-222222222222', tbUserId: me, activeWindowDays: 90, watchedTasks: [], ignoredTaskIds: [] };
 const task = overrides => ({ id, title: '示例任务', executorId: me, executorName: '示例甲', isDone: false, isArchived: false, statusName: '进行中', ...overrides });
 const page = (status, extra = {}) => ({ pageId: '33333333-3333-4333-8333-333333333333', properties: { '任务': '自定标题', '个人状态': status, '个人顺序': 2, '下一步动作': '保留人工进度', '来源标识': `TB:${id}`, '来源状态': '进行中 · 示例甲', '来源链接': `https://www.teambition.com/task/${id}`, ...extra } });
 const entry = overrides => ({ trackingMode: 'executor', lastKnownExecutorId: me, autoCompletedByReassign: false, pageId: '33333333-3333-4333-8333-333333333333', ...overrides });
+
+test('TB adaptation requires identity, unique mappings and preserves missing iteration', () => {
+  const raw = { taskId: id, content: '示例', executorId: me, isDone: false, isArchived: false, projectId: 'p', tfsId: 's', uniqueId: 12 };
+  const input = { tasks: [raw], statuses: [{ projectId: 'p', id: 's', name: '进行中' }], sprints: [], members: [], projects: [{ id: 'p', uniqueIdPrefix: 'Demo' }], tbUserId: me, tbUserName: '示例甲' };
+  const [ok] = adaptTasks(input);
+  assert.equal(ok.task.shortId, 'Demo-12');
+  assert.equal(ok.task.executorName, '示例甲');
+  assert.equal(Object.hasOwn(ok.task, 'iteration'), false);
+  const missingSprint = adaptTasks({ ...input, tasks: [{ ...raw, sprintId: 'missing' }] })[0];
+  assert.match(missingSprint.warnings[0], /未唯一匹配/);
+  assert.equal(Object.hasOwn(missingSprint.task, 'iteration'), false);
+  assert.match(adaptTasks({ ...input, statuses: [...input.statuses, ...input.statuses] })[0].error, /未唯一匹配/);
+  assert.match(adaptTasks({ ...input, tasks: [raw, raw] })[0].error, /重复/);
+  assert.match(adaptTasks({ ...input, tasks: [raw, raw] })[1].error, /重复/);
+  assert.match(adaptTasks({ ...input, tasks: [{ ...raw, tfsId: undefined }], statuses: [{ projectId: 'p', name: '状态' }] })[0].error, /ID 缺失/);
+  const missingOwner = adaptTasks({ ...input, tasks: [{ ...raw, executorId: other }] })[0];
+  assert.equal(Object.hasOwn(missingOwner.task, 'executorName'), false);
+  assert.match(missingOwner.warnings.join(' '), /负责人姓名/);
+});
 function fixture(t) {
   const root = privateRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'yjx-task-hub-test-')), true);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -183,6 +203,30 @@ test('syncCoverage tracks planned tracked items and candidate checks accurately'
     unplannedTrackedKeys: [`TB:${watchedId}`],
     candidatesChecked: true,
   });
+});
+
+test('batch plans isolate failures and retain individual write safeguards', async t => {
+  const second = 'dddddddddddddddddddddddd';
+  const { hub } = fixture(t);
+  const p2 = { ...page('进行中'), pageId: '44444444-4444-4444-8444-444444444444', properties: { ...page('进行中').properties, '来源标识': `TB:${second}` } };
+  await hub.handle({ action: 'inventory', complete: true, pages: [page('进行中'), p2] });
+  const result = await hub.handle({ action: 'plan-batch', tasks: [task(), task({ id: second, executorId: undefined })] });
+  assert.equal(result.results[0].plan.committed, true);
+  assert.match(result.results[1].error, /executorId/);
+  assert.deepEqual(hub.syncCoverage().unplannedTrackedKeys, [`TB:${second}`]);
+  const mixed = await hub.handle({ action: 'plan-batch', tasks: [task(), { id: 'invalid' }] });
+  assert.equal(mixed.results[0].plan.committed, true);
+  assert.match(mixed.results[1].error, /taskId/);
+  await assert.rejects(hub.handle({ action: 'plan-batch', tasks: [task(), task()] }), /重复/);
+});
+
+test('failed re-attestation invalidates a prior successful attestation', async t => {
+  const { hub } = fixture(t);
+  await hub.handle({ action: 'inventory', complete: true, pages: [] });
+  await hub.handle({ action: 'candidates', complete: true, tasks: [] });
+  await hub.handle({ action: 'sync-attest', identityVerified: true, paginationVerified: true, iterationsVerified: true, writesVerified: true, candidatesHandled: true });
+  await assert.rejects(hub.handle({ action: 'sync-attest', writesVerified: false }), /核实/);
+  assert.equal(hub.syncAttested, false);
 });
 
 test('duplicate source pages block both sync and personal edits before any intent is persisted', async t => {

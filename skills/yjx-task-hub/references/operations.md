@@ -6,11 +6,14 @@
 
 ```text
 node <skill-dir>/scripts/hub.mjs start
+node <skill-dir>/scripts/hub.mjs start --sync
 node <skill-dir>/scripts/hub.mjs request --session <start返回的token> [--file <json-path>]
 node <skill-dir>/scripts/hub.mjs stop --session <token>
 ```
 
 `start` 启动独立本地 Node 协调进程，持有 lock.json 跨越多次 MCP 调用；Windows 使用本地 named pipe，POSIX 使用私有根内 socket，未开放 HTTP 端口。进程只为当次操作持锁，结束或等待用户决定新候选时 stop，下次重新 start/读取。它不是后台同步任务，不会主动查询外部服务。
+
+TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，独立 `status` 返回 `lastSync` 和锁状态，`history` 返回各轮记录。启动后记录为 `running`；正常 stop 时，只有全部检查通过并明确提交 `sync-attest` 才记录 `verified`，否则为 `incomplete`。进程中断可能留下 `running`，结合锁状态检查，不把它当作成功。记录是调用方核验的摘要；未启动协调器的调度不会产生记录，也不能由旧记录推断本次运行成功。`verified` 不单独证明锁已释放，应同时检查 `lock:null`。
 
 同一配置一次只有一个会话；IPC 请求再串行执行。本地客户端超时视为本地提交结果未知，先 status 对账。当会话中断导致后台协调进程已退出、`request` 或 `stop` 返回 `connect ENOENT` 时，表示原监听管道已关闭：此时直接运行 `start`，由 `acquireLock` 验证旧 PID 已退出（`ESRCH`）后回收旧锁，并由 `Coordinator` 构造器自动回滚仅处于 `prepared` 阶段的未发出意图（任何 `dispatched` 未决项仍保留阻断待对账），随后使用新 token 重新提交完整 `inventory` 继续。锁进程仍存在或身份无法核实时保持占用，不按时间强删。
 
@@ -49,8 +52,11 @@ node <skill-dir>/scripts/hub.mjs stop --session <token>
 | --- | --- | --- |
 | inventory | complete:true、pages | 单次解码受控字段，返回条数/重复冲突/未决；重置覆盖率并失效旧计划 |
 | candidates | complete:true、tasks | 返回候选、autoIntakeIds、decisionGroups、老单 ID、时间未知项；置 `candidatesChecked: true` |
+| adapt-tasks | tasks、statuses、sprints、members、projects 数组和已核实的 tbUserName | 将已获取的 TB 原始字段映射为 task；逐项返回结果或错误，状态项需附所属 projectId；未知迭代不会伪造 |
 | configure | confirmed:true、patch | 修改 watchedTasks/ignoredTaskIds/activeWindowDays/autoCompleteOnTbEnd；要求全局无未决，传完整新值 |
 | plan | task | 读取标准化 TB 详情并记入 `plannedKeys`；若已跟踪且无实质变化，直接返回 `unchanged:true, committed:true` 免除外部写入，否则返回 planId/key/type/properties/notices |
+| plan-batch | tasks 数组 | 逐项执行 plan，返回各自计划或错误；失败项不计覆盖，成功项仍需分别处理写入 |
+| sync-attest | identityVerified、paginationVerified、iterationsVerified、writesVerified、candidatesHandled 均为 true | 核实身份和策略、分页终点、迭代、写入回执及候选处理后提交；有未决、未处理计划或覆盖不足时拒绝 |
 | plan-personal | pageId（编辑时）、properties | 新人工事项或个人安排生成计划；个人顺序须有用户确认 |
 | prepare | planId、confirmed:true（创建/个人编辑必需） | 持久化 prepared 意图，返回 opId |
 | dispatch | opId（可选 currentPage / noMatchConfirmed） | 基于本轮 `inventory` 核对页面快照与唯一性，持久化 dispatched，返回 permitted:true 及精确拟写 properties |
@@ -69,7 +75,7 @@ node <skill-dir>/scripts/hub.mjs stop --session <token>
 3. 自动修改个人状态（`auto_complete`、`auto_reopen`）时先单页重读，按 inventory 的字段形状传 `currentPage` 给 `dispatch`。读取失败或页面变化时取消 prepared 并报告该条；已 dispatched 的结果未知不得取消。其他更新可基于本轮 inventory；创建校验来源唯一性。重读与外部写入之间仍有竞态。
 4. 只有 `dispatch` 返回 `permitted: true`，才调用 Notion `create_pages` 或 `update_page`，目标固定为配置数据源/返回 `pageId`、`properties` 固定为派发结果。不执行 TB 写回。
 5. 当 Notion `create_pages` 或 `update_page` 明确返回成功（返回创建的 `pages[].id` 或更新的 `page_id`，且无 `isError`）时，直接调用 `commit`（传入 `apiSucceeded: true` 与返回的 `pageId`），**无需写后再调用 `notion.fetch` 回读页面**。协调器校验 `pageId` 身份无冲突后合成更新内存 `inventory` 并原子提交 `state.json` 基线。本地基线代表“基于本轮初始 `inventory` 快照与 API 明确成功响应确认的拟写结果”，实际落盘与跨会话并发修改留待下轮全表读取发现。
-6. TB 同步轮次先用 `action:status` 检查遗漏并补齐，随后调用 `stop --session <token>` 释放锁，核对返回的 `syncCoverage.unplannedTrackedKeys` 为空且 `candidatesChecked === true`，随后报告实际结果与候选。诊断只统计成功判定与候选计算，不证明分页真实完整、迭代已核实或所有写入已提交；还需检查未决与实际写入结果。读取受阻时照常 stop 释放锁，报告部分完成及遗漏；个人编辑会话不要求 TB 覆盖。
+6. TB 同步轮次先用 `action:status` 检查遗漏并补齐。核实身份及策略、分页终点、迭代、实际写入回执和候选均已处理后提交 `sync-attest`；存在待决候选、读取失败或结果未知时不提交。随后调用 `stop --session <token>`，检查返回的覆盖、未决和 `syncStatus`，再以独立 `status` 确认锁已释放。诊断只统计成功判定与候选计算；调用方仍须核实外部证据。读取受阻时照常 stop 并报告；个人编辑会话不要求 TB 覆盖。
 
 ## 未决与人工对账
 

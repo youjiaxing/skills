@@ -38,8 +38,12 @@ export function bodyText(message, botId) {
   return walk(body);
 }
 
+const CARD_DOWNGRADE_PLACEHOLDER = '请升级至最新版本客户端，以查看内容';
+
 export function imageKeys(message) {
   if (message.deleted) return [];
+  const type = message.msg_type ?? message.message_type;
+  if (type === 'interactive' && bodyText(message).includes(CARD_DOWNGRADE_PLACEHOLDER)) return [];
   const keys = new Set();
   function visit(value) {
     if (!value || typeof value !== 'object') return;

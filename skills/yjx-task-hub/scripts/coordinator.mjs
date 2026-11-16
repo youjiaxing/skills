@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { readJson, atomicJson, validateConfig } from './storage.mjs';
 import { taskKey, normalizePageId, normalizeExternalPage, indexPages, candidateTasks, planTask, planPersonal, verifyPage } from './engine.mjs';
+import { adaptTasks } from './adapt.mjs';
 
 export class Coordinator {
   constructor(root) {
@@ -14,6 +15,7 @@ export class Coordinator {
     this.index = null;
     this.plannedKeys = new Set();
     this.candidatesChecked = false;
+    this.syncAttested = false;
     // prepared is persisted before dispatch. No API call is allowed until dispatch returns.
     const recovered = structuredClone(this.state);
     for (const [key, entry] of Object.entries(recovered.entries)) {
@@ -78,8 +80,18 @@ export class Coordinator {
   }
 
   async handle(input) {
+    if (!['status', 'sync-attest'].includes(input.action)) this.syncAttested = false;
     switch (input.action) {
-      case 'status': return { config: this.config, pending: this.pending(), entries: this.state.entries, syncCoverage: this.syncCoverage() };
+      case 'status': return { config: this.config, pending: this.pending(), entries: this.state.entries, syncCoverage: this.syncCoverage(), uncommittedPlans: this.plans.size };
+      case 'sync-attest': {
+        this.syncAttested = false;
+        const coverage = this.syncCoverage();
+        if (input.identityVerified !== true || input.paginationVerified !== true || input.iterationsVerified !== true || input.writesVerified !== true || input.candidatesHandled !== true) throw new Error('需要核实身份、分页、迭代、写入结果和候选处理');
+        if (!coverage || !coverage.candidatesChecked || coverage.unplannedTrackedKeys.length || this.pending().length || this.plans.size) throw new Error('同步覆盖、未决操作或未提交计划尚未完成');
+        this.syncAttested = true;
+        return { attested: true };
+      }
+      case 'adapt-tasks': return { results: adaptTasks({ ...input, tbUserId: this.config.tbUserId }) };
       case 'inventory': {
         if (input.complete !== true || !Array.isArray(input.pages)) throw new Error('需要完整分页后的全库页面清单（complete:true）');
         const normalizedPages = input.pages.map(normalizeExternalPage);
@@ -88,6 +100,7 @@ export class Coordinator {
         this.plans.clear();
         this.plannedKeys.clear();
         this.candidatesChecked = false;
+        this.syncAttested = false;
         return { pages: this.inventory.length, conflicts: [...this.index].filter(([, pages]) => pages.length > 1).map(([key, pages]) => ({ key, pageIds: pages.map(x => x.pageId) })), pending: this.pending() };
       }
       case 'configure': {
@@ -108,6 +121,22 @@ export class Coordinator {
         const out = candidateTasks(input.tasks, this.config, this.index, this.state.entries);
         this.candidatesChecked = true;
         return out;
+      }
+      case 'plan-batch': {
+        this.requireInventory();
+        if (!Array.isArray(input.tasks) || input.tasks.length === 0) throw new Error('tasks 必须是非空数组');
+        const ids = input.tasks.filter(task => typeof task?.id === 'string' && /^[a-f0-9]{24}$/.test(task.id)).map(task => taskKey(task.id));
+        if (new Set(ids).size !== ids.length) throw new Error('批量任务 ID 重复');
+        const results = [];
+        for (const [index, task] of input.tasks.entries()) {
+          let key = null;
+          try { key = taskKey(task?.id); results.push({ index, key, plan: await this.handle({ action: 'plan', task }) }); }
+          catch (error) {
+            if (key) { this.clearPlansForKey(key); this.plannedKeys.delete(key); }
+            results.push({ index, key, error: error.message });
+          }
+        }
+        return { results };
       }
       case 'plan': {
         this.requireInventory();

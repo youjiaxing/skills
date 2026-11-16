@@ -15,7 +15,7 @@
 
 ## 分段读取与覆盖
 
-对本机 T3 Code 会话（SQLite）或 Codex 本地会话（JSONL），取证子代理优先运行本技能内置的确定性提取脚本生成结构化证据索引（自动识别 T3 SQLite 或 Codex JSONL，完成跨 Provider / 跨文件 `ordinal` 校验、压缩与跨 Agent `handoff` 定位、Skill 注入与文件读取提取、非零/失败工具调用索引、`t3-citation://` 引用批注自动解码，以及剥离系统包装后的完整真人输入原文与前置回复定位），避免手写解析器或发起十几轮 `t3_thread_read` 分页调用：
+对本机 T3 Code 会话（SQLite）或 Codex 本地会话（JSONL），取证子代理优先运行本技能内置的确定性提取脚本生成结构化证据索引，避免手写解析器或发起十几轮 `t3_thread_read` 分页调用。脚本自动完成跨 Provider / 跨文件 `ordinal` 校验、`compaction` / `handoff` / `freshContext` / `providerThreadId` 上下文分段切分、多定时器触发（`scheduled` 自动 / `scheduled-manual` 手动试跑）与真人输入分离及各定时器工具经济性聚合、Skill 注入与文件读取提取、非零/失败工具调用索引、`subagent` 子线程条目与失败计数、`t3-citation://` 引用批注自动解码，以及剥离系统包装后的完整真人输入原文与前置回复定位：
 
 ```bash
 node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-or-session-id>" --since-ordinal "<range-start-ordinal>" --format md --output "<temp-evidence-index.md>"
@@ -23,10 +23,11 @@ node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-or
 
 首次复盘省略 `--since-ordinal`。`--since-ordinal <n>` 只保留 ordinal 不小于 `n` 的记录（会话身份仍从起点之前读取），可与 `--until-ordinal <n>` 组合固定两端。
 
-需要围绕疑点回查某条 T3 记录（如某个失败工具调用、子代理结果或长消息）的完整未截断载荷时，直接按索引中的 `itemId` 调用单条回查：
+需要围绕疑点回查某条 T3 记录（如某个失败工具调用、子代理结果或长消息）的完整未截断载荷时，直接按索引中的 `itemId` 调用单条回查；若索引中 `Subagents` 显示某个子线程存在失败条目或需核查其内部过程，直接以 `childThreadId` 作为 `--session-id` 再次提取该子代理线程：
 
 ```bash
 node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-id>" --item-id "<turn-item-id>"
+node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<child-thread-id>" --format md
 ```
 
 若目标记录属于显式 JSONL 文件列表或其他非标准格式，可通过 `--file <path>`、`--until-ordinal <n>` 或先检查记录实际格式再按消息顺序分段提取。

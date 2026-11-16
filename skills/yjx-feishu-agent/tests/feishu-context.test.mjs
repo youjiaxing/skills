@@ -32,14 +32,14 @@ test('quote traversal is bounded, preserves cross-group source metadata and read
   assert.equal(JSON.parse(cross.split('\n')[3]).quotedMessages[0].sourceChatId,'oc_other');
   c.transport.get=async()=>{const e=new Error('secret token must not leak');e.apiCode=99991672;throw e;};
   const blocked=await resolveContext(item,c);assert.match(blocked,/API 99991672/);
-  assert.match(blocked,/read-feishu\.mjs message --chat <来源群ID>/);assert.doesNotMatch(blocked,/secret token/);
+  assert.match(blocked,/scripts\/read-feishu\.mjs message --chat <来源群ID>/);assert.doesNotMatch(blocked,/secret token/);
 });
 test('quoted image bytes reach a local file while revoked content stays hidden',async t=>{
   const failed=await setup(t);
   failed.transport.get=async parent=>({...quoted(parent),msg_type:'image',body:{content:JSON.stringify({image_key:'img_test'})}});
   failed.transport.image=async()=>{const e=new Error('denied');e.apiCode=99991672;throw e;};
   const fallback=await resolveContext(item,failed);
-  assert.match(fallback,/补读目标/);assert.match(fallback,/img_test/);assert.match(fallback,/read-feishu\.mjs image/);
+  assert.match(fallback,/补读目标/);assert.match(fallback,/img_test/);assert.match(fallback,/scripts\/read-feishu\.mjs image/);
   const c=await setup(t);
   const image={...quoted('om_parent'),msg_type:'image',body:{content:JSON.stringify({image_key:'img_test'})}};
   c.transport.get=async()=>image;
@@ -102,4 +102,35 @@ test('resource HTTP errors surface the Feishu code and stop useless image retrie
   assert.doesNotMatch(text,/读取失败或权限不足/);
   assert.doesNotMatch(text,/补读目标/);
   assert.doesNotMatch(text,/Request failed with status code 400/);
+});
+
+test('Card 2.0 downgrade placeholder skips platform placeholder imageKeys without retry',async t=>{
+  const c=await setup(t);
+  const downgradedCard={
+    ...quoted('om_parent'),
+    msg_type:'interactive',
+    body:{content:JSON.stringify({
+      title:'日报摘要',
+      elements:[
+        [{tag:'text',text:'实际卡片正文内容'}],
+        [{tag:'img',image_key:'img_v3_02ad_placeholder'}],
+        [{tag:'text',text:'请升级至最新版本客户端，以查看内容'}],
+      ],
+    })},
+  };
+  c.transport.get=async()=>downgradedCard;
+  c.transport.image=async()=>{assert.fail('Placeholder image_key must not be downloaded');};
+  assert.deepEqual(imageKeys(downgradedCard),[]);
+  const text=await resolveContext(item,c);
+  assert.doesNotMatch(text,/补读目标/);
+  assert.doesNotMatch(text,/图片未取得/);
+  const context=JSON.parse(text.split('\n')[3]);
+  assert.match(context.quotedMessages[0].text,/实际卡片正文内容/);
+  assert.equal(context.quotedMessages[0].images,undefined);
+  assert.equal(context.quotedMessages[0].imageKeys,undefined);
+
+  const realCard={...quoted('om_real_card'),msg_type:'interactive',body:{content:JSON.stringify({elements:[[{tag:'img',img_key:'img_real_1'}]]})}};
+  assert.deepEqual(imageKeys(realCard),['img_real_1']);
+  const postWithText={...quoted('om_post'),msg_type:'post',body:{content:JSON.stringify({zh_cn:{content:[[{tag:'text',text:'请升级至最新版本客户端，以查看内容'},{tag:'img',image_key:'img_real_2'}]]}})}};
+  assert.deepEqual(imageKeys(postWithText),['img_real_2']);
 });
