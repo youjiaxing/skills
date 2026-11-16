@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
 const DEFAULT_SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'unknown'];
 
@@ -190,7 +191,7 @@ async function main() {
   process.exit(1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   main().catch((err) => {
     process.stderr.write(String(err?.stack || err) + '\n');
     process.exit(1);

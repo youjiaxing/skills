@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import {realpathSync} from 'node:fs'
 import {readFile} from 'node:fs/promises'
+import {fileURLToPath} from 'node:url'
 import {CAPTURE_STOP_REASONS, groupBusinesses, mergeBusinesses} from '../../yjx-iphone-app-ops/scripts/dianping-results.mjs'
 
 const fields = ['name', 'rating', 'reviewCount', 'pricePerPerson', 'distance', 'area']
@@ -152,7 +154,7 @@ export async function readDianpingObservation(filePath) {
   return toLifeQueryCandidates(JSON.parse(await readFile(filePath, 'utf8')))
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const filePath = process.argv[2]
     if (!filePath) throw new Error('usage: dianping-observations.mjs <extraction.json>')

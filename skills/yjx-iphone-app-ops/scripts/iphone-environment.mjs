@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {execFileSync} from 'node:child_process'
 import {createHash, randomUUID} from 'node:crypto'
+import {realpathSync} from 'node:fs'
 import {access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -294,7 +295,7 @@ async function main() {
   throw new Error('Use discover [--udid ID --output PATH], show, dependencies [--apply --exclusive], wda <build|install> [--team-id ID --app-path PATH --exclusive], service <plan|status|adopt|install|start|restart|stop> <appium|tunnel> [--exclusive]')
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main().then((result) => console.log(JSON.stringify(result, null, 2))).catch((error) => {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main().then((result) => console.log(JSON.stringify(result, null, 2))).catch((error) => {
   console.log(JSON.stringify({ok: false, status: 'environment-blocked', error: error.message,
     phase: error.phase || null, rollback: error.rollback || null, backupPath: error.backupPath || null,
     outcome: error.outcome || null,
