@@ -208,7 +208,7 @@ Start each Reviewer task by stating that the recipient is already the independen
 
 根据当前活动和用户实际意图解释 “continue” 或 “go ahead” 等简短回复，不要依赖关键词白名单。继续讨论会推进对齐，不会自动切换到实施。恢复中断的实施可以依赖仍然有效的授权和执行指令。上下文清楚的实施指令不要求固定措辞或重复确认；如果活动不明确，继续处理 ready 的对齐工作，或只询问未解决的执行意图。
 
-已批准行为或边界发生重大变化时，需要重新对齐、必要评审和批准；有条件批准属于调整，不是对未修订 contract 的批准。批准不会验证不确定事实，也不能替代 coverage 或 review。
+已批准行为或边界发生重大变化时，需要重新对齐、必要评审和批准；有条件批准属于调整，不是对未修订 contract 的批准。批准不会验证不确定事实，也不能替代 coverage 或 review。判断已批准边界是否变化时，先区分用户确认的内容和方案中附带的 Agent 推断；推断与现有机制不一致时，默认沿用现有机制并在交付中说明，不单独发起审批。
 
 Before handoff, match the actual execution instruction to the current aligned and authorized behaviors, including the reviewed contract where required, and check that unresolved work does not block that scope. An instruction limited to an old plan does not transfer to a materially changed plan; if withdrawn, invalidated, or unclear in scope, obtain a new instruction. A still-valid earlier instruction or one in the approval reply needs no repetition.
 
