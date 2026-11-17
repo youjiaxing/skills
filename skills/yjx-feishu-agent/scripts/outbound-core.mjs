@@ -189,6 +189,131 @@ export async function reconcileOutbound({stateDir,appId,requestId}) {
 }
 
 // transport is an injected API boundary, not a model/skill simulation.
+async function confirmDelivery(record, { paths, routing, saveRoutes, previousRoute, messageId, revision }) {
+  record.acknowledgement = { messageId, receivedAt: new Date().toISOString() };
+  await save(paths.request(record.requestId), record);
+  if (record.sourceThreadId || previousRoute) {
+    routing.messages[messageId] = { sourceThreadId: record.sourceThreadId ?? null,
+      requestId: record.requestId, kind: 'outbound', pending: record.requestId };
+    await saveRoutes();
+  }
+  const next = { chatId: record.chatId, messageId, msgType: record.msgType, revision,
+    content: record.content, lastRequestId: record.requestId, pending: null,
+    ...(record.sourceThreadId ? { sourceThreadId: record.sourceThreadId } : {}) };
+  await save(paths.target(record.targetRequestId), { ...next, pending: record.requestId });
+  Object.assign(record, { status: 'sent', messageId, revision, confirmedAt: new Date().toISOString() });
+  await save(paths.request(record.requestId), record);
+  await save(paths.target(record.targetRequestId), next);
+  if (record.sourceThreadId || previousRoute) {
+    routing.messages[messageId].pending = null;
+    await saveRoutes();
+  }
+}
+
+// Explicit recovery for a full card replacement. Reapply the SAME frozen content to the
+// SAME message under its original request/target/group locks; never replay a send.
+export async function recoverUpdate({ stateDir, appId, requestId, transport, notAfter, now = Date.now }) {
+  const expires = notAfter === undefined ? Infinity : Date.parse(notAfter);
+  if (Number.isNaN(expires)) throw new Error('Invalid recovery expiry');
+  const paths = outboundPaths(stateDir, appId);
+  const releaseRequest = await lockThread(paths.root, `request-${hash(validateRequestId(requestId))}`, performance.now() + 5000);
+  if (!releaseRequest) throw new Error('Request locked; recovery deferred');
+  let releaseTarget;
+  try {
+    const record = await json(paths.request(requestId));
+    if (record.version !== 2 || record.requestId !== requestId || record.operation !== 'update'
+        || record.msgType !== 'interactive' || !Number.isSafeInteger(record.expectedRevision)
+        || record.expectedRevision < 1 || !record.targetMessageId) throw new Error('Recovery requires a journaled card update');
+    if (record.superseded === true) throw new Error('Superseded update is not replayed');
+    if (submissionOutcome(record) === 'sent') return { ...record, status: 'sent',
+      messageId: record.acknowledgement?.messageId ?? record.messageId,
+      revision: record.revision ?? record.expectedRevision + 1, retried: false };
+    if (!['submitting', 'unconfirmed'].includes(record.status) || record.submitted !== true
+        || !record.firstSubmittedAt) throw new Error('No submitted update to recover');
+    validateCard(record.content);
+    if (record.content.config?.update_multi !== true || canonical(record.content).includes('local:')
+        || Buffer.byteLength(JSON.stringify(record.content), 'utf8') > 30000) throw new Error('Frozen card is not ready for recovery');
+    releaseTarget = await lockThread(paths.root, `target-${hash(validateRequestId(record.targetRequestId))}`, performance.now() + 5000);
+    if (!releaseTarget) throw new Error('Target locked; recovery deferred');
+    const target = await json(paths.target(record.targetRequestId));
+    if (target.msgType !== 'interactive' || target.revision !== record.expectedRevision
+        || target.messageId !== record.targetMessageId || target.chatId !== record.chatId
+        || target.pending !== requestId) throw new Error('Target changed; recovery cannot overwrite a later update');
+    return await withRoutes({ stateDir, appId, chatId: record.chatId }, async (routing, saveRoutes) => {
+      const previousRoute = routing.messages[target.messageId];
+      if (previousRoute?.pending && previousRoute.pending !== requestId) throw new Error('Another routing update is unresolved');
+      if (now() >= expires) throw new Error('Recovery expired; no remote write');
+      record.recoveryAttempts = (record.recoveryAttempts ?? 0) + 1;
+      record.lastRecoveryAt = new Date(now()).toISOString();
+      record.status = 'submitting';
+      await save(paths.request(requestId), record);
+      try {
+        if (now() >= expires) throw new Error('Recovery expired; no remote write');
+        await transport.update(target.messageId, record.content);
+        await confirmDelivery(record, { paths, routing, saveRoutes, previousRoute,
+          messageId: target.messageId, revision: record.expectedRevision + 1 });
+      } catch {
+        // Even an explicit rejection of this retry cannot disprove the original effect.
+        record.status = 'unconfirmed';
+        record.error = { stage: 'recover-update', message: 'Update recovery unconfirmed; retained for the next scheduled attempt' };
+        await save(paths.request(requestId), record);
+      }
+      return { ...record, retried: true };
+    });
+  } finally { if (releaseTarget) await releaseTarget(); await releaseRequest(); }
+}
+
+
+// Release the local gate of an unknown card update so a newer full snapshot can patch the
+// same message. The original attempt stays unknown; this does not prove it had no effect.
+export async function supersedeUpdate({ stateDir, appId, requestId }) {
+  const paths = outboundPaths(stateDir, appId);
+  const releaseRequest = await lockThread(paths.root, `request-${hash(validateRequestId(requestId))}`, performance.now() + 5000);
+  if (!releaseRequest) throw new Error('Request locked; supersede deferred');
+  let releaseTarget;
+  try {
+    const record = await json(paths.request(requestId));
+    if (record.version !== 2 || record.requestId !== requestId || record.operation !== 'update'
+        || record.msgType !== 'interactive' || !record.targetRequestId || !record.targetMessageId) {
+      throw new Error('Only a journaled card update can be superseded');
+    }
+    if (submissionOutcome(record) === 'sent' || record.acknowledgement) throw new Error('Confirmed update is not superseded');
+    if (record.submitted !== true || !['submitting', 'unconfirmed'].includes(record.status) || !record.firstSubmittedAt) {
+      throw new Error('No submitted update to supersede');
+    }
+    releaseTarget = await lockThread(paths.root, `target-${hash(validateRequestId(record.targetRequestId))}`, performance.now() + 5000);
+    if (!releaseTarget) throw new Error('Target locked; supersede deferred');
+    const target = await json(paths.target(record.targetRequestId));
+    if (target.messageId !== record.targetMessageId || target.chatId !== record.chatId
+        || (target.pending && target.pending !== requestId)) {
+      throw new Error('Target changed; preserve current revision and pending gate');
+    }
+    return await withRoutes({ stateDir, appId, chatId: record.chatId }, async (routing, saveRoutes) => {
+      const previousRoute = routing.messages[target.messageId];
+      if (previousRoute?.pending && previousRoute.pending !== requestId) throw new Error('Another routing update is unresolved');
+      if (target.pending === requestId) {
+        target.pending = null;
+        await save(paths.target(record.targetRequestId), target);
+      }
+      if (previousRoute?.pending === requestId) {
+        routing.messages[target.messageId] = { ...previousRoute, pending: null };
+        await saveRoutes();
+      }
+      record.superseded = true;
+      record.supersededAt ??= new Date().toISOString();
+      record.status = 'unconfirmed';
+      record.submitted = true;
+      record.error = { stage: 'supersede', rejected: false,
+        message: 'Superseded by a later snapshot; original effect remains unknown' };
+      await save(paths.request(requestId), record);
+      return { ...record, status: 'superseded', retried: false };
+    });
+  } finally {
+    if (releaseTarget) await releaseTarget();
+    await releaseRequest();
+  }
+}
+
 export async function deliver(input, { stateDir, appId, directory, transport, recheckUnknown = false }) {
   const id = validateRequestId(input.requestId);
   // Older callers using this option get a read-only result too.
@@ -269,26 +394,8 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
         const uuid = hash(`${appId}:${id}`).slice(0,32);
         const messageId = target ? await transport.update(target.messageId, content) :
           await transport.send(record.chatId, input.msgType, content, uuid);
-        record.acknowledgement = {messageId:target?.messageId ?? messageId,receivedAt:new Date().toISOString()};
-        await save(paths.request(id),record);
-        if (record.sourceThreadId || previousRoute) {
-          routing.messages[record.acknowledgement.messageId]={sourceThreadId:record.sourceThreadId ?? null,
-            requestId:id,kind:'outbound',pending:id};
-          await saveRoutes();
-        }
-        const next = { chatId: record.chatId, messageId: target?.messageId ?? messageId, msgType: input.msgType,
-          revision: (target?.revision ?? 0) + 1, content, lastRequestId: id, pending: null,
-          ...(record.sourceThreadId ? {sourceThreadId:record.sourceThreadId} : {}) };
-        // Leave an unresolved gate if either journal write fails after an external effect.
-        await save(paths.target(targetId), { ...next, pending: id });
-        record.status = 'sent'; record.messageId = next.messageId; record.revision = next.revision;
-        record.confirmedAt = new Date().toISOString();
-        await save(paths.request(id), record);
-        await save(paths.target(targetId), next);
-        if (record.sourceThreadId || previousRoute) {
-          routing.messages[next.messageId].pending=null;
-          await saveRoutes();
-        }
+        await confirmDelivery(record, { paths, routing, saveRoutes, previousRoute,
+          messageId: target?.messageId ?? messageId, revision: (target?.revision ?? 0) + 1 });
       } catch (error) {
         // Only verified pre-effect rejections (invalid card 230099 or rate-limit rejection)
         // prove this message call had no effect. Other errors stay unresolved.
