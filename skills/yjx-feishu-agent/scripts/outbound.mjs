@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCredentials } from './feishu-credentials.mjs';
 import { defaultStateDir } from './codex.mjs';
-import { deliver, outboundStatus, prepareContent, recheckOutbound, reconcileOutbound, submissionOutcome } from './outbound-core.mjs';
+import { deliver, outboundStatus, prepareContent, recheckOutbound, reconcileOutbound, recoverUpdate, supersedeUpdate, submissionOutcome } from './outbound-core.mjs';
 import { readTransport } from './feishu-context.mjs';
 import { describePush } from './push-contract.mjs';
 import { createFeishuRateLimiter, parseRetryAfterHeaders } from './feishu-rate-limit.mjs';
@@ -18,30 +18,37 @@ export const HELP = `Usage:
   node outbound.mjs preflight --input request.json
   node outbound.mjs recheck --request-id ID [--state-dir PATH]
   node outbound.mjs reconcile --request-id ID [--state-dir PATH]
+  node outbound.mjs recover-update --request-id ID [--not-after ISO8601] [--state-dir PATH]
+  node outbound.mjs supersede-update --request-id ID [--state-dir PATH]
 JSON: requestId, msgType (text/post/interactive), content object.
 sourceThreadId: actual current Codex chat UUID; required for new connected-group writes unless oneWay:true.
 send: chatId; optional requiresUpdate (confirmed update request ID).
 update: targetRequestId (original send ID), expectedRevision, msgType=interactive.
 images: {name: local path}; use "local:name" in img_key/image_key.
-Relative image paths resolve against input file. No automatic retries.
+Relative image paths resolve against input file. Repeated send/update calls return the existing journal.
 recheck: read-only; legacy --input reads only requestId. Never resends.
 reconcile: repairs local journals from durable success only; no remote writes.
+recover-update: explicitly reapplies a frozen unknown update to its original card; never sends a new message.
+supersede-update: clears the local gate of an unknown card update so a newer snapshot can patch the same message. No remote write, and the original attempt stays unknown.
 Exit: 0 confirmed/read, 2 blocked/error, 3 unconfirmed.
 `;
 export function parseArgs(argv) {
   const [operation, ...args] = argv;
   if (!operation || ['--help','-h'].includes(operation)) return { help: true };
-  if (!['send','update','status','preflight','recheck','reconcile'].includes(operation)) throw new Error('Unknown operation');
+  if (!['send','update','status','preflight','recheck','reconcile','recover-update','supersede-update'].includes(operation)) throw new Error('Unknown operation');
   const result = { operation };
-  const keys = { '--input': 'input', '--state-dir': 'stateDir', '--credentials-dir': 'credentialsDir', '--request-id': 'requestId' };
+  const keys = { '--input': 'input', '--state-dir': 'stateDir', '--credentials-dir': 'credentialsDir', '--request-id': 'requestId', '--not-after': 'notAfter' };
   while (args.length) {
     const key = keys[args.shift()]; const value = args.shift();
     if (!key || !value || result[key]) throw new Error('Invalid or repeated option');
     result[key] = value;
   }
-  const valid = ['status','reconcile'].includes(operation) ? result.requestId && !result.input
+  const valid = ['status','reconcile','recover-update','supersede-update'].includes(operation) ? result.requestId && !result.input
     : operation==='recheck' ? Boolean(result.requestId)!==Boolean(result.input) : result.input && !result.requestId;
   if (!valid) throw new Error('Missing or incompatible options');
+  if (result.notAfter && (operation !== 'recover-update' || !Number.isFinite(Date.parse(result.notAfter)))) {
+    throw new Error('Invalid recovery expiry');
+  }
   return result;
 }
 function check(result) {
@@ -85,14 +92,17 @@ export async function main(argv) {
     record = await recheckOutbound({stateDir,appId:credentials.appId,requestId,transport:readTransport(credentials)});
   } else if (options.operation==='reconcile') {
     record = await reconcileOutbound({stateDir,appId:credentials.appId,requestId:options.requestId});
+  } else if (options.operation==='supersede-update') {
+    record = await supersedeUpdate({stateDir,appId:credentials.appId,requestId:options.requestId});
   } else {
-    const file = path.resolve(options.input);
-    const input = JSON.parse(await readFile(file, 'utf8'));
-    if (input.operation && input.operation !== options.operation) throw new Error('Input operation conflicts with command');
+    const file = options.input ? path.resolve(options.input) : null;
+    const input = file ? JSON.parse(await readFile(file, 'utf8')) : null;
+    if (input?.operation && input.operation !== options.operation) throw new Error('Input operation conflicts with command');
     Lark.defaultHttpInstance.defaults.timeout = 15000;
     const logger = { error() {}, warn() {}, info() {}, debug() {}, trace() {} };
     const client = new Lark.Client({ ...credentials, logger });
-    const invocationDeadlineMs = Date.now() + 70000;
+    const recoveryExpiry = options.notAfter ? Date.parse(options.notAfter) : Infinity;
+    const invocationDeadlineMs = Math.min(Date.now() + 70000, recoveryExpiry);
     const rateLimiter = createFeishuRateLimiter({
       gateDir: credentialsDir,
       appId: credentials.appId,
@@ -140,13 +150,19 @@ export async function main(argv) {
       },
       async update(messageId, content) {
         await rateLimiter.execute(() =>
-          callSdk(() => client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(content) } })),
+          callSdk(() => {
+            if (Date.now() >= recoveryExpiry) throw new Error('Recovery expired; no remote write');
+            return client.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(content) } });
+          }),
           { deadlineMs: invocationDeadlineMs });
         return messageId;
       },
     };
-    record = await deliver({ ...input, operation: options.operation },
-      { stateDir, appId: credentials.appId, directory: path.dirname(file), transport });
+    record = options.operation === 'recover-update'
+      ? await recoverUpdate({ stateDir, appId: credentials.appId, requestId: options.requestId,
+        transport, notAfter: options.notAfter })
+      : await deliver({ ...input, operation: options.operation },
+        { stateDir, appId: credentials.appId, directory: path.dirname(file), transport });
   }
   // Status includes durable content; never serialize SDK objects.
   const evidence = record.status !== 'missing'
@@ -156,6 +172,7 @@ export async function main(argv) {
   process.stdout.write(`${JSON.stringify({...record,delivery:described.delivery,followUp:described.followUp,checkedAt:described.checkedAt})}\n`);
   if(record.status==='missing') return 3;
   if (options.operation==='recheck') return record.outcome==='sent' ? 0 : record.outcome==='not_submitted' ? 2 : 3;
+  if (options.operation==='supersede-update') return record.status==='superseded' ? 0 : 3;
   if (options.operation === 'status' || record.status === 'sent') return 0;
   return record.status === 'unconfirmed' ? 3 : 2;
 }

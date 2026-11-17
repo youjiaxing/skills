@@ -25,7 +25,7 @@ description: 飞书与本机 Codex / T3 Code 已有聊天的桥接：向接入�
 
 选择消息类型、设计卡片或使用外部飞书 CLI 时，阅读 [CLI 与外部 skills 分工](references/feishu-cli.md)，按需复用已安装的 `lark-im`、`lark-shared` 及其组件参考。`lark-event` 可用于新事件需求的目录和输出契约；本技能常驻接收继续使用 SDK，替换接收层属于单独的架构变更，不由普通消息任务触发。
 
-向指定飞书群主动发送结果、附送图片、更新卡片或核查投递故障时，阅读 [主动投递与恢复](references/outbound.md)。`scripts/outbound.mjs` 管理发送与账本；已接入群的新发送/更新必须显式提供实际 `sourceThreadId`，或以 `oneWay:true` 明确单向发送。分别核对输出的 `delivery` 与 `followUp`，仅当后者为 `ready` 才报告可引用回到该来源。`recheck` 只读核查，`reconcile` 仅修复本地成功记录。缺回执和预检失败不能证明历史未发送，未决投递保留原编号及门禁；不通过 CLI 旁路重发。这些命令不创建定时任务。
+向指定飞书群主动发送结果、附送图片、更新卡片或核查投递故障时，阅读 [主动投递与恢复](references/outbound.md)。`scripts/outbound.mjs` 管理发送与账本；已接入群的新发送/更新必须显式提供实际 `sourceThreadId`，或以 `oneWay:true` 明确单向发送。分别核对输出的 `delivery` 与 `followUp`，仅当后者为 `ready` 才报告可引用回到该来源。`recheck` 只读核查，`reconcile` 仅修复本地成功记录；有完整冻结内容的未知原地更新可在既有更新授权内通过 `recover-update` 自动恢复，按调用方业务有效期限制写入。未知新发仍保留原编号及门禁，不通过 CLI 旁路重发；单卡恢复不阻断无关消息。这些命令不创建定时任务。
 
 ## 本机发送
 

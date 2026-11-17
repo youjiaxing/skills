@@ -27,6 +27,7 @@ node skills/yjx-feishu-agent/scripts/outbound.mjs status --request-id digest-202
 node skills/yjx-feishu-agent/scripts/outbound.mjs preflight --input /path/to/send.json
 node skills/yjx-feishu-agent/scripts/outbound.mjs recheck --request-id digest-20261016
 node skills/yjx-feishu-agent/scripts/outbound.mjs reconcile --request-id digest-20261016
+node skills/yjx-feishu-agent/scripts/outbound.mjs recover-update --request-id digest-update --not-after <ISO8601>
 ```
 
 均支持 `--state-dir PATH`，默认复用桥接状态目录与凭证。调用方需要将投递账本与其他任务隔离时，可用 `--credentials-dir PATH` 只读共享另一个目录下的 `secrets/feishu.json`；命令不会复制或改写凭证，账本仍写入 `--state-dir`。发送/更新退出码：0 已确认，2 受阻或输入错误，3 结果未知。status 的0只表示存档读出，仍检查状态字段；缺回执返回 missing、submitted:null 和退出码3。参数/版本错误只输出通用安全错误，先核对存档，不换编号重发。
@@ -78,13 +79,15 @@ send/update、status、recheck、reconcile 在原字段之外分别返回 `deliv
 |---|---|
 | sent | 已有成功回执，或 version:2 中持久化的 acknowledgement；不再发送。若目标状态尚未写完，可用 reconcile 修复本地记录 |
 | not_submitted | version:2 对原尝试的明确失败证明：消息写调用之前失败，或已经核定的服务端前置拒绝（`230099` 卡片内容拒绝，或 `230429`/`230020`/`99991400`/HTTP `429` 限流拒绝，不含 `99991403` 配额耗尽）；修正输入或待限流冷却后，调用方可在原任务授权内建立关联的新尝试，保留旧记录 |
-| unknown | 缺回执、未知提交、旧 blocked 无新证据、无法关联原请求；保持 pending 和依赖门禁，不生成新编号绕过 |
+| unknown | 缺回执、未知提交、旧 blocked 无新证据、无法关联原请求；保持原编号。未知新发继续保留门禁；有完整冻结记录的原地更新可按下文 recover-update 自动恢复，无关消息继续执行 |
 
 `preflight` 无凭据检查当前输入，scope 为 current-preflight；它的 submitted:false 只表示这次预检没有发消息，不能证明更早的请求未提交。也不能用“缺账本＋当前预检失败”解除历史门禁。未知业务错误不能统一归为明确拒绝；原卡片更新结果未知时，看到旧内容不能证明更新从未执行。
 
 `reconcile` 不执行远端写入，只对 version:2 且消息类型完整的记录，用已有持久化成功回执修复本地目标和请求状态，按发送相同的锁顺序重核群、消息、版本及 pending；拒绝覆盖后来版本或其他请求的门禁。重复执行可返回 reconciled:false。旧成功记录仍可查询和去重，但不自动迁移恢复；不能用它把未知结果变成成功，不能导入任意消息 ID，证据不足保持待办。
 
 核查按调用方已有执行节奏进行，不新增后台轮询或调度。调用方负责逻辑投递与重试关联，仅阻断该投递及依赖更新/提醒；无关任务继续。相同未决状态提示一次，后续有实质变化才再次提示，可用稳定 attentionKey 去重；记录缺失时以应用与请求 ID 去重。通知沿用已有授权渠道。旧记录可能已被旧版 recheck 覆盖，不能仅凭旧 submitted:false 自动恢复；本次升级不批量修复或重放历史待办。
+
+`recover-update` 是有远端写入的专用恢复接口，供已有任务在其更新授权内自动调用。只接受 version:2 中已提交但结果未知的完整共享卡片更新，沿用原请求、原发送目标、原消息与冻结内容，在 request → target → 群路由锁内核对版本和 pending，再次 PATCH 同一消息；拿到新成功回执后持久化并清除门禁，逻辑版本只推进一次。不会新发消息、换内容或上传图片；目标已推进或 pending 属于另一请求时拒绝覆盖。失败仍保留 unknown，下一计划轮可再恢复，不把重试被拒绝当作原尝试未生效的证明。调用方用 `--not-after` 限定业务有效期，过期不写；远端 API 没有由本工具提供的跨请求事务或版本锁，持续刷新任务以最新成功更新收敛。未知新发不走该接口；已有成功回执优先 reconcile。`supersede-update` 不写远端，只在原更新仍未知时清除它占用的本地门禁，使调用方能把更新的完整卡片 PATCH 到同一消息；原请求保持未知且不能再被 recover-update 重放。它不证明原更新没有生效，也不用于新发或提醒。
 
 ## 内容组织
 
