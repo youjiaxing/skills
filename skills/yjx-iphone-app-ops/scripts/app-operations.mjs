@@ -1,5 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
+import {inflateSync} from 'node:zlib'
+import {hasSecurityStructure, hasXmlStructure, sanitizeStaticSecurityObservations} from './app-pages.mjs'
 import {publishArtifact, preflightArtifacts} from './dianping-query.mjs'
 
 const elementKey = 'element-6066-11e4-a52e-4f735466cecf'
@@ -17,19 +19,22 @@ export function failureResult(error, operation = {outcome: 'not-sent'}) {
   const unknown = operation.outcome === 'unknown' || error.transportPending || error.outcome === 'unknown' || error.code === 'ETIMEDOUT' || (operation.outcome === 'sent' && !error.verificationStatus)
   const status = error.status || error.code || 'command-failed'
   const category = unknown || error.outcome === 'unknown' ? 'result-unknown'
-    : /credential|verification|foreground|owner|session-state|user-input|safety-check/.test(status) ? 'identity-or-safety-unconfirmed'
+    : /credential|verification|foreground|owner|session-state|user-input|safety-check|device-locked-recoverable/.test(status) ? 'identity-or-safety-unconfirmed'
     : /not-readable|unobservable|parse|unsupported/.test(status) ? 'observation-insufficient'
     : transientRead(error) ? 'temporary-read-failure' : 'deterministic-failure'
   return {ok: false, status,
     failure: {category, phase: error.phase || null, transportPending: Boolean(error.transportPending)},
     recovery: {next: category === 'result-unknown' ? 'recover-session-then-reconcile'
       : category === 'temporary-read-failure' ? (error.readBudgetExhausted ? 'reassess-observation' : 'bounded-read-retry')
+      : status === 'device-locked-recoverable' ? 'run-recover-to-unlock'
       : category === 'observation-insufficient' ? 'use-independent-observation' : 'resolve-precondition', replayAllowed: false,
       ...(error.readRetries !== undefined ? {readRetries: error.readRetries, readBudgetExhausted: Boolean(error.readBudgetExhausted)} : {})},
     operation: {...operation, ...(unknown && operation.outcome === 'sent' ? {outcome: 'unknown'} : {})},
     verification: {status: unknown ? 'unknown' : error.verificationStatus || 'blocked', reason: error.message,
       ...(error.observed !== undefined ? {expected: error.expected, observed: error.observed} : {})},
     error: error.message, phase: error.phase || null, retryable: false,
+    ...(error.credentialRequired !== undefined ? {credentialRequired: error.credentialRequired} : status === 'device-locked-recoverable' ? {credentialRequired: false} : {}),
+    ...(error.diffBoundingBox ? {diffBoundingBox: error.diffBoundingBox} : {}),
     ...(error.snapshotRestoreFailure ? {snapshotRestoreFailure: error.snapshotRestoreFailure} : {})}
 }
 
@@ -50,15 +55,162 @@ export async function annotateTarget(observationPath, {label, rect, outputPath})
   return {ok: true, output: outputPath, target: result.targets.at(-1)}
 }
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const PNG_BPP = {0: 1, 2: 3, 4: 2, 6: 4}
+
+function paethPredictor(a, b, c) {
+  const p = a + b - c
+  const pa = Math.abs(p - a)
+  const pb = Math.abs(p - b)
+  const pc = Math.abs(p - c)
+  if (pa <= pb && pa <= pc) return a
+  if (pb <= pc) return b
+  return c
+}
+
+export function decodePng8Bit(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 33 || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)) return null
+  let offset = 8, ihdr = null
+  const idats = []
+  while (offset + 12 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset)
+    const type = buffer.toString('ascii', offset + 4, offset + 8)
+    const dataStart = offset + 8
+    const dataEnd = dataStart + length
+    if (dataEnd + 4 > buffer.length) return null
+    const chunk = buffer.subarray(dataStart, dataEnd)
+    if (type === 'IHDR') {
+      if (length !== 13) return null
+      const width = chunk.readUInt32BE(0)
+      const height = chunk.readUInt32BE(4)
+      const bitDepth = chunk[8]
+      const colorType = chunk[9]
+      const compression = chunk[10]
+      const filter = chunk[11]
+      const interlace = chunk[12]
+      if (!width || !height || width * height > 25_000_000) return null
+      if (bitDepth !== 8 || compression !== 0 || filter !== 0 || interlace !== 0 || !(colorType in PNG_BPP)) return null
+      ihdr = {width, height, bitDepth, colorType, bpp: PNG_BPP[colorType]}
+    } else if (type === 'IDAT') {
+      idats.push(chunk)
+    } else if (type === 'IEND') {
+      break
+    }
+    offset = dataEnd + 4
+  }
+  if (!ihdr || !idats.length) return null
+  let raw
+  try { raw = inflateSync(Buffer.concat(idats)) }
+  catch { return null }
+  const stride = ihdr.width * ihdr.bpp
+  if (raw.length !== ihdr.height * (1 + stride)) return null
+  const pixels = Buffer.allocUnsafe(ihdr.height * stride)
+  for (let y = 0; y < ihdr.height; y++) {
+    const rowIn = y * (1 + stride)
+    const filterType = raw[rowIn]
+    if (filterType > 4) return null
+    const rowOut = y * stride
+    const prevOut = (y - 1) * stride
+    for (let x = 0; x < stride; x++) {
+      const val = raw[rowIn + 1 + x]
+      const a = x >= ihdr.bpp ? pixels[rowOut + x - ihdr.bpp] : 0
+      const b = y > 0 ? pixels[prevOut + x] : 0
+      const c = (y > 0 && x >= ihdr.bpp) ? pixels[prevOut + x - ihdr.bpp] : 0
+      let recon = val
+      if (filterType === 1) recon = (val + a) & 0xff
+      else if (filterType === 2) recon = (val + b) & 0xff
+      else if (filterType === 3) recon = (val + ((a + b) >> 1)) & 0xff
+      else if (filterType === 4) recon = (val + paethPredictor(a, b, c)) & 0xff
+      pixels[rowOut + x] = recon
+    }
+  }
+  return {...ihdr, pixels}
+}
+
+async function checkStatusBarOnlyChange(observation, region, currentBytes) {
+  const baselineRef = observation.evidence?.find((entry) => entry.kind === 'screenshot')?.path
+  if (!baselineRef) return {allowed: false, diffBoundingBox: null}
+  let baselineBytes
+  try { baselineBytes = await readFile(baselineRef) }
+  catch { return {allowed: false, diffBoundingBox: null} }
+  if (hash(baselineBytes) !== observation.imageSha256) return {allowed: false, diffBoundingBox: null}
+  const baseline = decodePng8Bit(baselineBytes)
+  const current = decodePng8Bit(currentBytes)
+  if (!baseline || !current) return {allowed: false, diffBoundingBox: null}
+  if (baseline.width !== current.width || baseline.height !== current.height ||
+      baseline.bitDepth !== current.bitDepth || baseline.colorType !== current.colorType) {
+    return {allowed: false, diffBoundingBox: null}
+  }
+  const {width: vw, height: vh} = observation.viewport || {}
+  if (!(vw > 0 && vh > 0)) return {allowed: false, diffBoundingBox: null}
+  const sameOrientation = (baseline.width >= baseline.height) === (vw >= vh)
+  if (!sameOrientation) return {allowed: false, diffBoundingBox: null}
+  const hasStatusBar = Number.isFinite(observation.statusBarHeight) && observation.statusBarHeight > 0
+  const ignoreRatio = hasStatusBar ? observation.statusBarHeight / vh : 0
+  const validBand = hasStatusBar && ignoreRatio > 0 && ignoreRatio < 0.2
+  const ignoreMaxY = validBand ? Math.ceil(ignoreRatio * current.height) : 0
+  const intersectsTarget = !validBand || region.y < ignoreRatio
+  const {width, height, bpp} = current
+  const stride = width * bpp
+  let outsideMinX = width, outsideMinY = height, outsideMaxX = -1, outsideMaxY = -1
+  let allMinX = width, allMinY = height, allMaxX = -1, allMaxY = -1
+  for (let py = 0; py < height; py++) {
+    const rowOffset = py * stride
+    for (let px = 0; px < width; px++) {
+      const idx = rowOffset + px * bpp
+      let differs = false
+      for (let c = 0; c < bpp; c++) {
+        if (baseline.pixels[idx + c] !== current.pixels[idx + c]) { differs = true; break }
+      }
+      if (!differs) continue
+      if (px < allMinX) allMinX = px
+      if (py < allMinY) allMinY = py
+      if (px > allMaxX) allMaxX = px
+      if (py > allMaxY) allMaxY = py
+      if (py >= ignoreMaxY) {
+        if (px < outsideMinX) outsideMinX = px
+        if (py < outsideMinY) outsideMinY = py
+        if (px > outsideMaxX) outsideMaxX = px
+        if (py > outsideMaxY) outsideMaxY = py
+      }
+    }
+  }
+  const makeBox = (minX, minY, maxX, maxY) => maxX >= minX && maxY >= minY ? {
+    x: Number((minX / width).toFixed(4)), y: Number((minY / height).toFixed(4)),
+    width: Number(((maxX - minX + 1) / width).toFixed(4)), height: Number(((maxY - minY + 1) / height).toFixed(4)),
+    pixelBounds: {x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1},
+  } : null
+  if (intersectsTarget || outsideMaxX >= 0) {
+    return {allowed: false, diffBoundingBox: makeBox(
+      outsideMaxX >= 0 ? outsideMinX : allMinX, outsideMaxX >= 0 ? outsideMinY : allMinY,
+      outsideMaxX >= 0 ? outsideMaxX : allMaxX, outsideMaxX >= 0 ? outsideMaxY : allMaxY)}
+  }
+  return {allowed: true, diffBoundingBox: null, ignoreRatio}
+}
+
+function suggestedSelectorFor(node) {
+  if (typeof node.name === 'string' && node.name.trim()) {
+    return {using: 'accessibility-id', selector: node.name.trim()}
+  }
+  if (typeof node.label === 'string' && node.label.trim() && node.type) {
+    return {using: 'predicate', selector: `type == '${node.type}' AND label == '${node.label.trim().replaceAll("'", "\\'")}'`}
+  }
+  return null
+}
+
 function nativeRows(tree, rows = []) {
   if (!tree || typeof tree !== 'object' || /SecureTextField/.test(tree.type || '')) return rows
   if (Array.isArray(tree)) { for (const item of tree) nativeRows(item, rows); return rows }
   const visible = tree.isVisible === true || tree.isVisible === '1' || tree.visible === true || tree.visible === 'true'
   if (visible) {
     const text = [...new Set([tree.label, tree.value, tree.name].filter((v) => typeof v === 'string' && v.trim()))].join(' | ')
-    if (text || /Button|TextField|Switch|Slider/.test(tree.type || '')) rows.push({
+    const isInteractiveType = /Button|TextField|SearchField|TextView|Switch|Slider|Cell|Link|Tab|Image|Picker|SegmentedControl/.test(tree.type || '')
+    const isInteractiveOther = /Other$/.test(tree.type || '') && (Boolean(text) ||
+      ((tree.isEnabled ?? tree.enabled) === true && tree.rect?.width >= 20 && tree.rect?.height >= 20 && tree.rect?.width <= 380))
+    if (text || isInteractiveType || isInteractiveOther) rows.push({
       type: tree.type, name: tree.name ?? null, label: tree.label ?? null, value: tree.value ?? null,
       text, rect: tree.rect || null, enabled: tree.isEnabled ?? tree.enabled ?? null,
+      suggestedSelector: suggestedSelectorFor(tree),
     })
   }
   for (const child of tree.children || []) nativeRows(child, rows)
@@ -127,9 +279,12 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     const state = await call('execute', 'mobile: queryAppState', [{bundleId}])
     if (active?.bundleId !== bundleId || state !== 4) throw stop('foreground-unverified')
     const sensitive = await call('findElements', '-ios predicate string',
-      "name IN {'SBCoverSheetWindow', 'lockscreen-date-view'} OR type == 'XCUIElementTypeSecureTextField' OR (label MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code).*' OR name MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code).*')")
+      "type == 'XCUIElementTypeSecureTextField' OR (label MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code).*' OR name MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标|密码|password|passcode|verification code).*')")
     if (!Array.isArray(sensitive)) throw stop('safety-check-unreadable')
-    if (sensitive.length) throw stop('user-input-required')
+    if (sensitive.length) throw Object.assign(stop('user-input-required'), {credentialRequired: true})
+    const locked = await call('findElements', '-ios predicate string', "name IN {'SBCoverSheetWindow', 'lockscreen-date-view'}")
+    if (!Array.isArray(locked)) throw stop('safety-check-unreadable')
+    if (locked.length) throw Object.assign(stop('device-locked-recoverable', 'Device is on lock screen without credential prompt; run recover first'), {credentialRequired: false})
   }
 
   async function observe(options = {}) {
@@ -158,7 +313,8 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     const lightweight = method === 'pixels'
     if (lightweight && sourcePath) throw stop('pixel-source-unavailable', 'Pixel observation does not acquire XML; omit --source-output')
     const xml = lightweight ? (await pixelGuard(), '') : await native()
-    if (/XCUIElementTypeSecureTextField|验证码|安全验证|请依次点击下图图标/.test(xml)) {
+    const allowStaticSoftening = !lightweight && hasXmlStructure(xml) && !hasSecurityStructure(xml)
+    if (/XCUIElementTypeSecureTextField/.test(xml) || (!allowStaticSoftening && /验证码|安全验证|请依次点击下图图标/.test(xml))) {
       // Report a readable barrier without persisting or returning credential values.
       return {ok: false, bundleId, readAt: new Date(now()).toISOString(), status: 'user-input-required', operation: {outcome: 'not-sent'},
         verification: {status: 'blocked', reason: 'credential-or-security-page'},
@@ -170,6 +326,10 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     const width = Number(root.match(/\bwidth="([\d.]+)"/)?.[1])
     const height = Number(root.match(/\bheight="([\d.]+)"/)?.[1])
     if (width > 0 && height > 0) viewport = {width, height}
+    const statusBarMatch = xml.match(/<XCUIElementTypeStatusBar\b[^>]*>/)?.[0] || ''
+    const statusBarY = Number(statusBarMatch.match(/\by="([\d.]+)"/)?.[1] ?? 0)
+    const statusBarH = Number(statusBarMatch.match(/\bheight="([\d.]+)"/)?.[1])
+    const statusBarHeight = Number.isFinite(statusBarH) && statusBarH > 0 ? (Number.isFinite(statusBarY) ? statusBarY : 0) + statusBarH : null
     if (purpose === 'visual') selected = 'pixels'
     else if (method === 'dom') {
       if (!context) throw stop('webview-context-required')
@@ -218,12 +378,21 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     if (lightweight) await pixelGuard()
     else await native()
     const readAt = new Date(now()).toISOString()
+    let securityCandidate = false, stopCandidates = []
+    if (allowStaticSoftening) {
+      const sanitized = sanitizeStaticSecurityObservations(observations)
+      observations = sanitized.observations
+      securityCandidate = sanitized.securityCandidate
+      stopCandidates = sanitized.stopCandidates
+    }
     const filtered = contains ? observations.filter((row) => String(row.text).includes(contains)) : observations
     const result = {schemaVersion: 1, documentType: 'app-observation-v1', runId: randomUUID(), bundleId, readAt,
       finishedAt: readAt, purpose, method: selected, viewport,
+      ...(statusBarHeight !== null ? {statusBarHeight} : {}),
       observations: filtered.slice(0, limit), partial: sourcePartial || filtered.length > limit,
       observationCount: filtered.length, evidence: [],
       ...(sourcePartial && selected === 'accessibility' ? {snapshotMaxDepth: client.sourceDepthLimit, partialReason: 'snapshot-depth-limit'} : {}),
+      ...(securityCandidate ? {securityCandidate, stopCandidates} : {}),
       targets: [],
       recovery: {readRetries, replayAllowed: false},
       snapshotNote: 'Sequential observations; image and accessibility data are not an atomic snapshot',
@@ -351,7 +520,15 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
       !Number.isFinite(durationMs) || durationMs < 0 || durationMs > 2000) throw stop('invalid-gesture')
     const xml = await native()
     if (/XCUIElementTypeSecureTextField|验证码|安全验证|请依次点击下图图标/.test(xml)) throw stop('blocked-credential')
-    if (hash(Buffer.from(await call('screenshot'), 'base64')) !== observation.imageSha256) throw stop('gesture-screen-changed')
+    const currentBytes = Buffer.from(await call('screenshot'), 'base64')
+    let statusBarOnlyChanged = false
+    if (hash(currentBytes) !== observation.imageSha256) {
+      const diffCheck = await checkStatusBarOnlyChange(observation, region, currentBytes)
+      if (!diffCheck.allowed) {
+        throw Object.assign(stop('gesture-screen-changed'), diffCheck.diffBoundingBox ? {diffBoundingBox: diffCheck.diffBoundingBox} : {})
+      }
+      statusBarOnlyChanged = true
+    }
     await native()
     const {width, height} = observation.viewport
     const actions = [{type: 'pointerMove', duration: 0, x: Math.round(x * (width - 1)), y: Math.round(y * (height - 1))}, {type: 'pointerDown', button: 0},
@@ -362,7 +539,7 @@ export function createOperations(client, sid, {bundleId, checkReady = async () =
     try {
       await call('performActions', [{type: 'pointer', id: 'finger', parameters: {pointerType: 'touch'}, actions}])
       await native()
-      return {ok: true, bundleId, operation, verification: {status: 'unknown', reason: 'verify the task postcondition before declaring completion'}}
+      return {ok: true, bundleId, operation, ...(statusBarOnlyChanged ? {statusBarOnlyChanged: true} : {}), verification: {status: 'unknown', reason: 'verify the task postcondition before declaring completion'}}
     } catch (error) { return failureResult(error, operation) }
   }
 

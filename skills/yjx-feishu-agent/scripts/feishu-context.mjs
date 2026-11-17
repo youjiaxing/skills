@@ -2,7 +2,7 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { createHash } from 'node:crypto';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { imageKeys, messageView } from './feishu-content.mjs';
+import { hasCardDowngradePlaceholder, imageKeys, messageView } from './feishu-content.mjs';
 
 const UNRECOVERABLE_IMAGE_CODES = new Set([14005]);
 
@@ -101,6 +101,7 @@ function compactMessage(message,limit) {
     parentId:view.parentId,rootId:view.rootId,threadId:view.threadId,
     sender:view.sender?.id ?? view.sender?.sender_id?.open_id,
     text:view.text.slice(0,limit),...(view.textLength>limit ? {truncated:true} : {}),
+    ...(view.downgradePlaceholderDetected ? {downgradePlaceholderDetected:true} : {}),
     ...(view.deleted ? {deleted:true} : {}),...(view.imageKeys.length ? {imageKeys:view.imageKeys} : {})};
 }
 
@@ -111,6 +112,7 @@ export async function resolveContext(item, { transport, imageDirectory, contextS
   const retry = [];
   let imageCount = 0, downloadedImage = false;
   async function attachments(message) {
+    if (hasCardDowngradePlaceholder(message)) return [];
     const results = [];
     for (const key of imageKeys(message).slice(0,Math.max(0,4-imageCount))) {
       imageCount++;

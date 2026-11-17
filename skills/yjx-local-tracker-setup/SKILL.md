@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 本技能不是 Matt setup 的替代品，也不复制 `to-spec`、`to-tickets` 或 `implement`。
 
-**无附属脚本。** Agent 直接读文件、改文件；不要找 `scripts/` 或跑 Node setup。
+配置文件与文档修订由 Agent 直接读文件、改文件完成；票据盘点优先使用本包只读脚本 `scripts/inventory-issues.mjs`（或已安装的 `yjx-local-kanban`）。
 
 **完成判据：** 机器配置已是下方目标 JSON（protocol `+resolved-v1`，`statusRoles` 符合已核实的项目映射或合法缺省规则）**且** 约束文档已以 `Status: resolved` 为主完成真源。只写 JSON、不改仍写「Closed 完成」的合同 = **setup 未完成**。
 
@@ -117,7 +117,7 @@ Wayfinder：开放未领可无/空 `Status`；领取 `claimed`；完成 `resolve
 - **未对齐**：完成仍要求 `Closed: true`；或把 Closed 当唯一真源；或主 tracker 完全没有 implementation 的 `resolved` 完成合同（Matt 默认模板常见）。
 - 允许在「已 resolved 为主」的文中提及 legacy `Closed: true`（不算未对齐）。
 
-5. **票盘点（可选摘要，非阻塞）**：粗扫 `.scratch/*/issues/*.md` 即可——约多少实施票、是否仍见 legacy `Closed`、是否明显缺 `Status`。**不要**把「缺 Closed」当必须迁移；**不要**在本 skill 批量改票。
+5. **票盘点（可选摘要，非阻塞）**：运行 `node <skill-dir>/scripts/inventory-issues.mjs --project-root <项目根>`（或复用已安装的 `yjx-local-kanban` 只读统计）获取实施票总数、legacy `Closed` 出现次数与缺 `Status` 数量，不逐个打开 `.scratch/*/issues/*.md` 原始文件。**不要**把「缺 Closed」当必须迁移；**不要**在本 skill 批量改票。
 
 把预览摘要用中文给用户（config action、最终映射及来源、是否需升级协议、哪些约束文档未对齐）。**此步不写盘。**
 

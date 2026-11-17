@@ -40,10 +40,14 @@ export function bodyText(message, botId) {
 
 const CARD_DOWNGRADE_PLACEHOLDER = '请升级至最新版本客户端，以查看内容';
 
+export function hasCardDowngradePlaceholder(message) {
+  if (!message || message.deleted) return false;
+  const type = message.msg_type ?? message.message_type;
+  return type === 'interactive' && bodyText(message).includes(CARD_DOWNGRADE_PLACEHOLDER);
+}
+
 export function imageKeys(message) {
   if (message.deleted) return [];
-  const type = message.msg_type ?? message.message_type;
-  if (type === 'interactive' && bodyText(message).includes(CARD_DOWNGRADE_PLACEHOLDER)) return [];
   const keys = new Set();
   function visit(value) {
     if (!value || typeof value !== 'object') return;
@@ -57,12 +61,13 @@ export function imageKeys(message) {
 }
 
 export function messageView(message, {concise=false} = {}) {
-  const text=bodyText(message),limit=concise ? 2000 : 12000,keys=imageKeys(message);
+  const text=bodyText(message),limit=concise ? 2000 : 12000,keys=imageKeys(message),downgradePlaceholderDetected=hasCardDowngradePlaceholder(message);
   return { messageId: message.message_id, chatId: message.chat_id, type: message.msg_type ?? message.message_type,
     parentId: message.parent_id, rootId: message.root_id, threadId: message.thread_id,
     createTime: message.create_time, updateTime:message.update_time,
     ...(concise ? {senderId:message.sender?.id ?? message.sender?.sender_id?.open_id} : {sender:message.sender}),
     senderName:message.sender?.sender_name ?? message.sender_name ?? message.sender?.name ?? null,
     deleted: Boolean(message.deleted), text:text.slice(0,limit),textLength:text.length,truncated:text.length>limit,
+    ...(downgradePlaceholderDetected ? {downgradePlaceholderDetected:true} : {}),
     imageKeys:keys, ...(keys.length ? {resources:keys.map(key=>({type:'image',key,status:'not_downloaded'}))} : {}) };
 }

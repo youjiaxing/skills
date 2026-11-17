@@ -104,7 +104,7 @@ test('resource HTTP errors surface the Feishu code and stop useless image retrie
   assert.doesNotMatch(text,/Request failed with status code 400/);
 });
 
-test('Card 2.0 downgrade placeholder skips platform placeholder imageKeys without retry',async t=>{
+test('Card 2.0 downgrade placeholder preserves imageKeys with warning while skipping speculative preload',async t=>{
   const c=await setup(t);
   const downgradedCard={
     ...quoted('om_parent'),
@@ -120,14 +120,15 @@ test('Card 2.0 downgrade placeholder skips platform placeholder imageKeys withou
   };
   c.transport.get=async()=>downgradedCard;
   c.transport.image=async()=>{assert.fail('Placeholder image_key must not be downloaded');};
-  assert.deepEqual(imageKeys(downgradedCard),[]);
+  assert.deepEqual(imageKeys(downgradedCard),['img_v3_02ad_placeholder']);
   const text=await resolveContext(item,c);
   assert.doesNotMatch(text,/补读目标/);
   assert.doesNotMatch(text,/图片未取得/);
   const context=JSON.parse(text.split('\n')[3]);
   assert.match(context.quotedMessages[0].text,/实际卡片正文内容/);
   assert.equal(context.quotedMessages[0].images,undefined);
-  assert.equal(context.quotedMessages[0].imageKeys,undefined);
+  assert.equal(context.quotedMessages[0].downgradePlaceholderDetected,true);
+  assert.deepEqual(context.quotedMessages[0].imageKeys,['img_v3_02ad_placeholder']);
 
   const realCard={...quoted('om_real_card'),msg_type:'interactive',body:{content:JSON.stringify({elements:[[{tag:'img',img_key:'img_real_1'}]]})}};
   assert.deepEqual(imageKeys(realCard),['img_real_1']);

@@ -193,6 +193,20 @@ export class Coordinator {
         this.clearPlansForKey(plan.key);
         return { key: plan.key, ...entry.pendingOp };
       }
+      case 'prepare-batch': {
+        if (!Array.isArray(input.items) || input.items.length === 0) throw new Error('items 必须是非空数组');
+        const results = [];
+        for (const [index, item] of input.items.entries()) {
+          const planId = item?.planId ?? null;
+          try {
+            const prepared = await this.handle({ action: 'prepare', ...(item && typeof item === 'object' ? item : {}) });
+            results.push({ index, planId, key: prepared.key, prepared });
+          } catch (error) {
+            results.push({ index, planId, error: error.message });
+          }
+        }
+        return { results };
+      }
       case 'dispatch': {
         const [key, entry] = this.findOp(input.opId);
         const op = entry.pendingOp;
@@ -252,6 +266,20 @@ export class Coordinator {
         if (nextInventory) { this.inventory = nextInventory; this.index = nextIndex; }
         this.clearPlansForKey(key);
         return { committed: true, pageId: committedPage.pageId, notices: op.notices };
+      }
+      case 'commit-batch': {
+        if (!Array.isArray(input.items) || input.items.length === 0) throw new Error('items 必须是非空数组');
+        const results = [];
+        for (const [index, item] of input.items.entries()) {
+          const opId = item?.opId ?? null;
+          try {
+            const committed = await this.handle({ action: 'commit', ...(item && typeof item === 'object' ? item : {}) });
+            results.push({ index, opId, committed });
+          } catch (error) {
+            results.push({ index, opId, error: error.message });
+          }
+        }
+        return { results };
       }
       case 'cancel': {
         const [key, entry] = this.findOp(input.opId);

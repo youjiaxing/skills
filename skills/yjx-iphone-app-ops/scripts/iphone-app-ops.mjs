@@ -388,7 +388,7 @@ export function classifyWdaHealth({appium = false, tunnel = false, wda = false, 
 
 export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, udid = config.udid, sessionFile = config.sessionFile} = {}) {
   const result = {appium: false, tunnel: false, wda: false, session: Boolean(sessionId),
-    source: false, active: false, locked: null, checks: {}}
+    source: false, active: false, locked: null, credentialRequired: null, checks: {}}
   const checks = await Promise.allSettled([
     client.status(),
     fetchImpl(`http://127.0.0.1:${config.tunnelRegistryPort}/remotexpc/tunnels/${udid}?waitMs=0`, {signal: AbortSignal.timeout(5000)})
@@ -415,6 +415,7 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
       const page = await client.source(sessionId)
       result.source = true
       result.locked = isLockScreenSource(page)
+      result.credentialRequired = result.locked ? requiresCredential(page) : false
       result.checks.source = {ok: true}
     } catch (error) {
       result.checks.source = {ok: false, code: error.code || 'protocol-error', phase: error.phase || null,
@@ -449,7 +450,25 @@ export async function probeSessionHealth(client, sessionId, {fetchImpl = fetch, 
   }
   if (result.resetRequired) result.checks.session = {ok: false, outcome: result.resetReason,
     command: reset.command, skipped: 'replace this completed-failure session before another page command'}
-  return {...result, status: classifyWdaHealth(result)}
+  const status = classifyWdaHealth(result)
+  const blockingLayer = !result.appium ? 'appium'
+    : result.commandUnknown ? 'in-flight-unknown'
+    : (result.resetRequired || status === 'session-missing-or-expired') ? 'session'
+    : (!result.wda || !result.tunnel) ? 'wda-tunnel'
+    : result.locked === true ? 'lockscreen'
+    : status === 'session-source-readable' ? 'none' : 'ax-snapshot'
+  const nextAction = status === 'session-source-readable' ? 'ready'
+    : status === 'lock-screen-readable' ? (result.credentialRequired ? 'ask-user-unlock' : 'run-recover')
+    : result.commandUnknown ? 'wait-and-inspect-unknown-command'
+    : (result.resetRequired || status === 'session-missing-or-expired') ? 'recreate-session'
+    : (!result.wda || !result.tunnel) ? 'check-wda-and-tunnel'
+    : !result.appium ? 'start-appium' : 'recover-session-or-inspect-wda'
+  const reasons = Object.entries(result.checks)
+    .filter(([, value]) => value && value.ok === false)
+    .map(([key, value]) => `${key}: ${value.error || value.code || value.outcome || 'failed'}`)
+  return {...result, status, diagnosticSummary: {status, healthy: status === 'session-source-readable',
+    blockingLayer, credentialRequired: result.locked === true ? Boolean(result.credentialRequired) : false,
+    nextAction, reasons}}
 }
 
 export async function recover(client, sessionId, bundleId) {
@@ -530,7 +549,17 @@ export async function waitForForeground(client, sessionId, bundleId, timeout = 4
 
 async function requireForeground(client, sessionId, bundleId, existingPage) {
   const page = existingPage ?? await client.source(sessionId)
-  if (isLockScreenSource(page) || requiresCredential(page)) throw Object.assign(new Error('device is locked; no element action was sent'), {status: 'user-input-required'})
+  if (requiresCredential(page) || /XCUIElementTypeSecureTextField/.test(page)) {
+    throw Object.assign(new Error('device is locked with credential prompt; no element action was sent'), {status: 'user-input-required', credentialRequired: true})
+  }
+  if (isLockScreenSource(page)) {
+    if (client.sourceDepthLimit !== null && client.sourceDepthLimit !== undefined && client.findElements) {
+      const secure = await client.findElements(sessionId, '-ios predicate string', 'type == "XCUIElementTypeSecureTextField"')
+      if (!Array.isArray(secure)) throw Object.assign(new Error('Lock screen credential check is unreadable'), {status: 'safety-check-unreadable'})
+      if (secure.length) throw Object.assign(new Error('device is locked with credential prompt; no element action was sent'), {status: 'user-input-required', credentialRequired: true})
+    }
+    throw Object.assign(new Error('device is on lock screen without credential prompt; run recover first'), {status: 'device-locked-recoverable', credentialRequired: false})
+  }
   const activeAppInfo = await client.execute(sessionId, 'mobile: activeAppInfo')
   const appState = await client.execute(sessionId, 'mobile: queryAppState', [{bundleId}])
   const rootBundle = extractForegroundBundle(page)
@@ -541,9 +570,12 @@ async function requireForeground(client, sessionId, bundleId, existingPage) {
     // This query runs after source depth has been restored. A shallow tree alone
     // cannot prove that deeper credential or security controls are absent.
     const sensitive = await client.findElements(sessionId, '-ios predicate string',
-      "name IN {'SBCoverSheetWindow', 'lockscreen-date-view'} OR type == 'XCUIElementTypeSecureTextField' OR (label MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*' OR name MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*' OR value MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*')")
+      "type == 'XCUIElementTypeSecureTextField' OR (label MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*' OR name MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*' OR value MATCHES[c] '.*(验证码|安全验证|请依次点击下图图标).*')")
     if (!Array.isArray(sensitive)) throw Object.assign(new Error('Sensitive controls could not be checked'), {status: 'safety-check-unreadable'})
-    if (sensitive.length) throw Object.assign(new Error('Credential or security controls require user handling'), {status: 'user-input-required'})
+    if (sensitive.length) throw Object.assign(new Error('Credential or security controls require user handling'), {status: 'user-input-required', credentialRequired: true})
+    const locked = await client.findElements(sessionId, '-ios predicate string', "name IN {'SBCoverSheetWindow', 'lockscreen-date-view'}")
+    if (!Array.isArray(locked)) throw Object.assign(new Error('Lock screen state could not be checked'), {status: 'safety-check-unreadable'})
+    if (locked.length) throw Object.assign(new Error('device is on lock screen without credential prompt; run recover first'), {status: 'device-locked-recoverable', credentialRequired: false})
   }
 }
 

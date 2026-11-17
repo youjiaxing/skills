@@ -92,7 +92,7 @@ DOM 观察采集语义元素及带直接文本的普通/自定义元素，并返
 
 定位须绑定源观察的 `bundleId`、`readAt`、`imageSha256`、截图路径和 `viewport`；原图 SHA 是动作凭据，不能用压缩输入副本 SHA 替代。实际查看未裁剪、方向不变的全幅图片；为阅读细节另附原像素裁剪时，定位仍以全幅原图为基准。目标使用唯一标签及全幅范围内的归一化区域 `{x, y, width, height}`，值在 0–1。`viewport` 是 AX 点尺寸，不是图片像素尺寸，不能把截图像素坐标直接当作设备点击坐标。
 
-`observe` 在截图与后置校验完成时记录 `readAt`；`gesture` 不设固定秒数超时上限（仅校验 `readAt` 格式有效且非未来时间），点击前通过实时 `native()`（核对前台 `bundleId`、运行状态及无密码/验证码安全控件）与实时屏幕 SHA 一致性（`gesture-screen-changed`）保障安全。若等待期间因顶部状态栏时间跳字等细微变化触发 `gesture-screen-changed`，重新执行 `observe --purpose visual` 后，只要确认变化仅限于状态栏等非目标区域、App 仍处同一页面且目标身份与位置未发生滚动或布局位移，可直接将已知目标矩形通过 `target` 绑定到新观察并同命令执行 `gesture tap`；无法确认目标未位移时重新识读定位，不改写旧观察文件或用输入副本 SHA 替代原图 SHA。画面或视口发生实质改变则旧定位失效，重新确认必要画面；不能确认时报告受阻，不自动盲点或无限重试。
+`observe` 在截图与后置校验完成时记录 `readAt` 并在取得 XML 时记录 `statusBarHeight`；`gesture` 不设固定秒数超时上限（仅校验 `readAt` 格式有效且非未来时间），点击前通过实时 `native()`（核对前台 `bundleId`、运行状态及无密码/验证码安全控件）与实时屏幕 SHA 一致性（`gesture-screen-changed`）保障安全。若等待期间截图 SHA 变化且能通过纯 8-bit PNG 像素比对证明前后分辨率、色深、方向一致、存在显式 `statusBarHeight` 与 `viewport`、目标矩形不与状态栏相交且状态栏外零像素差异，则自动放行并标记 `statusBarOnlyChanged: true`；否则阻断并按可解码情况返回 `diffBoundingBox`，无法自动放行时重新 `observe --purpose visual` 确认页面后再绑定执行，不改写旧观察文件或用输入副本 SHA 替代原图 SHA。画面或视口发生实质改变则旧定位失效，重新确认必要画面；不能确认时报告受阻，不自动盲点或无限重试。
 
 先生成并查看视觉观察及 JSON，在图像中唯一确认目标后，标注其归一化区域，再使用该目标：
 

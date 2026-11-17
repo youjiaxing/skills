@@ -314,7 +314,8 @@ test('WDA installer rejects a business App before invoking an install command', 
   await writeFile(path.join(appPath, 'Info.plist'), '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>business.app</string></dict></plist>')
   const calls = []
   await assert.rejects(wdaAction({udid: 'device', wdaBundleId: 'control.WDA', sessionFile: path.join(dir, 'session'), configPath: path.join(dir, 'config')},
-    'install', {exclusive: true, appPath, execute: (...args) => calls.push(args)}), /Only the configured WebDriverAgent/)
+    'install', {exclusive: true, appPath, execute: (...args) => calls.push(args),
+      readPlist: (p) => ({CFBundleIdentifier: readFileSync(p, 'utf8').match(/<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/)?.[1]})}), /Only the configured WebDriverAgent/)
   assert.deepEqual(calls, [])
 })
 
@@ -430,7 +431,21 @@ test('lightweight lockscreen lookup blocks before capture even when active signa
       assert.equal(using, '-ios predicate string')
       return predicate.includes('SBCoverSheetWindow') && predicate.includes('lockscreen-date-view') ? [match] : []
     }})
-  await assert.rejects(f.ops.observe({method: 'pixels'}), /user-input-required/)
+  await assert.rejects(f.ops.observe({method: 'pixels'}), (error) => {
+    assert.equal(error.status, 'device-locked-recoverable')
+    assert.equal(error.credentialRequired, false)
+    const result = failureResult(error)
+    assert.equal(result.credentialRequired, false)
+    assert.equal(result.recovery.next, 'run-recover-to-unlock')
+    return true
+  })
   assert.equal(queried, true)
   assert.deepEqual(f.calls, [])
+  const withPasscode = fixture({execute: async (_, s) => s === 'mobile: activeAppInfo' ? {bundleId} : 4,
+    findElements: async (_, using, predicate) => {
+      assert.equal(using, '-ios predicate string')
+      return predicate.includes('XCUIElementTypeSecureTextField') ? [match] : []
+    }})
+  await assert.rejects(withPasscode.ops.observe({method: 'pixels'}), /user-input-required/)
+  assert.deepEqual(withPasscode.calls, [])
 })

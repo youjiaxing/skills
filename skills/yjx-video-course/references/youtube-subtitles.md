@@ -23,7 +23,7 @@ yt-dlp --ignore-config --no-playlist --skip-download --dump-single-json \
 
 `--ignore-config` 避免继承全局 Cookie、代理、输出路径或额外下载行为；本任务需要的已授权网络参数在当前进程显式传入。元数据可能含短时签名媒体 URL，只保存到本集证据目录，不整份输出到公开日志或课程正文。
 
-读取并比对 `id`、`webpage_url`、`title`、`channel`/`uploader`、`duration`；返回播放列表或视频 ID 不符时停止这条路线，不挑选其中第一项冒充目标。读取 `subtitles` 和 `automatic_captions`，需要人类可读列表时可用同样的单视频边界执行 `--list-subs`。
+运行 `node <skill目录>/scripts/summarize-ytdlp-meta.mjs "$COURSE_META"` 脱敏提取 `id`、`webpage_url`、`title`、`channel`、`duration` 与可用轨道清单（自动剔除短时签名媒体 URL）；返回播放列表或视频 ID 不符时停止这条路线，不挑选其中第一项冒充目标。读取 `subtitles` 和 `automatic_captions`，需要人类可读列表时可用同样的单视频边界执行 `--list-subs`。
 
 按实际内容语言和学习目标选择一个已观察到的轨道。相同语言、质量足够时优先人工字幕，不能仅因存在人工译文就覆盖原声自动字幕。记录语言代码、人工/自动/翻译类型、格式和轨道名；不要把所有 `automatic_captions` 条目都当成原语言自动识别，它也可能包含自动翻译。原声、字幕与配音语言分别记录。
 

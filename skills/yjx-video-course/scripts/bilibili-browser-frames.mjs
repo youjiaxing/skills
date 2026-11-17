@@ -195,13 +195,16 @@ export async function captureBilibiliFramesFromBrowser(
         codecs: variant.codecs ?? null,
       })) : [];
       const eligible = variants
-        .filter((variant) => variant.width >= targetWidth && variant.height >= targetHeight)
+        .filter((variant) => variant.height >= targetHeight)
         .sort((left, right) => (
           right.height - left.height
           || right.frameRate - left.frameRate
           || right.bandwidth - left.bandwidth
         ));
       const selected = eligible[0] ?? null;
+      const higherFpsAvailable = selected
+        ? eligible.some((variant) => variant.frameRate > selected.frameRate + frameRateTolerance)
+        : false;
       if (!selected) {
         const sessionSignals = {
           initialStateUser: initial.user ?? null,
@@ -239,7 +242,7 @@ export async function captureBilibiliFramesFromBrowser(
       const waitForQuality = async () => {
         const deadline = performance.now() + timeoutMs;
         while (performance.now() < deadline) {
-          if (video.videoWidth >= targetWidth && video.videoHeight >= targetHeight) return true;
+          if (video.videoHeight >= targetHeight && video.videoWidth > 0) return true;
           await sleep(250);
         }
         return false;
@@ -284,20 +287,18 @@ export async function captureBilibiliFramesFromBrowser(
         ? qualityAfter.totalVideoFrames - qualityBefore.totalVideoFrames
         : null;
       const measuredFrameRate = frames != null && elapsed > 0 ? frames / elapsed : null;
-      const requiredFrameRate = Math.max(
-        minimumFrameRate,
-        selected.frameRate - frameRateTolerance,
-      );
+      const requiredFrameRate = selected.frameRate - frameRateTolerance;
       if (!Number.isFinite(measuredFrameRate) || elapsed < 1 || frames <= 0) {
         return { status: 'frame_rate_unverified', bvid, cid, selected_variant: describeVariant(selected) };
       }
       // A short counter sample has a one-frame boundary uncertainty.
-      if (measuredFrameRate + 1 / elapsed < requiredFrameRate) {
+      if (measuredFrameRate + 1 / elapsed < requiredFrameRate || (higherFpsAvailable && measuredFrameRate + 1 / elapsed < minimumFrameRate)) {
         return {
           status: 'frame_rate_not_honored',
           bvid,
           cid,
           selected_variant: describeVariant(selected),
+          available_variants: variants.map(describeVariant),
           measured_frame_rate: measuredFrameRate,
           required_frame_rate: requiredFrameRate,
           actual: { width: video.videoWidth, height: video.videoHeight },
@@ -353,7 +354,7 @@ export async function captureBilibiliFramesFromBrowser(
         if (video.seeking || video.readyState < 2 || Math.abs(video.currentTime - targetTime) > 0.1) {
           return { status: 'frame_not_ready', bvid, cid, time: targetTime, current_time: video.currentTime };
         }
-        if (video.videoWidth < targetWidth || video.videoHeight < targetHeight) {
+        if (video.videoHeight < targetHeight || video.videoWidth <= 0) {
           return { status: 'quality_not_honored', bvid, cid, actual: { width: video.videoWidth, height: video.videoHeight } };
         }
         const canvas = document.createElement('canvas');
@@ -371,6 +372,11 @@ export async function captureBilibiliFramesFromBrowser(
         });
       }
 
+      const warnings = [];
+      const preferredWidth = Math.round(decoded.height * (16 / 9));
+      if (decoded.width < targetWidth || Math.abs(decoded.width - preferredWidth) > 16 || measuredFrameRate + 1 / elapsed < minimumFrameRate) {
+        warnings.push('below_preferred_fps_or_aspect');
+      }
       return {
         status: 'captured',
         bvid,
@@ -385,6 +391,7 @@ export async function captureBilibiliFramesFromBrowser(
         decoded_frame_size: decoded,
         rendered_player_size: rendered,
         device_pixel_ratio: window.devicePixelRatio,
+        ...(warnings.length ? { warnings } : {}),
         frames: framesOut,
       };
     },

@@ -15,6 +15,9 @@
 - 脚本与模型分工：固定规则就能完成的检索、过滤、统计、比对、格式转换与重复执行交给脚本，模型只读脚本产出的精简结果；意图、语义与取舍判定由模型完成，脚本只提供候选与简短上下文，判断类字段标明为待模型确认的默认值。对批量数据给出的数字或比对结论，以实际运行的脚本结果为准。
 - Notion 页面、数据库与工作区操作默认使用已安装的 Notion MCP/插件；仅当 MCP/插件不可用或无对应能力时，先说明原因并确认目标页面与写入范围后再操作 Notion 桌面应用，打开链接或检查页面时保持既有页面结构（不新建空白页面）。
 - 当 `writing-for-agents` 与 `skill-creator` 同时可用时，仅加载并使用 `writing-for-agents`。
+- 在 Windows PowerShell 中调用 `node`、`rg` 等原生命令行工具时，直接传入脚本、目录或通过 `Get-ChildItem`、`rg --glob` 显式列举文件，直接执行命令而不在外层嵌套 `pwsh -Command`，也不使用依赖 Shell 展开的裸通配符（如 `*.test.mjs`）或花括号展开（如 `{a,b}`）。
+- 检索大仓或列举目录时先限定子路径，并优先输出匹配文件列表、计数或截取前 N 条，避免单次输出无界的全量索引或长列表倾倒进上下文。
+- 接续或参考长 `<t3_context>` 线程历史时，将全量回溯交给上下文隔离的只读子代理提炼结论与未完事项，避免把数十页 `t3_thread_read` 原文拉入主上下文；发生上下文压缩后，若进展已越过接续调查阶段，依据压缩摘要推进当前阶段并保留原线程为已读基线，不再按首条消息的 `<t3_context>` 提示重头重读。
 
 ## Subagent Orchestration
 
@@ -42,7 +45,7 @@ discarded after synthesis and the benefit justifies coordination cost.
   useful result. Parallelize independent objectives; serialize dependencies
   and conflicting operations. Shared read-only evidence is acceptable.
   Combine duplicate investigations and reuse established results.
-  Default to one delegation level.
+  Enforce one delegation level: subagents execute directly and must not spawn subagents or call `delegate_task` unless explicitly instructed by the parent.
 - **Bounded work.** Start every subagent with a fresh context window (do not
   fork the current conversation). Pass the explicit isolation setting when the
   tool schema exposes one (`fork_context: false` or `fork_turns: "none"`), and
@@ -53,7 +56,10 @@ discarded after synthesis and the benefit justifies coordination cost.
   scope, available capabilities, allowed side effects, and completion
   conditions. Return once the question is answered; cancel work that can no
   longer affect the task. Return conclusions, key evidence locations, and
-  actual blockers. Use available, authorized equivalents when they establish
+  actual blockers. Reuse an existing subagent only for follow-ups on the same
+  unresolved question or targeted reviewer re-checks; spawn a fresh isolated
+  subagent and close finished ones when switching to an independent
+  investigation goal. Use available, authorized equivalents when they establish
   the same evidence; otherwise return supported partial findings and the
   blocker for primary reassessment. Escalate scope or access expansion to the
   primary. Temporary verification artifacts require explicit scope, isolation,

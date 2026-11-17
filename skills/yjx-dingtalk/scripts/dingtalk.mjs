@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cleanArtifacts, ensureCacheRoot, newTaskId, pruneEmptyTaskDirs, readManifest, registerEntry, resolveCacheRoot, taskPaths, writeManifest, FILE_MODE, DIR_MODE } from './cache.mjs';
 import { candidateDataRoots, describeDiscovery, discoverAccounts } from './paths.mjs';
-import { attachSenderNames, findConversations, messageWithContext, openSnapshot, queryMessages, searchMessages } from './query.mjs';
-import { renderLines, renderMessage } from './messages.mjs';
+import { attachSenderNames, findContacts, findConversations, messageWithContext, openSnapshot, queryMessages, searchMessages, summariseMessages } from './query.mjs';
+import { parseTimeInput, renderLines, renderMessage } from './messages.mjs';
 import { acquireSnapshot } from './snapshot.mjs';
 
 const USAGE = [
@@ -13,12 +13,15 @@ const USAGE = [
   'Commands:',
   '  discover                         list data roots and accounts',
   '  conversations [--query <text>] [--limit N]',
-  '  messages --account <id> --conversation <cid> [--since <ms>] [--until <ms>] [--limit N]',
-  '  search --keyword <text> [--account <id>] [--conversation <cid>] [--limit N]',
+  '  contacts [--query <text>] [--limit N]',
+  '  messages --account <id> --conversation <cid> [--since <time>] [--until <time>] [--sender <uid>] [--kind <type>] [--order asc|desc] [--latest] [--limit N] [--offset N]',
+  '  search --keyword <text> [--account <id>] [--conversation <cid>] [--since <time>] [--until <time>] [--sender <uid>] [--kind <type>] [--limit N] [--offset N]',
+  '  summary [--account <id>] [--conversation <cid>] [--since <time>] [--until <time>] [--sender <uid>] [--kind <type>]',
   '  context --account <id> --conversation <cid> --message <mid> [--before N] [--after N]',
   '  clean [--force] [--idle-hours N]      remove only manifest-registered artifacts',
   '',
   'Options:',
+  '  <time>        epoch ms, YYYY-MM-DD, YYYY-MM-DD HH:MM[:SS], or ISO-8601 (default Asia/Shanghai)',
   '  --json        machine-readable output',
   '  --refresh     ignore any cached copy and re-acquire',
   '  --task <id>   reuse or name a task cache identity',
@@ -142,20 +145,37 @@ function main(argv) {
     if (command === 'conversations') {
       const result = findConversations(db, { query: args.query, limit: args.limit ? Number(args.limit) : 20 });
       if (args.json) return printJson({ ...meta, ...result });
-      process.stdout.write('account ' + account.id + '  task ' + taskId + '  copied ' + meta.copiedAt + '\n');
+      process.stdout.write('account ' + account.id + '  task ' + taskId + '  total ' + result.total + '  copied ' + meta.copiedAt + '\n');
       for (const row of result.matches) {
-        process.stdout.write('  ' + row.cid + '  ' + (row.title || '(no title)') + '  lastModify=' + row.lastModify + '\n');
+        process.stdout.write('  ' + row.cid + '  ' + (row.title || '(no title)') +
+          '  type=' + (row.type ?? 'null') + '  members=' + (row.memberCount ?? 'null') +
+          '  owner=' + (row.ownerId ?? 'null') + '  lastModify=' + (row.lastModifyLocal ?? row.lastModify) + '\n');
       }
       if (result.ambiguous) process.stdout.write('  (multiple matches; specify the id you mean)\n');
+      return;
+    }
+    if (command === 'contacts') {
+      const result = findContacts(db, { query: args.query ?? '', limit: args.limit ? Number(args.limit) : 50 });
+      if (args.json) return printJson({ ...meta, ...result });
+      process.stdout.write('account ' + account.id + '  task ' + taskId + '  total ' + result.total + '  copied ' + meta.copiedAt + '\n');
+      if (result.tableMissing) { process.stdout.write('  (tbuser_profile_v2 table not found)\n'); return; }
+      for (const row of result.matches) {
+        process.stdout.write('  uid=' + row.uid + '  realName=' + (row.realName || '-') +
+          '  nick=' + (row.nick || '-') + '  alias=' + (row.alias || '-') + '\n');
+      }
       return;
     }
     if (command === 'messages') {
       const result = queryMessages(db, {
         conversationId: requireOption(args, 'conversation'),
-        since: args.since ? Number(args.since) : null,
-        until: args.until ? Number(args.until) : null,
+        since: parseTimeInput(args.since),
+        until: parseTimeInput(args.until, { endOfDay: true }),
+        senderId: args.sender ?? null,
+        kind: args.kind ?? null,
         limit: args.limit ? Number(args.limit) : 50,
         offset: args.offset ? Number(args.offset) : 0,
+        order: args.order ? String(args.order) : 'asc',
+        latest: Boolean(args.latest),
       });
       const named = attachSenderNames(db, result.messages);
       if (args.json) return printJson({ ...meta, total: result.total, shardsScanned: result.shardsScanned,
@@ -188,9 +208,12 @@ function main(argv) {
       const result = searchMessages(db, {
         keyword: requireOption(args, 'keyword'),
         conversationId: args.conversation ?? null,
-        since: args.since ? Number(args.since) : null,
-        until: args.until ? Number(args.until) : null,
+        since: parseTimeInput(args.since),
+        until: parseTimeInput(args.until, { endOfDay: true }),
+        senderId: args.sender ?? null,
+        kind: args.kind ?? null,
         limit: args.limit ? Number(args.limit) : 50,
+        offset: args.offset ? Number(args.offset) : 0,
       });
       const named = attachSenderNames(db, result.matches);
       if (args.json) return printJson({ ...meta, total: result.total, scanned: result.scanned,
@@ -203,6 +226,23 @@ function main(argv) {
           result.failures.map((item) => item.shard + ' (' + item.error + ')').join(', ') + '\n');
       }
       process.stdout.write(renderLines(named, { full: Boolean(args.full) }) + '\n');
+      return;
+    }
+    if (command === 'summary') {
+      const result = summariseMessages(db, {
+        conversationId: args.conversation ?? null,
+        since: parseTimeInput(args.since),
+        until: parseTimeInput(args.until, { endOfDay: true }),
+        senderId: args.sender ?? null,
+        kind: args.kind ?? null,
+      });
+      if (args.json) return printJson({ ...meta, ...result });
+      process.stdout.write('account ' + account.id + '  total ' + result.total +
+        '  recalledSkipped ' + result.recalledCount + '  range ' +
+        (result.firstCreatedAtLocal ?? '-') + ' .. ' + (result.lastCreatedAtLocal ?? '-') + '\n');
+      process.stdout.write('  byKind: ' + result.byKind.map((x) => `${x.kind}=${x.count}`).join(', ') + '\n');
+      process.stdout.write('  bySender: ' + result.bySender.slice(0, 15).map((x) => `${x.senderName ?? x.senderId ?? 'unknown'}=${x.count}`).join(', ') + '\n');
+      process.stdout.write('  byConversation: ' + result.byConversation.slice(0, 15).map((x) => `${x.title || x.cid}=${x.count}`).join(', ') + '\n');
       return;
     }
     throw new Error('unknown command: ' + command + '\n' + USAGE);

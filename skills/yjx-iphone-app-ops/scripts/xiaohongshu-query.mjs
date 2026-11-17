@@ -11,6 +11,10 @@ const hash = (value) => createHash('sha256').update(value).digest('hex')
 export function extractNoteCards(tree, {width, height}, sourceText) {
   const candidates = []
   let excludedCards = 0
+  const tabFilterCandidates = sourceText(tree)
+    .filter((row) => row.rect && row.rect.y >= 45 && row.rect.y < 140 && row.text.length >= 1 && row.text.length <= 12 && !/^\d+$/.test(row.text))
+    .filter((row, index, arr) => !arr.slice(0, index).some((prev) => prev.text === row.text && Math.abs(prev.rect.y - row.rect.y) < 4))
+    .map((row) => ({text: row.text, rect: row.rect}))
   function walk(node) {
     const rect = node.rect
     if (type(node) === 'Cell' && visible(node) && rect?.width > width * 0.35 && rect.width < width * 0.65 && rect.height > 100) {
@@ -19,13 +23,16 @@ export function extractNoteCards(tree, {width, height}, sourceText) {
       const rows = sourceText(node).filter((row) => row.type?.includes('StaticText') && row.rect?.y >= 135 && row.rect.y < height * 0.95)
       const unique = rows.filter((row, index) => !rows.slice(0, index).some((earlier) => earlier.text === row.text && earlier.rect.y === row.rect.y))
         .sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x)
+      const shortLabels = unique.filter((row) => row.text.length <= 2 && !/^\d+(?:\.\d+)?[万wW]?$/.test(row.text))
       const textual = unique.filter((row) => row.text.length > 2 && !/^\d+(?:\.\d+)?[万wW]?$/.test(row.text))
-      if (textual.length >= 2) {
-        const time = textual.find((row) => /^(?:\d+天前|昨天|今天|\d{2,4}[-/]\d{1,2})/.test(row.text))
-        const title = textual[0]
-        const author = textual.filter((row) => row !== title && row !== time).at(-1)
+      const primaryPool = textual.length >= 2 ? textual : unique.filter((row) => !/^\d+(?:\.\d+)?[万wW]?$/.test(row.text))
+      if (primaryPool.length >= 2) {
+        const time = primaryPool.find((row) => /^(?:\d+天前|昨天|今天|\d{2,4}[-/]\d{1,2})/.test(row.text))
+        const title = primaryPool[0]
+        const author = primaryPool.filter((row) => row !== title && row !== time).at(-1)
         if (author && title.rect.y < author.rect.y) candidates.push({cardText: title.text, authorObserved: author.text,
           timeObserved: time?.text || null, url: null, noteId: null, factStatus: 'unverified', reviewRequired: true,
+          ...(shortLabels.length ? {shortLabelCandidate: shortLabels.map((row) => ({text: row.text, rect: row.rect}))} : {}),
           evidence: unique.map((row, id) => ({id, text: row.text, rect: row.rect})), cellRect: rect})
       }
       return
@@ -33,7 +40,7 @@ export function extractNoteCards(tree, {width, height}, sourceText) {
     for (const child of node.children || []) walk(child)
   }
   walk(tree)
-  return {candidates, excludedCards}
+  return {candidates, excludedCards, tabFilterCandidates}
 }
 
 async function find(client, sid, using, selector) {
@@ -47,7 +54,17 @@ export async function runXiaohongshuQuery(client, sid, {query, output, maxPages 
   const artifacts = [], pages = []
   const runId = randomUUID()
   let phase = 'recover', failure = null, stopReason = 'max-pages', scrollAttempts = 0
-  const guard = () => guardApp(client, sid, XHS_BUNDLE, deps)
+  let autoRecovers = 0
+  const guard = async () => {
+    try { return await guardApp(client, sid, XHS_BUNDLE, deps) }
+    catch (error) {
+      if (error.status !== 'device-locked-recoverable' || !deps.recover || autoRecovers >= 2) throw error
+      autoRecovers++
+      const recovered = await deps.recover(client, sid, XHS_BUNDLE)
+      if (!recovered.ok) throw new AppStop(recovered.status || 'device-locked-recoverable')
+      return guardApp(client, sid, XHS_BUNDLE, deps)
+    }
+  }
   const predicate = (selector) => find(client, sid, '-ios predicate string', selector)
   const searchButton = () => find(client, sid, 'accessibility id', 'recommend_search_button')
   const editor = async () => {

@@ -29,13 +29,15 @@ disable-model-invocation: true
 ```bash
 node <skill-dir>/scripts/dingtalk.mjs discover
 node <skill-dir>/scripts/dingtalk.mjs conversations --query <文本> --limit 10
-node <skill-dir>/scripts/dingtalk.mjs messages --account <id> --conversation <cid> --since <ms> --limit 50
-node <skill-dir>/scripts/dingtalk.mjs search --keyword <文本> --limit 20
+node <skill-dir>/scripts/dingtalk.mjs contacts --query <姓名/UID> --limit 20
+node <skill-dir>/scripts/dingtalk.mjs messages --account <id> --conversation <cid> [--since <日期或毫秒>] [--until <日期或毫秒>] [--sender <uid>] [--kind <类型>] [--latest] [--order asc|desc] [--limit 50] [--offset 0]
+node <skill-dir>/scripts/dingtalk.mjs search --keyword <文本> [--conversation <cid>] [--since <日期或毫秒>] [--until <日期或毫秒>] [--sender <uid>] [--kind <类型>] [--limit 20] [--offset 0]
+node <skill-dir>/scripts/dingtalk.mjs summary [--account <id>] [--conversation <cid>] [--since <日期或毫秒>] [--until <日期或毫秒>] [--sender <uid>] [--kind <类型>]
 node <skill-dir>/scripts/dingtalk.mjs context --account <id> --conversation <cid> --message <mid> --before 5 --after 5
 node <skill-dir>/scripts/dingtalk.mjs clean
 ```
 
-通用选项：`--json` 机器可读输出；`--refresh` 忽略副本重新采集；`--task <id>` 指定任务缓存标识；`--full` 文本输出不截断正文。`messages` 的结果包含采集时间与副本路径，引用时一并给出。
+`--since` 与 `--until` 支持 `YYYY-MM-DD`、`YYYY-MM-DD HH:MM:SS`、带时区 ISO-8601（默认按 `Asia/Shanghai` 换算，`--until` 纯日期默认到当日 `23:59:59.999`）或纯毫秒时间戳；`--latest` 按尾部取最近 N 条（默认仍按时间正序输出）。通用选项：`--json` 机器可读输出；`--refresh` 忽略副本重新采集；`--task <id>` 指定任务缓存标识；`--full` 文本输出不截断正文。`messages` 的结果包含采集时间与副本路径，引用时一并给出。
 
 ## 副本、刷新与清理
 

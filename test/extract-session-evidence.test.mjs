@@ -830,20 +830,94 @@ test("T3 SQLite：预检附带后续轮次结果；完整提取输出逐轮工�
   const report = analyzeT3Thread(dbPath, threadId);
   const run1 = report.runStats.find((r) => r.runOrdinal === 1);
   assert.equal(run1.toolCallCount, 3);
-  assert.equal(run1.failedToolCount, 1);
+  assert.equal(run1.failedToolCount, 0);
   assert.equal(run1.lastAssistantPreview, "已修改。");
   assert.deepEqual(report.toolCalls.map((c) => c.itemId), ["c1", "c2", "c3"]);
   assert.match(report.toolCalls[1].commandPreview, /^'\$p = "D:/);
   assert.deepEqual(report.skills.fileReads.map((r) => r.paths), [["D:/repo/skills/demo/SKILL.md"]]);
   assert.deepEqual(report.skills.fileWrites.map((r) => r.paths), [[String.raw`D:\repo\skills\demo\SKILL.md`]]);
   assert.deepEqual(report.skills.userTokens.map((tk) => tk.names), [["yjx-retro-skill"], ["yjx-retro-skill"], ["yjx-retro-skill"]]);
-  assert.deepEqual(report.nonZeroTools.map((nz) => [nz.itemId, nz.failureReason]), [["c3", "output pattern"]]);
+  assert.deepEqual(report.nonZeroTools, []);
+  assert.deepEqual(report.suspiciousSuccessOutputs.map((item) => [item.itemId, item.exitCodes]), [["c3", [0]]]);
+  assert.match(report.suspiciousSuccessOutputs[0].outputPreview, /AssertionError/);
+  assert.equal(report.toolCalls.find((call) => call.itemId === "c3").failed, false);
 
   const md = formatMarkdown(report);
-  assert.match(md, /Run #1: .* \| tools=3 failed=1 output=yes aborts=0/);
+  assert.match(md, /Run #1: .* \| tools=3 failed=0 output=yes aborts=0/);
   assert.match(md, /Run #3: .* \| tools=0 failed=0 output=no aborts=1/);
   assert.match(md, /\[Write\] T3:pos=2/);
   assert.match(md, /\[\$token\] T3:pos=5 \(run #2\) `\$yjx-retro-skill`/);
-  assert.match(md, /exit: 0; by: output pattern/);
   assert.match(md, /## Tool Calls by Run \(3\)\n### Run #1\n- T3:pos=1 00:01:00 `command_execution` exit=0 out=4: `cat D:\/repo/);
+});
+
+test("Skill 读写判定：写入临时文件附带 Test-Path 或 here-string 提及技能路径时不误报为读写 Skill", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { analyzeT3Thread } = await import(
+    "../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs"
+  );
+  const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-skill-access-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dbPath = path.join(root, "statev2.sqlite");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT, payload_json TEXT);
+    CREATE TABLE orchestration_v2_projection_runs (run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, provider TEXT, provider_instance_id TEXT, provider_thread_id TEXT, status TEXT, requested_at TEXT, completed_at TEXT, payload_json TEXT);
+    CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, provider_instance_id TEXT, driver TEXT, first_run_ordinal INTEGER, last_run_ordinal INTEGER, payload_json TEXT);
+    CREATE TABLE orchestration_v2_projection_turn_items (turn_item_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, provider_thread_id TEXT, ordinal INTEGER, type TEXT, status TEXT, updated_at TEXT, payload_json TEXT);
+    CREATE TABLE orchestration_v2_turn_item_positions (thread_id TEXT, turn_item_id TEXT, ordinal INTEGER);
+  `);
+  const threadId = "7d3c0e3a-0000-4000-8000-000000000099";
+  db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?)").run(
+    threadId, "Skill读写误报测试", "2026-11-17T00:00:00.000Z", "2026-11-17T00:10:00.000Z", "{}"
+  );
+  db.prepare("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    "run:1", threadId, 1, "codex", "codex", "pt:1", "completed", null, null, JSON.stringify({ modelSelection: { model: "m" } })
+  );
+  const add = (id, ord, type, payload) => {
+    db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+      id, threadId, "run:1", "pt:1", ord, type, "completed", "2026-11-17T00:01:00.000Z", JSON.stringify(payload)
+    );
+    db.prepare("INSERT INTO orchestration_v2_turn_item_positions VALUES (?, ?, ?)").run(threadId, id, ord);
+  };
+
+  const saveContextHeredoc = [
+    '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command \'$contextText = @\'"\'',
+    "- .agents/skills/vk-implement/SKILL.md",
+    "- .agents/skills/vk-code-review/SKILL.md",
+    '\'"\'@',
+    "$contextPath = 'C:/Users/Administrator/AppData/Local/Temp/yjx-context.md'",
+    "[IO.File]::WriteAllText($contextPath, $contextText)",
+    "\"'$allRefs = @('.agents/skills/vk-ai-tester/SKILL.md', '.agents/skills/vk-test-cases/SKILL.md')",
+    "$missing = @($allRefs | Where-Object { -not (Test-Path -LiteralPath $_) })'",
+  ].join("\n");
+
+  const readSkillAndWriteTemp = [
+    '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command \'$doc = Get-Content -Raw D:/repo/skills/real/SKILL.md;',
+    "[IO.File]::WriteAllText('C:/Temp/out.md', $doc)'",
+  ].join("\n");
+
+  const applyPatchSkill = [
+    "*** Begin Patch",
+    "*** Update File: D:/repo/skills/real/SKILL.md",
+    "@@",
+    "- 参考 .agents/skills/other/SKILL.md",
+    "+ 改为正向规则",
+    "*** End Patch",
+  ].join("\n");
+
+  add("u1", 1000001, "user_message", { text: "保存上下文并改 real skill" });
+  add("c1", 1000002, "command_execution", { input: saveContextHeredoc, output: "", exitCode: 0 });
+  add("c2", 1000003, "command_execution", { input: readSkillAndWriteTemp, output: "", exitCode: 0 });
+  add("c3", 1000004, "dynamic_tool", { toolName: "apply_patch", input: applyPatchSkill, output: "Success", exitCode: 0 });
+  db.close();
+
+  const report = analyzeT3Thread(dbPath, threadId);
+  assert.deepEqual(
+    report.skills.fileReads.map((r) => [r.callId, r.paths]),
+    [["c2", ["D:/repo/skills/real/SKILL.md"]]]
+  );
+  assert.deepEqual(
+    report.skills.fileWrites.map((w) => [w.callId, w.paths]),
+    [["c3", ["D:/repo/skills/real/SKILL.md"]]]
+  );
 });

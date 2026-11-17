@@ -27,7 +27,7 @@ MCP 返回的 `content[].text` 通常是 JSON：先检查工具错误及业务 `
 先按身份、状态布尔值、去重、忽略名单和时间窗口确定候选范围，再为候选及时间未知项映射状态名称，随后提交完整列表给 `candidates`。已排除的旧单和忽略单不需要状态名称；有效候选在生成写入计划前再核实迭代与负责人姓名。
 
 不以“有父任务”过滤。按父任务聚合候选：
-- 组内仅 1 条且父任务未在清单中跟踪（`autoIntake: true`）：重读详情核实仍在活跃候选范围后，按 executor 自动收录为 `待安排`（`prepare` 传 `confirmed: true`）。
+- 组内仅 1 条且父任务未在清单中跟踪（`autoIntake: true`）：重读详情核实仍在活跃候选范围后，按 executor 自动收录为 `待安排`（`prepare` 传 `confirmed: true`）；若属于带父任务的孤立子单（`untrackedParentAutoIntakes` 非空），同步摘要须向用户补充提示其父单未在清单跟踪。
 - 父任务已在清单中跟踪，或同父有 2 条及以上候选（`decisionGroups`）：分组展示标题、来源链接、父任务和建议粒度，由用户选：跟踪子单、跟踪父单或忽略。未回答保持未收录。
 
 读取父单用 `QueryTaskV3(taskId=<parentTaskId>)`；其 `parentTaskId` 参数用于找子单，不能用于读父单。选择父单时先核实详情：自己负责按 executor，否则加入 watched；未入库子单仅按明确选择忽略，已有子单单独处理，不默认删除/完成。用 `configure` 写入被确认的 watchedTasks/ignoredTaskIds；忽略持续有效直到用户撤销。

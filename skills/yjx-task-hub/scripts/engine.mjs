@@ -78,11 +78,23 @@ export function candidateTasks(tasks, config, index, entries, now = Date.now()) 
     const group = task.parentId ?? task.id;
     groups.set(group, [...(groups.get(group) ?? []), task.id]);
   }
+  const candidateById = new Map(result.candidates.map(task => [task.id, task]));
   result.groups = [...groups].map(([parentId, ids]) => {
     const parentTracked = index.has(taskKey(parentId));
-    return { parentId, taskIds: ids, parentTracked, autoIntake: !parentTracked && ids.length === 1 };
+    const autoIntake = !parentTracked && ids.length === 1;
+    const singleTask = ids.length === 1 ? candidateById.get(ids[0]) : null;
+    const hasUntrackedParent = Boolean(autoIntake && singleTask?.parentId != null);
+    return {
+      parentId,
+      taskIds: ids,
+      parentTracked,
+      autoIntake,
+      hasUntrackedParent,
+      ...(hasUntrackedParent ? { parentNotice: '父任务未在清单中跟踪，已按孤立子单自动收录；如需改为父单粒度请手动调整' } : {}),
+    };
   });
   result.autoIntakeIds = result.groups.filter(g => g.autoIntake).map(g => g.taskIds[0]);
+  result.untrackedParentAutoIntakes = result.groups.filter(g => g.hasUntrackedParent).map(g => ({ taskId: g.taskIds[0], parentId: g.parentId, notice: g.parentNotice }));
   result.decisionGroups = result.groups.filter(g => !g.autoIntake);
   return result;
 }

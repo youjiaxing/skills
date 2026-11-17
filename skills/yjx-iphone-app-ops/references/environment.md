@@ -34,6 +34,7 @@ WDA 构建通过官方 `WebDriverAgent.xcodeproj` 的 `WebDriverAgentRunner` sch
 
 ```bash
 node scripts/iphone-environment.mjs service status appium
+node scripts/iphone-environment.mjs service audit
 node scripts/iphone-environment.mjs service plan appium
 node scripts/iphone-environment.mjs service adopt appium --exclusive
 node scripts/iphone-environment.mjs service install appium --exclusive

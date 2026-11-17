@@ -76,7 +76,10 @@ function viewport(xml) {
 }
 
 function sourceStop(xml) {
-  if (/SBCoverSheetWindow|lockscreen-date-view|XCUIElementTypeSecureTextField/.test(xml)) return 'blocked-credential'
+  if (/XCUIElementTypeSecureTextField/.test(xml)) return 'blocked-credential'
+  if (/SBCoverSheetWindow|lockscreen-date-view/.test(xml)) {
+    return /Enter Passcode|输入密码|输入锁屏密码/i.test(xml) ? 'blocked-credential' : 'device-locked-recoverable'
+  }
   if (/允许.*(?:定位|通讯录|照片)|想要访问您的|Would Like to Access/.test(xml)) return 'blocked-permission'
   return observationStopReason(xml)
 }
@@ -147,12 +150,23 @@ export async function runDianpingQuery(client, sid, input, {recover, requireFore
   let lastPassedStage = 'preflight'
   const startedAt = new Date().toISOString()
   const runId = randomUUID()
-  const guarded = async () => {
+  let autoRecovers = 0
+  const guardedOnce = async () => {
     const xml = await client.source(sid)
     const stop = sourceStop(xml)
     if (stop) throw new QueryStop(stop)
     await requireForeground(client, sid, DIANPING_BUNDLE, xml)
     return xml
+  }
+  const guarded = async () => {
+    try { return await guardedOnce() }
+    catch (error) {
+      if (error.status !== 'device-locked-recoverable' || autoRecovers >= 2) throw error
+      autoRecovers++
+      const recovered = await recover(client, sid, DIANPING_BUNDLE)
+      if (!recovered.ok) throw new QueryStop(recovered.status || 'device-locked-recoverable')
+      return guardedOnce()
+    }
   }
   const foreground = async () => {
     const active = await client.execute(sid, 'mobile: activeAppInfo')
@@ -310,6 +324,8 @@ export async function runDianpingQuery(client, sid, input, {recover, requireFore
         artifacts.push(pageArtifacts.screenshot)
       }
       return {pageIndex, readAt, method, viewport: size, observations, text: raw.text,
+        tabCandidates: observations.filter((row) => row.y >= 0.08 && row.y < 0.2 && row.text.length >= 1 && row.text.length <= 16)
+          .map((row) => ({id: row.id, text: row.text, x: row.x, y: row.y})),
         snapshotNote: 'UI source and pixels are sequential observations; not an atomic snapshot', artifacts: pageArtifacts}
     }, scroll: async () => {
       await guarded()

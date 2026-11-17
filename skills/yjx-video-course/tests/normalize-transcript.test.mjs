@@ -216,3 +216,18 @@ test('CLI reads VTT, writes JSON and exits nonzero on invalid input without writ
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /missing value/);
 });
+
+test('normalizeTranscript handles bilibili-json, hard-subtitles-json and whisper-json', () => {
+  const bili = normalizeTranscript(JSON.stringify({ body: [{ from: 1.5, to: 3, content: '你好' }] }), { language: 'zh-CN' });
+  assert.equal(bili.normalization.format, 'bilibili-json');
+  assert.deepEqual(bili.body, [{ from: 1.5, to: 3, text: '你好' }]);
+
+  const hard = normalizeTranscript(JSON.stringify({ body: [{ from: 2, to: 4, zh: '中文', en: 'English' }] }));
+  assert.equal(hard.normalization.format, 'hard-subtitles-json');
+  assert.deepEqual(hard.body, [{ from: 2, to: 4, text: '中文\nEnglish' }]);
+
+  const whisper = normalizeTranscript(JSON.stringify({ language: 'en', segments: [{ start: 0, end: 2.5, text: ' hello ' }] }));
+  assert.equal(whisper.normalization.format, 'whisper-json');
+  assert.equal(whisper.language, 'en');
+  assert.deepEqual(whisper.body, [{ from: 0, to: 2.5, text: 'hello' }]);
+});

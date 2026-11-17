@@ -59,8 +59,10 @@ TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，�
 | sync-attest | identityVerified、paginationVerified、iterationsVerified、writesVerified、candidatesHandled 均为 true | 核实身份和策略、分页终点、迭代、写入回执及候选处理后提交；有未决、未处理计划或覆盖不足时拒绝 |
 | plan-personal | pageId（编辑时）、properties | 新人工事项或个人安排生成计划；个人顺序须有用户确认 |
 | prepare | planId、confirmed:true（创建/个人编辑必需） | 持久化 prepared 意图，返回 opId |
+| prepare-batch | items 数组（每项含 planId、confirmed） | 逐项持久化 prepared 意图，返回各自 opId 或错误；仍须逐项走 `dispatch → 外部调用` |
 | dispatch | opId（可选 currentPage / noMatchConfirmed） | 基于本轮 `inventory` 核对页面快照与唯一性，持久化 dispatched，返回 permitted:true 及精确拟写 properties |
 | commit | opId、apiSucceeded:true、pageId（更新可省略，创建必填；兼容旧 page） | 当前 MCP 写入明确返回成功 `page_id` 后直接校验 ID 身份并合成提交基线，无需写后 `fetch` 回读 |
+| commit-batch | items 数组（每项含 opId、apiSucceeded:true 等） | 逐项校验明确成功响应并提交基线，未知或失败项保持 `dispatched` 禁止重发，留待 `resolve` |
 | cancel | opId | 仅取消 prepared，外部未发请求 |
 | resolve | opId、confirmed:true、outcome 等 | 人工对账，见下节 |
 

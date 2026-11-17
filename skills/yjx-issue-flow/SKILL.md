@@ -37,7 +37,7 @@ disable-model-invocation: true
 
 1. 解析 `mode: auto|serial|parallel`、`workspace: auto|local|worktree` 与 `max-workers`（优先级：本次显式参数 > 项目配置 > 默认上限 3）。项目规则是硬边界：不支持或禁止 Worktree 的项目强制使用 `local + serial`，**绝不创建 Worktree**；`parallel + local` 视为参数冲突并拒绝。
 2. 当多个待执行 issue 共享同一模块、契约或业务域时，可先派发一个只读探索子代理（`Start every subagent with a fresh context window (do not fork the current conversation).`），将公共模块定位、构建验证命令和关键约束写入当前工作目录的 `./tmp/research/<run-slug>.md`。写入前必须确认 `./tmp/` 已被版本控制忽略（`.gitignore` 或 `.git/info/exclude`）。
-3. 按显式阻塞边计算当前 ready frontier，在有效并发上限内调度 worker。`worktree` 并行模式下不因预测文件可能重叠而预先串行化。
+3. 通过项目看板脚本（如 `yjx-local-kanban`）或 `node <skill-dir>/scripts/issue-flow-dag.mjs --input <json>` 只读计算当前 ready frontier、阻塞关系与环路校验，在有效并发上限内调度 worker。`worktree` 并行模式下不因预测文件可能重叠而预先串行化。
 4. 为每张就绪票选定 handler skill，发送**指针优先（Context Pointers）**交接。遇到限流或创建任务失败时，退避并下调并发上限后重试。
 *Completion Criterion*: 工作区与并发模式已校验无冲突；若启用 `./tmp/research` 探索，已确认 `./tmp/` 被版本控制忽略且探索文件已落盘；首批 ready frontier 已通过上下文指针交接派发。
 

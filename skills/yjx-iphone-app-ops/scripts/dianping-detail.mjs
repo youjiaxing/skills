@@ -31,8 +31,19 @@ export function extractDetailFields(page) {
   const state = rows.find((row) => row.y < 0.6 && /^(?:休息中|营业中)/.test(row.text))
   const hours = state ? rows.filter((row) => Math.abs(row.y - state.y) < 0.018 &&
     /\d{1,2}[:：]\d{2}.*[-—~～].*\d{1,2}[:：]\d{2}/.test(row.text)) : []
+  const toCandidate = (row) => ({text: row.text, observationIds: [row.id], confidence: row.confidence, x: row.x, y: row.y})
+  const addressCandidates = rows
+    .filter((row) => /(?:路|街|巷|道|广场|大厦|中心|商城|园区|村|层|室|号|距.*(?:m|米|km|公里))/.test(row.text) && !/榜|名|券/.test(row.text))
+    .slice(0, 10).map(toCandidate)
+  const hoursCandidates = rows
+    .filter((row) => /\d{1,2}[:：]\d{2}|营业|休息|全天|24小时|周[一二三四五六日天]/.test(row.text))
+    .slice(0, 10).map(toCandidate)
+  const tabCandidates = page.observations
+    .filter((row) => row.y >= 0.08 && row.y <= 0.35 && row.text.length >= 2 && row.text.length <= 12 && !/[¥￥\d]{2,}/.test(row.text))
+    .slice(0, 16).map(toCandidate)
   return {address: pack(addressRows), businessState: pack(state ? [state] : []), hours: pack(hours),
-    hoursScope: hours.length ? 'current-page-summary; weekly rules not expanded' : null}
+    hoursScope: hours.length ? 'current-page-summary; weekly rules not expanded' : null,
+    addressCandidates, hoursCandidates, tabCandidates}
 }
 
 export async function runDianpingDetail(client, sid, {from, candidateId, output, current = false, expectedName = null}, deps) {

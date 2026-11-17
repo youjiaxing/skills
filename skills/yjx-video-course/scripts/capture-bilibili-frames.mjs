@@ -234,6 +234,20 @@ async function captureWithOpenCV(videoPath, outputDir, times) {
   return JSON.parse(stdout.trim());
 }
 
+function checkPreferredFpsOrAspect({ width, height, fps, expectedWidth, availableVariants = [], selectedFrameRate = null }) {
+  const warnings = [];
+  const higherFpsVariant = availableVariants.find((variant) =>
+    Number(variant.height) >= height && Number(variant.frame_rate) >= 30 && (!Number.isFinite(fps) || Number(variant.frame_rate) - fps > 5)
+  );
+  if (higherFpsVariant || (Number.isFinite(selectedFrameRate) && selectedFrameRate >= 30 && (!Number.isFinite(fps) || fps < 29))) {
+    return { blocked: true, reason: `higher frame-rate variant (${higherFpsVariant?.frame_rate ?? selectedFrameRate}fps) was available but stream delivered ${fps}fps` };
+  }
+  if (width < expectedWidth || !Number.isFinite(fps) || fps < 30) {
+    warnings.push('below_preferred_fps_or_aspect');
+  }
+  return { blocked: false, warnings };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const bvid = args.bvid;
@@ -298,21 +312,30 @@ async function main() {
       frame_backend: FRAME_BACKEND,
       frame_rate: Number.isFinite(Number(probe.fps)) ? Number(probe.fps) : null,
     };
-    if (probe.width < (quality === 80 ? 1920 : 1280) || probe.height < EXPECTED_HEIGHT[quality]) {
+    if (probe.height < EXPECTED_HEIGHT[quality]) {
       manifest.blocked = true;
-      manifest.reason = `selected DASH variant decoded to ${probe.width}x${probe.height}, below requested ${QUALITY[quality]}`;
+      manifest.reason = `selected DASH variant decoded height ${probe.height}px, below requested ${EXPECTED_HEIGHT[quality]}px (${QUALITY[quality]})`;
       manifest.next_action = 'This anonymous CLI request cannot see browser cookies. Do not ask the user to sign in based on this result; verify login and quality with bilibili-browser-frames.mjs in the actual browser tab first.';
       console.log(JSON.stringify(manifest, null, 2));
       process.exitCode = 3;
       return;
     }
-    if (!Number.isFinite(Number(probe.fps)) || Number(probe.fps) < 30) {
+    const fpsAspectCheck = checkPreferredFpsOrAspect({
+      width: probe.width,
+      height: probe.height,
+      fps: Number(probe.fps),
+      expectedWidth: quality === 80 ? 1920 : 1280,
+      availableVariants: manifest.other_variants,
+      selectedFrameRate: manifest.selected_variant.frame_rate,
+    });
+    if (fpsAspectCheck.blocked) {
       manifest.blocked = true;
-      manifest.reason = `selected DASH variant frame rate ${manifest.frame_rate} is below 30 fps`;
+      manifest.reason = fpsAspectCheck.reason;
       console.log(JSON.stringify(manifest, null, 2));
       process.exitCode = 3;
       return;
     }
+    if (fpsAspectCheck.warnings.length) manifest.warnings = fpsAspectCheck.warnings;
     manifest.frames = await captureFrames(mediaPath, outputDir, times);
     console.log(JSON.stringify(manifest, null, 2));
     return;
@@ -365,7 +388,6 @@ async function main() {
     frames: [],
   };
 
-  const minimumWidth = requestedQuality === 80 ? 1920 : 1280;
   const minimumHeight = requestedQuality === 80 ? 1080 : 720;
   if (manifest.quality_honored !== true || (actualHeight ?? 0) < minimumHeight) {
     manifest.blocked = true;
@@ -385,21 +407,28 @@ async function main() {
   manifest.probe = await probeMedia(mediaPath);
   const mediaFrameRate = Number(manifest.probe.fps);
   manifest.frame_rate = Number.isFinite(mediaFrameRate) ? mediaFrameRate : null;
-  const minimumFrameRate = 30;
-  if (manifest.probe.width < minimumWidth || manifest.probe.height < minimumHeight) {
+  if (manifest.probe.height < minimumHeight) {
     manifest.blocked = true;
-    manifest.reason = `downloaded media decoded to ${manifest.probe.width}x${manifest.probe.height}, below requested ${QUALITY[requestedQuality]} minimum ${minimumWidth}x${minimumHeight}`;
+    manifest.reason = `downloaded media decoded height ${manifest.probe.height}px, below requested ${QUALITY[requestedQuality]} minimum ${minimumHeight}px`;
     console.log(JSON.stringify(manifest, null, 2));
     process.exitCode = 3;
     return;
   }
-  if (!Number.isFinite(mediaFrameRate) || mediaFrameRate < minimumFrameRate) {
+  const fpsAspectCheck = checkPreferredFpsOrAspect({
+    width: manifest.probe.width,
+    height: manifest.probe.height,
+    fps: mediaFrameRate,
+    expectedWidth: requestedQuality === 80 ? 1920 : 1280,
+    availableVariants: manifest.available_variants,
+  });
+  if (fpsAspectCheck.blocked) {
     manifest.blocked = true;
-    manifest.reason = `downloaded media frame rate ${manifest.frame_rate} is below ${minimumFrameRate} fps`;
+    manifest.reason = fpsAspectCheck.reason;
     console.log(JSON.stringify(manifest, null, 2));
     process.exitCode = 3;
     return;
   }
+  if (fpsAspectCheck.warnings.length) manifest.warnings = fpsAspectCheck.warnings;
 
   manifest.frames = await captureFrames(mediaPath, outputDir, times);
   console.log(JSON.stringify(manifest, null, 2));

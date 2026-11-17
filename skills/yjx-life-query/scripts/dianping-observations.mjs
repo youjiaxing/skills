@@ -128,6 +128,8 @@ export function toLifeQueryCandidates(value) {
         verification: 'unverified', fieldPresence: business.completeness ?? null,
         extractionNeedsReview: legacy || business.needsReview !== false || reviewReasons.length > 0,
         reviewReasons, possibleDuplicateOf: business.possibleDuplicateOf || null,
+        ...(business.nearbyObservations ? {nearbyObservations: business.nearbyObservations} : {}),
+        ...(business.cropRegion ? {cropRegion: business.cropRegion} : {}),
         fields: Object.fromEntries(fields.map((key) => {
           const field = business[key]
           const evidenceRefs = (business.sightings || []).flatMap((sighting) => {

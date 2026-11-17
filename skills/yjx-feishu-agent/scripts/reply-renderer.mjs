@@ -84,8 +84,8 @@ function classify(text) {
   if (/```[\s\S]*```/.test(text) || lines.some(line => /^(?:Traceback|Error:| at |npm ERR!|\[[A-Z]+\]|日志[:：])/.test(line.trim()))) return 'text';
   const headings=lines.filter(line => /^\s*\*\*[^*]{2,50}\*\*[:：]?\s*$/.test(line) || /^\s*#{1,6}\s+/.test(line)).length;
   const bullets=lines.filter(line => /^\s*(?:[-*]|\d+[.)])\s+/.test(line)).length;
-  const labels=/(结论|关键发现|证据|风险|建议|下一步|来源|评测结果|处理结果)/.test(text);
-  if (headings >= 2 && (labels || bullets >= 2)) return 'card';
+  const paragraphs=text.split(/\n{2,}/).filter(Boolean).length;
+  if (headings >= 2 && (bullets >= 2 || paragraphs >= 3)) return 'card';
   return 'post';
 }
 

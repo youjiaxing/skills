@@ -4,7 +4,7 @@ const fieldNames = ['rating', 'reviewCount', 'pricePerPerson', 'distance', 'area
 export const CAPTURE_STOP_REASONS = new Set(['max-pages', 'page-unchanged', 'two-pages-without-new-businesses',
   'blocked-verification', 'blocked-login', 'blocked-credential', 'blocked-permission', 'needs-user-consent',
   'protocol-timeout', 'capture-failed', 'insufficient-result-evidence', 'query-or-result-scope-unverified',
-  'screen-not-readable', 'unexpected-overlay', 'viewport-unavailable'])
+  'screen-not-readable', 'unexpected-overlay', 'viewport-unavailable', 'device-locked-recoverable'])
 const normalizedText = (text) => text.normalize('NFKC').toLowerCase().replace(/[\s·•・]/gu, '')
 const sameValue = (left, right) => JSON.stringify(left) === JSON.stringify(right)
 
@@ -91,9 +91,24 @@ export function groupBusinesses(observations, {pageIndex = 1, initialSection = '
     if (lowConfidenceFields.length) reviewReasons.push('low-recognition-confidence')
     if (Object.values(fields).some((value) => value?.ambiguous)) reviewReasons.push('conflicting-fields')
     const section = headers.some((header) => header.y < title.y) ? 'recommended' : initialSection
+    const needsReview = reviewReasons.length > 0
+    let nearbyObservations, cropRegion
+    if (needsReview) {
+      const usedIds = new Set([name, ...Object.values(fields)].filter(Boolean).flatMap((entry) => entry.observationIds || []))
+      const nearby = rows.filter((row) => row.y >= Math.max(0.18, title.y - 0.02) && row.y < Math.min(0.98, end + 0.02))
+      nearbyObservations = nearby.filter((row) => !usedIds.has(row.id)).slice(0, 12)
+        .map((row) => ({id: row.id, text: row.text, x: row.x, y: row.y, width: row.width, height: row.height}))
+      const regionRows = card.length ? card : [title]
+      const minX = Math.max(0, Math.min(...regionRows.map((row) => row.x)) - 0.01)
+      const minY = Math.max(0, Math.min(...regionRows.map((row) => row.y)) - 0.01)
+      const maxX = Math.min(1, Math.max(...regionRows.map((row) => row.x + row.width)) + 0.01)
+      const maxY = Math.min(1, Math.max(...regionRows.map((row) => row.y + row.height)) + 0.01)
+      cropRegion = {x: Number(minX.toFixed(4)), y: Number(minY.toFixed(4)),
+        width: Number(Math.max(0.01, maxX - minX).toFixed(4)), height: Number(Math.max(0.01, maxY - minY).toFixed(4))}
+    }
     return {name, ...fields, section, pageIndex, missingFields, lowConfidenceFields, reviewReasons,
       completeness: Math.round(100 * (fieldNames.length - missingFields.length) / fieldNames.length),
-      needsReview: reviewReasons.length > 0}
+      needsReview, ...(needsReview ? {nearbyObservations, cropRegion} : {})}
   })
   return {businesses, sectionAfter: headers.length ? 'recommended' : initialSection}
 }
@@ -103,13 +118,20 @@ function identity(business) {
   return [normalizedText(business.name.value), business.area.value.city, business.area.value.district].join('|')
 }
 
+function fallbackIdentity(business) {
+  if (!business.area?.value.district || business.reviewReasons.includes('name-truncated')) return null
+  return [normalizedText(business.name.value), business.area.value.district].join('|')
+}
+
 // Exact name + area + matching metrics only. Incomplete names never identify a shop.
 export function mergeBusinesses(pages) {
   const merged = []
   for (const page of pages) {
     for (const business of page.businesses) {
       const key = identity(business)
+      const fallbackKey = !key ? fallbackIdentity(business) : null
       const possible = key && merged.find((item) => identity(item) === key)
+      const possibleByDistrict = !key && fallbackKey && merged.find((item) => fallbackIdentity(item) === fallbackKey)
       const conflicts = possible && fieldNames.filter((name) => possible[name] && business[name]
         && !sameValue(possible[name].value, business[name].value))
       const matchesMetric = possible && ['reviewCount', 'pricePerPerson', 'distance']
@@ -127,6 +149,12 @@ export function mergeBusinesses(pages) {
           item.needsReview = true
           possible.needsReview = true
           possible.reviewReasons = [...new Set([...possible.reviewReasons, 'identity-or-field-conflict'])]
+        } else if (possibleByDistrict) {
+          item.possibleDuplicateOf = possibleByDistrict.id
+          item.reviewReasons = [...new Set([...item.reviewReasons, 'identity-or-field-conflict'])]
+          item.needsReview = true
+          possibleByDistrict.needsReview = true
+          possibleByDistrict.reviewReasons = [...new Set([...possibleByDistrict.reviewReasons, 'identity-or-field-conflict'])]
         }
         merged.push(item)
       }

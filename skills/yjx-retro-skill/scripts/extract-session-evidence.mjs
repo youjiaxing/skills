@@ -36,12 +36,11 @@ function extractSkillTokens(text) {
 }
 
 const WRITE_TOOL_NAMES = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]);
-const WRITE_COMMAND_RE =
-  /WriteAllText|WriteAllLines|AppendAllText|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item|Remove-Item|\bapply_patch\b|\*\*\* (?:Update|Add|Delete) File|\bsed\s+-i|\btee\b|(?:^|[^>=-])>>?\s*["']?[^\s|&;]*skills[\\/]/i;
+const SKILL_PATH_RE = /[A-Za-z0-9_./\\:-]*skills[\\/][A-Za-z0-9_./\\:-]*\.md/gi;
 
 function classifySkillFileAccess(toolName, cmdText) {
-  if (toolName && WRITE_TOOL_NAMES.has(toolName)) return "write";
-  return WRITE_COMMAND_RE.test(cmdText || "") ? "write" : "read";
+  const ops = extractSkillFileOps(toolName, cmdText);
+  return ops.writes.length > 0 ? "write" : "read";
 }
 
 function buildRunOutcomes(runs, startIndex, endIndexExclusive) {
@@ -85,6 +84,9 @@ Options:
   --t3-db <path>          Explicit T3 statev2.sqlite path (default: <t3-home>/userdata/statev2.sqlite)
   --until-ordinal <n>     Exclude records with ordinal > <n> (fix retro cutoff point before the current call)
   --since-ordinal <n>     Exclude records with ordinal < <n> (start of a repeated retro range; session_meta is still read)
+  --since-time <ISO>      Inclusive cross-thread evidence start (otherwise derived from the parent's range)
+  --until-time <ISO>      Exclusive cross-thread evidence cutoff; never reuse parent ordinals in children
+  --subagents-only        Output only compact child evidence, reusing the parent's existing context
   --preflight             Read only session metadata, compaction/handoff markers and yjx-retro-skill invocations,
                            then print the review range start and routing decision; each earlier invocation
                            carries runOutcomes (its run plus up to 3 following runs: status, tool count,
@@ -105,6 +107,9 @@ function parseArgs(argv) {
     t3Db: null,
     untilOrdinal: null,
     sinceOrdinal: null,
+    sinceTime: null,
+    untilTime: null,
+    subagentsOnly: false,
     preflight: false,
     itemId: null,
     format: "json",
@@ -129,6 +134,14 @@ function parseArgs(argv) {
       opts.untilOrdinal = parseOrdinalArg(arg, argv[++i]);
     } else if (arg === "--since-ordinal") {
       opts.sinceOrdinal = parseOrdinalArg(arg, argv[++i]);
+    } else if (arg === "--since-time" || arg === "--until-time") {
+      const value = argv[++i];
+      if (!value || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) {
+        throw new Error(`${arg} requires an ISO timestamp with timezone`);
+      }
+      opts[arg === "--since-time" ? "sinceTime" : "untilTime"] = new Date(value).toISOString();
+    } else if (arg === "--subagents-only") {
+      opts.subagentsOnly = true;
     } else if (arg === "--preflight") {
       opts.preflight = true;
     } else if (arg === "--item-id") {
@@ -146,7 +159,22 @@ function parseArgs(argv) {
   if (!opts.t3Db) {
     opts.t3Db = path.join(opts.t3Home, "userdata", "statev2.sqlite");
   }
+  if (opts.sinceTime && opts.untilTime && opts.sinceTime >= opts.untilTime) {
+    throw new Error("--since-time must precede --until-time");
+  }
   return opts;
+}
+
+// Dispatch text is only a candidate marker. A child ID must come from a paired
+// structured result or the host's explicit subagent relation, never from quoted code.
+function isAgentDispatch(name, input = "") {
+  return /(?:^|[_.])(?:spawn_agent|delegate_task|Agent|Task)$/.test(name || "") ||
+    /\btools\.(?:multi_agent_v1__spawn_agent|mcp__t3_code_direct__delegate_task)\s*\(/.test(input);
+}
+
+function isAgentControl(name, input = "") {
+  return /(?:^|[_.])(?:send_input|wait_agent|resume_agent|close_agent)$/.test(name || "") ||
+    /\btools\.multi_agent_v1__(?:send_input|wait_agent|resume_agent|close_agent)\s*\(/.test(input);
 }
 
 export async function preflightFiles(filePaths, opts = {}) {
@@ -155,6 +183,7 @@ export async function preflightFiles(filePaths, opts = {}) {
   const compactions = [];
   const retroByOrdinal = new Map();
   const retroWithoutOrdinal = [];
+  const subagentMarkers = [];
   let sessionMeta = null;
   let pendingHumanPreview = null;
   let lastRetroEntry = null;
@@ -189,6 +218,12 @@ export async function preflightFiles(filePaths, opts = {}) {
       if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) continue;
 
       const payload = obj.payload || {};
+      if (obj.type === "response_item" &&
+          (payload.type === "function_call" || payload.type === "custom_tool_call") &&
+          (isAgentDispatch(payload.name, typeof payload.input === "string" ? payload.input : payload.arguments || "") ||
+           isAgentControl(payload.name, typeof payload.input === "string" ? payload.input : payload.arguments || ""))) {
+        subagentMarkers.push({ location: `${tag}:L${lineNo}`, ordinal: ord, timestamp: obj.timestamp || null });
+      }
       if (obj.type === "session_meta" && payload) {
         sessionMeta ??= {
           id: payload.id || payload.session_id || null,
@@ -326,6 +361,8 @@ export async function preflightFiles(filePaths, opts = {}) {
 
   return {
     route: rangeCompactions.length > 0 ? "full" : "fast",
+    subagentEvidenceRequired: subagentMarkers.length > 0,
+    subagentCandidates: subagentMarkers,
     rangeStartOrdinal,
     previousRetro,
     currentRetro,
@@ -575,6 +612,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
     const compactions = [];
     const handoffs = [];
     const retroByOrdinal = new Map();
+    const subagentMarkers = [];
     let activeRetroCandidate = null;
     const preRunStats = new Map();
     const statsFor = (runId) => {
@@ -592,6 +630,11 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       if (untilOrdinal !== null && ord !== null && ord > untilOrdinal) continue;
       const loc = `T3:pos=${item.position}`;
       const payload = safeJsonParse(item.payload_json);
+      if (item.type === "subagent" ||
+          (item.type === "dynamic_tool" && (isAgentDispatch(payload.toolName, typeof payload.input === "string" ? payload.input : JSON.stringify(payload.input || "")) ||
+           isAgentControl(payload.toolName, typeof payload.input === "string" ? payload.input : JSON.stringify(payload.input || ""))))) {
+        subagentMarkers.push({ location: loc, ordinal: ord, timestamp: payload.startedAt || null, childThreadId: payload.childThreadId || null });
+      }
       const rs = statsFor(item.run_id);
       if (rs) {
         if (
@@ -801,6 +844,8 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       threadId,
       title: threadRow.title || null,
       route,
+      subagentEvidenceRequired: subagentMarkers.some((s) => effectiveEndOrdinal === null || s.ordinal === null || s.ordinal <= effectiveEndOrdinal),
+      subagentCandidates: subagentMarkers.filter((s) => effectiveEndOrdinal === null || s.ordinal === null || s.ordinal <= effectiveEndOrdinal),
       rangeStartOrdinal,
       previousRetro,
       currentRetro,
@@ -845,19 +890,19 @@ function parseT3ToolOutcome(itemType, itemStatus, payload) {
     payload.output && typeof payload.output === "object" && payload.output.isError === true;
   const statusFailed = itemStatus === "failed";
   const exitFailed = exitCodes.some((c) => c !== 0);
-  const failed = statusFailed || isErrorObj || exitFailed || outSummary.failed;
+  const failed = statusFailed || isErrorObj || exitFailed;
+  const suspiciousPattern = !failed && outSummary.suspiciousPattern;
   const failureReason = !failed
     ? null
     : statusFailed
     ? "status failed"
     : isErrorObj
     ? "tool error"
-    : exitFailed
-    ? "exit code"
-    : "output pattern";
+    : "exit code";
   return {
     exitCodes,
     failed,
+    suspiciousPattern,
     failureReason,
     truncated: outSummary.truncated,
     preview: rawOut.slice(0, 320),
@@ -926,12 +971,14 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
     const handoffs = [];
     const turnAborts = [];
     const subagents = [];
+    const historicalGaps = [];
     const skillInjections = [];
     const skillReads = [];
     const skillWrites = [];
     const skillTokens = [];
     const toolCalls = [];
     const nonZeroTools = [];
+    const suspiciousSuccessOutputs = [];
     const humanInputs = [];
     const scheduledTriggers = [];
     const runStatsMap = new Map();
@@ -983,6 +1030,10 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       if (sinceOrdinal !== null && ord !== null && ord < sinceOrdinal) continue;
 
       const payload = safeJsonParse(item.payload_json);
+      if (opts.untilTime && timestampMs(payload.updatedAt || item.updated_at) >= timestampMs(opts.untilTime)) {
+        historicalGaps.push({ location: `T3:pos=${item.position}`, itemId: item.turn_item_id, reason: "payload-updated-after-cutoff; historical value unavailable" });
+        continue;
+      }
       const ts = payload.completedAt || payload.startedAt || item.updated_at || null;
       const loc = `T3:pos=${item.position}`;
 
@@ -1112,6 +1163,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
           childThreadId: payload.childThreadId || null,
           childItemCount: childStats.childItemCount,
           childFailedCount: childStats.childFailedCount,
+          childStatsScope: "all currently recorded child history; use subagentEvidence for bounded review",
           status: item.status || payload.status || null,
           resultPreview: typeof payload.result === "string" ? payload.result.slice(0, 300) : null,
         });
@@ -1264,17 +1316,29 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
           }
         }
 
-        const skillPaths = extractSkillPathsFromCommand(cmdInput);
-        if (skillPaths.length > 0) {
-          const access = classifySkillFileAccess(toolName, cmdInput);
-          (access === "write" ? skillWrites : skillReads).push({
+        const skillOps = extractSkillFileOps(toolName, cmdInput);
+        if (skillOps.reads.length > 0) {
+          skillReads.push({
             callLocation: loc,
             outputLocation: loc,
             itemId: item.turn_item_id,
             ordinal: ord,
             callId: item.turn_item_id,
-            access,
-            paths: skillPaths,
+            access: "read",
+            paths: skillOps.reads,
+            exitCodes: outSummary.exitCodes,
+            truncated: outSummary.truncated,
+          });
+        }
+        if (skillOps.writes.length > 0) {
+          skillWrites.push({
+            callLocation: loc,
+            outputLocation: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            callId: item.turn_item_id,
+            access: "write",
+            paths: skillOps.writes,
             exitCodes: outSummary.exitCodes,
             truncated: outSummary.truncated,
           });
@@ -1292,6 +1356,21 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             commandPreview: cmdInput.slice(0, 300),
             exitCodes: outSummary.exitCodes,
             failureReason: outSummary.failureReason,
+            truncated: outSummary.truncated,
+            outputPreview: outSummary.preview,
+          });
+        } else if (outSummary.suspiciousPattern) {
+          suspiciousSuccessOutputs.push({
+            callLocation: loc,
+            outputLocation: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            callId: item.turn_item_id,
+            toolName,
+            agent: agentTag,
+            commandPreview: cmdInput.slice(0, 300),
+            exitCodes: outSummary.exitCodes,
+            note: "exit 0; output matched error-like pattern — verify in context",
             truncated: outSummary.truncated,
             outputPreview: outSummary.preview,
           });
@@ -1471,6 +1550,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       compactions,
       handoffs,
       subagents,
+      historicalGaps,
       turnAborts,
       skills: {
         injected: skillInjections,
@@ -1479,6 +1559,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
         fileWrites: skillWrites,
       },
       nonZeroTools,
+      suspiciousSuccessOutputs,
       wrapperCounts: {},
       humanInputs,
     };
@@ -1571,7 +1652,7 @@ function classifyUserMessage(text) {
 function extractSkillPathsFromCommand(cmdText) {
   if (!cmdText) return [];
   const matches = new Set();
-  const re = /[A-Za-z0-9_./\\:-]*skills[\\/][A-Za-z0-9_./\\:-]*\.md/gi;
+  const re = new RegExp(SKILL_PATH_RE.source, "gi");
   let m;
   while ((m = re.exec(cmdText)) !== null) {
     let found = m[0];
@@ -1586,6 +1667,143 @@ function extractSkillPathsFromCommand(cmdText) {
   return [...matches];
 }
 
+function extractApplyPatchSkillPaths(patchText) {
+  if (!patchText) return [];
+  const paths = new Set();
+  const re = /^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+?)\s*$|^\*\*\*\s+Move\s+to:\s*(.+?)\s*$/gm;
+  let m;
+  while ((m = re.exec(patchText)) !== null) {
+    const raw = (m[1] || m[2] || "").trim();
+    for (const p of extractSkillPathsFromCommand(raw)) paths.add(p);
+  }
+  return [...paths];
+}
+
+function stripShellHereDocs(cmdText) {
+  let out = String(cmdText || "");
+  out = out.replace(/@'(?:"'|\\'')?\r?\n[\s\S]*?\r?\n(?:(?:'"|\\'')?'@)/g, "@''@");
+  out = out.replace(/@"(?:'"|\\")?\r?\n[\s\S]*?\r?\n(?:(?:"'|\\")?"@)/g, '@""@');
+  out = out.replace(/<<[-~]?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?[^\r\n]*\r?\n[\s\S]*?\r?\n[ \t]*\1(?=\r?\n|$)/g, "<<$1");
+  return out;
+}
+
+function unwrapShellBody(cmdText) {
+  let s = stripShellWrapper(cmdText).trim();
+  if ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"'))) {
+    s = s.slice(1, -1);
+  }
+  return s;
+}
+
+function extractSkillFileOps(toolName, cmdText) {
+  const raw = String(cmdText || "");
+  if (!raw) return { reads: [], writes: [] };
+
+  if (toolName && WRITE_TOOL_NAMES.has(toolName)) {
+    if (toolName === "apply_patch" || /^\*\*\* Begin Patch/m.test(raw)) {
+      return { reads: [], writes: extractApplyPatchSkillPaths(raw) };
+    }
+    return { reads: [], writes: extractSkillPathsFromCommand(raw) };
+  }
+
+  const writeSet = new Set(extractApplyPatchSkillPaths(raw));
+  const code = stripShellHereDocs(unwrapShellBody(raw));
+  const stmts = code
+    .split(/(?:\r?\n|;|&&|\|\|)+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const varPaths = new Map();
+  const varConsumers = new Map();
+  const addConsumer = (varName, stmt) => {
+    if (!varConsumers.has(varName)) varConsumers.set(varName, []);
+    varConsumers.get(varName).push(stmt);
+  };
+
+  for (const stmt of stmts) {
+    const assignMatch = stmt.match(/^(?:["']+\s*)?(?:local\s+|export\s+)?(\$?[A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]+)$/);
+    if (assignMatch) {
+      const vName = assignMatch[1].replace(/^\$/, "");
+      const rhsPaths = extractSkillPathsFromCommand(assignMatch[2]);
+      if (rhsPaths.length > 0) {
+        varPaths.set(vName, rhsPaths);
+        continue;
+      }
+    }
+    const varRefs = stmt.match(/\$[A-Za-z_][A-Za-z0-9_]*/g) || [];
+    for (const ref of varRefs) {
+      addConsumer(ref.slice(1), stmt);
+    }
+  }
+
+  const resolveTargetsInExpr = (expr) => {
+    const found = new Set(extractSkillPathsFromCommand(expr));
+    const refs = String(expr || "").match(/\$[A-Za-z_][A-Za-z0-9_]*/g) || [];
+    for (const ref of refs) {
+      const paths = varPaths.get(ref.slice(1));
+      if (paths) for (const p of paths) found.add(p);
+    }
+    return found;
+  };
+
+  for (const stmt of stmts) {
+    let m;
+    const dotNetRe = /\b(?:WriteAllText|WriteAllLines|AppendAllText)\s*\(\s*([^,)]+)/gi;
+    while ((m = dotNetRe.exec(stmt)) !== null) {
+      for (const p of resolveTargetsInExpr(m[1])) writeSet.add(p);
+    }
+    const psWriteRe = /\b(?:Set-Content|Add-Content|Out-File|Remove-Item)\b([^|]*)/i;
+    if ((m = stmt.match(psWriteRe))) {
+      for (const p of resolveTargetsInExpr(m[1])) writeSet.add(p);
+    }
+    const psMoveRe = /\b(?:Copy-Item|Move-Item)\b([^|]*)/i;
+    if ((m = stmt.match(psMoveRe))) {
+      const destM = m[1].match(/-Destination\s+([^\s]+)/i);
+      if (destM) {
+        for (const p of resolveTargetsInExpr(destM[1])) writeSet.add(p);
+      } else {
+        const args = m[1].trim().split(/\s+/).filter((a) => !a.startsWith("-"));
+        if (args.length > 0) {
+          for (const p of resolveTargetsInExpr(args[args.length - 1])) writeSet.add(p);
+        }
+      }
+    }
+    const sedRe = /\bsed\s+-i\b([^|]*)/i;
+    if ((m = stmt.match(sedRe))) {
+      for (const p of resolveTargetsInExpr(m[1])) writeSet.add(p);
+    }
+    const teeRe = /\btee\b([^|]*)/i;
+    if ((m = stmt.match(teeRe))) {
+      for (const p of resolveTargetsInExpr(m[1])) writeSet.add(p);
+    }
+    const redirRe = /(?:^|[^>=-])>>?\s*([^\s|&;]+)/g;
+    while ((m = redirRe.exec(stmt)) !== null) {
+      for (const p of resolveTargetsInExpr(m[1])) writeSet.add(p);
+    }
+  }
+
+  const READ_CMD_RE = /\b(?:Get-Content|Import-|cat|type|head|tail|sed|awk|rg|grep|ReadAllText|ReadAllLines|Get-Item|Get-FileHash)\b/i;
+  const CHECK_ONLY_RE = /\b(?:Test-Path|Exists)\b/i;
+  const testPathOnlyVars = new Set();
+  for (const [vName] of varPaths.entries()) {
+    const consumers = varConsumers.get(vName) || [];
+    if (consumers.length > 0 && consumers.every((c) => CHECK_ONLY_RE.test(c) && !READ_CMD_RE.test(c))) {
+      testPathOnlyVars.add(vName);
+    }
+  }
+
+  const readSet = new Set();
+  for (const stmt of stmts) {
+    if (CHECK_ONLY_RE.test(stmt) && !READ_CMD_RE.test(stmt)) continue;
+    const assignMatch = stmt.match(/^(?:["']+\s*)?(?:local\s+|export\s+)?(\$?[A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]+)$/);
+    if (assignMatch && testPathOnlyVars.has(assignMatch[1].replace(/^\$/, ""))) continue;
+    for (const p of extractSkillPathsFromCommand(stmt)) {
+      if (!writeSet.has(p)) readSet.add(p);
+    }
+  }
+
+  return { reads: [...readSet], writes: [...writeSet] };
+}
 function parseToolOutputSummary(outputArr) {
   const raw = extractContentText(outputArr);
   const exitCodes = [];
@@ -1600,12 +1818,14 @@ function parseToolOutputSummary(outputArr) {
     /Script failed|exec_command failed|ParserError:|Traceback \(most recent call last\)|ModuleNotFoundError:|AssertionError|ValueError:/i.test(
       raw
     );
-  const failed = exitFailed || patternFailed;
+  const failed = exitFailed;
+  const suspiciousPattern = !exitFailed && patternFailed;
   const truncated = /truncated output|chars truncated|tokens truncated/i.test(raw);
   return {
     exitCodes,
     failed,
-    failureReason: exitFailed ? "exit code" : patternFailed ? "output pattern" : null,
+    suspiciousPattern,
+    failureReason: exitFailed ? "exit code" : null,
     truncated,
     preview: raw.slice(0, 320),
   };
@@ -1640,6 +1860,7 @@ export async function analyzeFiles(filePaths, opts = {}) {
   const skillInjections = [];
   const skillReads = [];
   const nonZeroTools = [];
+  const suspiciousSuccessOutputs = [];
   const wrapperLocations = {
     instructions_or_env: [],
     skill_injection: [],
@@ -1818,7 +2039,7 @@ export async function analyzeFiles(filePaths, opts = {}) {
               : typeof payload.arguments === "string"
               ? payload.arguments
               : JSON.stringify(payload.input ?? payload.arguments ?? "");
-          const skillPaths = extractSkillPathsFromCommand(cmdInput);
+          const skillOps = extractSkillFileOps(payload.name || null, cmdInput);
           const record = {
             callLocation: loc,
             ordinal: ord,
@@ -1826,17 +2047,29 @@ export async function analyzeFiles(filePaths, opts = {}) {
             name: payload.name || null,
             callId,
             cmdPreview: cmdInput.slice(0, 300),
-            skillPaths,
+            skillPaths: [...skillOps.reads, ...skillOps.writes],
           };
           if (callId) toolCallsById.set(callId, record);
-          if (skillPaths.length > 0) {
+          if (skillOps.reads.length > 0) {
             skillReads.push({
               callLocation: loc,
               outputLocation: null,
               ordinal: ord,
               callId,
-              access: classifySkillFileAccess(payload.name || null, cmdInput),
-              paths: skillPaths,
+              access: "read",
+              paths: skillOps.reads,
+              exitCodes: [],
+              truncated: false,
+            });
+          }
+          if (skillOps.writes.length > 0) {
+            skillReads.push({
+              callLocation: loc,
+              outputLocation: null,
+              ordinal: ord,
+              callId,
+              access: "write",
+              paths: skillOps.writes,
               exitCodes: [],
               truncated: false,
             });
@@ -1846,8 +2079,7 @@ export async function analyzeFiles(filePaths, opts = {}) {
           const priorCall = callId ? toolCallsById.get(callId) : null;
           const outSummary = parseToolOutputSummary(payload.output);
           if (priorCall && priorCall.skillPaths.length > 0) {
-            const sr = skillReads.find((r) => r.callId === callId);
-            if (sr) {
+            for (const sr of skillReads.filter((r) => r.callId === callId)) {
               sr.outputLocation = loc;
               sr.exitCodes = outSummary.exitCodes;
               sr.truncated = outSummary.truncated;
@@ -1863,6 +2095,19 @@ export async function analyzeFiles(filePaths, opts = {}) {
               commandPreview: priorCall ? priorCall.cmdPreview : null,
               exitCodes: outSummary.exitCodes,
               failureReason: outSummary.failureReason,
+              truncated: outSummary.truncated,
+              outputPreview: outSummary.preview,
+            });
+          } else if (outSummary.suspiciousPattern) {
+            suspiciousSuccessOutputs.push({
+              callLocation: priorCall ? priorCall.callLocation : null,
+              outputLocation: loc,
+              ordinal: ord,
+              callId: callId || null,
+              toolName: priorCall ? priorCall.name : null,
+              commandPreview: priorCall ? priorCall.cmdPreview : null,
+              exitCodes: outSummary.exitCodes,
+              note: "exit 0; output matched error-like pattern — verify in context",
               truncated: outSummary.truncated,
               outputPreview: outSummary.preview,
             });
@@ -1919,15 +2164,433 @@ export async function analyzeFiles(filePaths, opts = {}) {
       fileWrites: skillReads.filter((r) => r.access === "write"),
     },
     nonZeroTools,
+    suspiciousSuccessOutputs,
     wrapperCounts: Object.fromEntries(
       Object.entries(wrapperLocations).map(([k, v]) => [k, { count: v.length, locations: v }])
     ),
     humanInputs,
   };
 }
+function timestampMs(value) {
+  const ms = typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// Decode JSON content blocks and newline-separated tool results without interpreting
+// arbitrary prose or executing wrapper JavaScript.
+function structuredToolValues(value) {
+  const found = [];
+  const queue = [value];
+  while (queue.length) {
+    const current = queue.pop();
+    if (typeof current === "string") {
+      try { queue.push(JSON.parse(current)); }
+      catch {
+        for (const line of current.split(/\r?\n/)) {
+          if (!/^[\[{]/.test(line.trim())) continue;
+          try { queue.push(JSON.parse(line)); } catch { /* not a complete JSON value */ }
+        }
+      }
+    } else if (Array.isArray(current)) {
+      queue.push(...current);
+    } else if (current && typeof current === "object") {
+      found.push(current);
+      // Only transport envelopes are unwrapped, not arbitrary task data.
+      if (current.content) queue.push(current.content);
+      if (typeof current.text === "string") queue.push(current.text);
+      if (current.structuredContent) queue.push(current.structuredContent);
+    }
+  }
+  return found;
+}
+
+function agentControlIds(event) {
+  const direct = /(?:^|[_.])(?:send_input|wait_agent|resume_agent|close_agent)$/.test(event.toolName || "");
+  const wrapped = /\btools\.multi_agent_v1__(?:send_input|wait_agent|resume_agent|close_agent)\s*\(/.test(event.input || "");
+  if (!direct && !wrapped) return [];
+  const ids = new Set();
+  if (direct) {
+    for (const value of structuredToolValues(event.input)) {
+      for (const id of [value.target, value.agent_id, ...(Array.isArray(value.targets) ? value.targets : [])]) {
+        if (typeof id === "string") ids.add(id);
+      }
+    }
+  }
+  // Wait results supply stable IDs even when the call was wrapped in exec.
+  for (const value of structuredToolValues(event.output)) {
+    if (value.status && typeof value.status === "object") {
+      for (const id of Object.keys(value.status)) ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+async function readJsonlEvidence(filePaths) {
+  const events = [];
+  const boundaries = [];
+  const fingerprints = new Set();
+  const calls = new Map();
+  const gaps = [];
+  let meta = null;
+  for (const file of filePaths) {
+    const rl = readline.createInterface({ input: fs.createReadStream(file, "utf8"), crlfDelay: Infinity });
+    let lineNo = 0;
+    for await (const line of rl) {
+      lineNo++;
+      if (!line.trim()) continue;
+      let row;
+      try { row = JSON.parse(line); }
+      catch { gaps.push({ reason: "invalid-jsonl", location: `${file}:${lineNo}` }); continue; }
+      const p = row.payload || {};
+      boundaries.push({ ordinal: row.ordinal ?? null, timestamp: row.timestamp || null, location: `${file}:${lineNo}` });
+      if (row.type === "session_meta") {
+        if (meta && (meta.id || meta.session_id) !== (p.id || p.session_id)) {
+          throw new Error(`Mixed session identities: ${file}:${lineNo}`);
+        }
+        meta ??= p;
+        continue;
+      }
+      const fingerprint = `${row.timestamp || ""}:${eventSignature(row)}`;
+      if (fingerprints.has(fingerprint)) continue;
+      fingerprints.add(fingerprint);
+      const base = {
+        location: `${file}:${lineNo}`, ordinal: row.ordinal ?? null,
+        timestamp: row.timestamp || null, observedAt: row.timestamp || null, fingerprint,
+      };
+      if (row.type === "response_item") {
+        if (p.type === "message") {
+          events.push({ ...base, type: p.role, text: extractContentText(p.content), phase: p.phase });
+        } else if (p.type === "function_call" || p.type === "custom_tool_call") {
+          const event = { ...base, type: "tool", toolName: p.name, input: p.input ?? p.arguments ?? "", output: null };
+          if (typeof event.input !== "string") event.input = JSON.stringify(event.input);
+          events.push(event);
+          if (p.call_id || p.id) calls.set(p.call_id || p.id, event);
+        } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+          const event = calls.get(p.call_id);
+          if (event) {
+            event.output = p.output;
+            event.observedAt = row.timestamp || null;
+            event.outputLocation = base.location;
+            event.outputOrdinal = row.ordinal ?? null;
+            event.completedAt = row.timestamp || null;
+          }
+        }
+      } else if (row.type === "event_msg" && p.type === "turn_aborted") {
+        events.push({ ...base, type: "error", text: p.reason || "turn aborted" });
+      }
+    }
+  }
+  return { id: meta?.id || meta?.session_id || null, meta, events, boundaries, fingerprints, gaps, files: filePaths };
+}
+
+function readT3Evidence(db, threadId) {
+  const thread = db.prepare("SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ?").get(threadId);
+  if (!thread) throw new Error(`T3 thread not found: ${threadId}`);
+  const meta = safeJsonParse(thread.payload_json);
+  const events = loadT3ThreadItems(db, threadId).map((row) => {
+    const p = safeJsonParse(row.payload_json);
+    return {
+      location: `T3:${threadId}:pos=${row.position}`, itemId: row.turn_item_id,
+      ordinal: row.ordinal ?? null, timestamp: p.startedAt || null,
+      observedAt: p.updatedAt || row.updated_at || p.completedAt || null,
+      type: row.type === "user_message" ? "user" : row.type === "assistant_message" ? "assistant" :
+        ["command_execution", "dynamic_tool"].includes(row.type) ? "tool" : row.type,
+      text: p.text || "", phase: p.phase,
+      toolName: row.type === "command_execution" ? "command_execution" : p.toolName,
+      input: typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? ""),
+      output: p.output, status: row.status, exitCode: p.exitCode,
+      childThreadId: p.childThreadId || null, parentSubagentId: p.subagentId || null,
+      prompt: p.prompt || null, completedAt: p.completedAt || null,
+    };
+  });
+  const providers = db.prepare(
+    "SELECT provider_thread_id, payload_json FROM orchestration_v2_projection_provider_threads WHERE thread_id = ?"
+  ).all(threadId).map((r) => ({
+    providerThreadId: r.provider_thread_id, ...safeJsonParse(r.payload_json),
+  }));
+  return { id: threadId, meta, events, fingerprints: new Set(), gaps: [], providers };
+}
+
+function summarizeChildEvidence(data, events, gaps) {
+  const tools = new Map();
+  const commands = new Map();
+  const skills = [];
+  const requirements = [];
+  const failures = [];
+  const toolCalls = [];
+  let result = null;
+  for (const e of events) {
+    if (e.type === "user") {
+      const cls = classifyUserMessage(e.text);
+      if (cls.kind === "skill_injection") skills.push({ location: e.location, name: cls.name, path: cls.path });
+      else if (cls.kind === "human") requirements.push({ location: e.location, itemId: e.itemId || null, preview: oneLine(cls.cleanText, 240), truncated: cls.cleanText.length > 240 });
+    } else if (e.type === "assistant" && e.text.trim()) {
+      result = { location: e.location, itemId: e.itemId || null, phase: e.phase || null, preview: oneLine(e.text, 320), truncated: e.text.length > 320 };
+    } else if (e.type === "error" || e.type === "run_interrupt_request") {
+      failures.push({ location: e.location, reason: e.type });
+    } else if (e.type === "tool") {
+      const outcome = parseT3ToolOutcome("dynamic_tool", e.status, { output: e.output, exitCode: e.exitCode });
+      const group = tools.get(e.toolName) || { name: e.toolName, calls: 0, failed: 0, outputChars: 0 };
+      group.calls++;
+      group.failed += Number(outcome.failed);
+      group.outputChars += outcome.outputChars;
+      tools.set(e.toolName, group);
+      toolCalls.push({ location: e.location, itemId: e.itemId || null, timestamp: e.timestamp, outputLocation: e.outputLocation || e.location,
+        outputOrdinal: e.outputOrdinal ?? null, completedAt: e.completedAt || null, name: e.toolName,
+        commandPreview: oneLine(stripShellWrapper(e.input), 160), failed: outcome.failed, outputChars: outcome.outputChars });
+      const command = `${e.toolName}\n${e.input}`;
+      const repeat = commands.get(command) || { toolName: e.toolName, commandPreview: oneLine(stripShellWrapper(e.input), 160), count: 0, firstLocation: e.location };
+      repeat.count++;
+      repeat.lastLocation = e.location;
+      commands.set(command, repeat);
+      if (outcome.failed || outcome.suspiciousPattern) failures.push({ location: e.location, reason: outcome.failureReason || "output-pattern-candidate; model verification required" });
+      const ops = extractSkillFileOps(e.toolName, e.input);
+      for (const p of ops.reads) {
+        skills.push({ location: e.location, path: p, access: "read" });
+      }
+      for (const p of ops.writes) {
+        skills.push({ location: e.location, path: p, access: "write" });
+      }
+      if (e.toolName === "Skill") {
+        for (const input of structuredToolValues(e.input)) {
+          if (input.skill) skills.push({ location: e.location, name: input.skill });
+        }
+      }
+      if (e.output === null || e.output === undefined) gaps.push({ reason: "tool-result-unavailable", location: e.location });
+    }
+  }
+  return {
+    coverage: gaps.length ? "partial-index; not a completed review" : "indexed; model review required",
+    eventCount: events.length, requirements, skills, tools: [...tools.values()], toolCalls, failures,
+    repeatedCalls: [...commands.values()].filter((c) => c.count > 1), result,
+    // A repeated call is evidence, not an automatic retry/inefficiency verdict.
+    gaps, files: data.files || [],
+  };
+}
+
+/** Compact, read-only graph. IDs/relations are facts; task relevance and quality
+ * remain model judgments. Parent ordinals never filter another thread. */
+export async function collectSubagentEvidence(opts) {
+  const snapshotAt = new Date().toISOString();
+  const codexHome = opts.codexHome || process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const dbPath = opts.t3Db || path.join(opts.t3Home || process.env.T3CODE_HOME || path.join(os.homedir(), ".t3"), "userdata", "statev2.sqlite");
+  const rootT3 = !opts.files?.length && opts.sessionId && hasT3Thread(dbPath, opts.sessionId);
+  const db = rootT3 ? new DatabaseSync(dbPath, { readOnly: true }) : null;
+  if (db) db.exec("BEGIN");
+  const globalGaps = [];
+  const sources = new Map();
+  const nodes = new Map();
+  const aliases = new Map();
+  const load = async (ref) => {
+    const key = `${ref.source}:${ref.id}`;
+    if (sources.has(key)) return sources.get(key);
+    const promise = ref.source === "t3" ? Promise.resolve(readT3Evidence(db, ref.id)) :
+      readJsonlEvidence(ref.files || findSessionFiles(path.join(codexHome, "sessions"), ref.id));
+    sources.set(key, promise);
+    const data = await promise;
+    if (!data.id || (ref.id && data.id !== ref.id)) throw new Error(`Session identity unavailable or mismatched: ${ref.id}`);
+    for (const p of data.providers || []) {
+      if (p.nativeThreadRef?.nativeId) aliases.set(p.nativeThreadRef.nativeId, ref.id);
+    }
+    return data;
+  };
+  const nativeRef = (id) => {
+    if (db && !aliases.has(id)) {
+      const row = db.prepare(
+        "SELECT thread_id FROM orchestration_v2_projection_provider_threads WHERE json_extract(payload_json, '$.nativeThreadRef.nativeId') = ?"
+      ).get(id);
+      if (row) aliases.set(id, row.thread_id);
+    }
+    return db && aliases.has(id) ? { source: "t3", id: aliases.get(id) } : { source: "codex", id };
+  };
+  try {
+    const rootRef = rootT3 ? { source: "t3", id: normalizeT3ThreadId(opts.sessionId) } :
+      { source: "codex", id: opts.sessionId || null, files: opts.files?.length ? opts.files : undefined };
+    const root = await load(rootRef);
+    rootRef.id = root.id;
+    const rootKey = `${rootRef.source}:${root.id}`;
+    const parentRecords = root.boundaries || root.events;
+    const selectedRecords = parentRecords.filter((e) =>
+      (opts.sinceOrdinal == null || (e.ordinal != null && e.ordinal >= opts.sinceOrdinal)) &&
+      (opts.untilOrdinal == null || (e.ordinal != null && e.ordinal <= opts.untilOrdinal)));
+    const after = opts.untilOrdinal == null ? null : parentRecords.find((e) => e.ordinal > opts.untilOrdinal);
+    const lower = timestampMs(opts.sinceTime) ?? (opts.sinceOrdinal == null ? null : timestampMs(selectedRecords[0]?.timestamp));
+    const lastSelectedTime = timestampMs(selectedRecords.at(-1)?.timestamp);
+    const requestedUpper = timestampMs(opts.untilTime) ?? timestampMs(after?.timestamp) ??
+      (opts.untilOrdinal == null ? timestampMs(snapshotAt) : after || lastSelectedTime === null ? null : lastSelectedTime + 1);
+    const upper = requestedUpper === null ? null : Math.min(requestedUpper, timestampMs(snapshotAt));
+    if (requestedUpper > timestampMs(snapshotAt)) globalGaps.push({ reason: "requested-cutoff-after-snapshot; limited-to-snapshot" });
+    if (opts.sinceOrdinal != null && lower === null) globalGaps.push({ reason: "parent-start-time-unavailable" });
+    if (!Number.isFinite(upper) || upper === null) globalGaps.push({ reason: "parent-cutoff-time-unavailable" });
+    if (lower !== null && upper !== null && lower >= upper) throw new Error("Cross-thread start must precede cutoff");
+    if (opts.untilOrdinal != null && !opts.untilTime && !after) globalGaps.push({ reason: "cutoff-derived-from-last-parent-event; supply --until-time to cover concurrent work" });
+    const validRange = (opts.sinceOrdinal == null || lower !== null) && Number.isFinite(upper);
+    const inTime = (e) => {
+      const ms = timestampMs(e.timestamp);
+      const end = timestampMs(e.completedAt);
+      return validRange && ms !== null && ms < upper && (lower === null || ms >= lower ||
+        (end !== null && end >= lower) || (end === null && e.type === "tool"));
+    };
+    const beforeParentCutoff = (e) => opts.untilOrdinal == null || (e.ordinal != null && e.ordinal <= opts.untilOrdinal);
+    const rootInRange = (e) => beforeParentCutoff(e) && inTime(e) &&
+      (opts.sinceOrdinal == null || (e.ordinal != null && e.ordinal >= opts.sinceOrdinal) || (e.outputOrdinal != null && e.outputOrdinal >= opts.sinceOrdinal));
+    const queue = [{ ref: rootRef, parent: null, inherited: new Set(), referenced: true }];
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const entry = queue[cursor];
+      const key = `${entry.ref.source}:${entry.ref.id}`;
+      if (nodes.has(key)) {
+        if (entry.parent) nodes.get(key).parents.push(entry.parent);
+        nodes.get(key).referenced ||= entry.referenced;
+        continue;
+      }
+      const node = { source: entry.ref.source, id: entry.ref.id, parents: entry.parent ? [entry.parent] : [], referenced: entry.referenced, taskRelevance: "pending model confirmation" };
+      nodes.set(key, node);
+      let data;
+      try { data = key === rootKey ? root : await load(entry.ref); }
+      catch (err) {
+        node.evidence = { coverage: "missing", eventCount: 0, gaps: [{ reason: String(err.message) }] };
+        continue;
+      }
+      const gaps = [...data.gaps];
+      const parentId = data.meta?.parent_thread_id || data.meta?.source?.subagent?.thread_spawn?.parent_thread_id;
+      if (entry.parent?.association === "dispatch" && entry.parent.nativeParentId && parentId && parentId !== entry.parent.nativeParentId) {
+        node.evidence = { coverage: "missing", eventCount: 0, gaps: [{ reason: "native-parent-identity-mismatch" }] };
+        continue;
+      }
+      if (entry.parent?.association === "dispatch" && entry.parent.nativeParentId && !parentId && entry.ref.source === "codex") {
+        gaps.push({ reason: "native-parent-relation-unverified" });
+      }
+      const fingerprints = new Set([...entry.inherited, ...data.fingerprints]);
+      let inheritedExcluded = 0;
+      let updatedAfterCutoff = 0;
+      let activityInRange = false;
+      const visible = [];
+      const isRoot = key === rootKey;
+      for (const event of data.events) {
+        if (event.fingerprint && entry.inherited.has(event.fingerprint)) { inheritedExcluded++; continue; }
+        if (!isRoot && timestampMs(event.timestamp) === null) gaps.push({ reason: "event-time-unavailable", location: event.location });
+        if (!(isRoot ? rootInRange(event) : inTime(event))) continue;
+        activityInRange = true;
+        if (lower !== null && timestampMs(event.timestamp) < lower && event.type === "tool" && timestampMs(event.completedAt) === null) {
+          gaps.push({ reason: "execution-end-unavailable; overlap with start unverified", location: event.location });
+        }
+        const observed = timestampMs(event.observedAt);
+        if (event.type !== "subagent" && observed !== null && observed >= upper) {
+          updatedAfterCutoff++;
+          gaps.push({ reason: "payload-updated-after-cutoff; historical value unavailable", location: event.location });
+          continue;
+        }
+        const outputOutsideOrdinal = isRoot && node.source === "codex" && opts.untilOrdinal != null && event.output != null &&
+          (event.outputOrdinal == null || event.outputOrdinal > opts.untilOrdinal);
+        if (event.type === "tool" && (observed === null || outputOutsideOrdinal)) {
+          gaps.push({ reason: observed === null ? "tool-result-time-unavailable" : "tool-result-outside-parent-ordinal", location: event.outputLocation || event.location });
+          visible.push({ ...event, output: null, status: null, exitCode: undefined });
+        } else visible.push(event);
+      }
+      const fork = data.meta?.forked_from_id || data.meta?.forkedFrom;
+      if (!isRoot && fork && inheritedExcluded === 0 && entry.ref.source === "codex") {
+        gaps.push({ reason: "fork-history-boundary-unverified" });
+      }
+      if (!isRoot && !data.events.length) gaps.push({ reason: "child-events-unavailable" });
+      node.evidence = summarizeChildEvidence(data, visible.filter((e) => e.type !== "subagent"), gaps);
+      node.evidence.inheritedExcluded = inheritedExcluded;
+      node.evidence.updatedAfterCutoff = updatedAfterCutoff;
+      node.active = activityInRange;
+      node.providerThreads = (data.providers || []).map((p) => ({ providerThreadId: p.providerThreadId, nativeThreadId: p.nativeThreadRef?.nativeId || null }));
+      for (const event of data.events) {
+        // Earlier dispatches are retained as relations so resumed/continuing children
+        // can be checked in a repeated retro. Post-cutoff dispatches are excluded.
+        if (event.fingerprint && entry.inherited.has(event.fingerprint)) continue;
+        if (isRoot && !beforeParentCutoff(event)) continue;
+        const started = timestampMs(event.timestamp);
+        if (started === null || started >= upper) continue;
+        const parent = { source: node.source, id: node.id, location: event.location, itemId: event.itemId || null, ordinal: event.ordinal, timestamp: event.timestamp };
+        const refs = [];
+        const observed = timestampMs(event.observedAt);
+        const resultInRange = observed !== null && observed < upper &&
+          (!isRoot || node.source !== "codex" || opts.untilOrdinal == null || (event.outputOrdinal != null && event.outputOrdinal <= opts.untilOrdinal));
+        if (event.type === "subagent") {
+          if (event.childThreadId) refs.push({ source: "t3", id: event.childThreadId, association: "host-subagent" });
+          else gaps.push({ reason: "subagent-child-id-unavailable", location: event.location });
+          parent.subagentId = event.parentSubagentId;
+          if (resultInRange) parent.requirementPreview = oneLine(event.prompt, 240);
+        } else if (event.type === "tool") {
+          const values = resultInRange ? structuredToolValues(event.output) : [];
+          if (isAgentDispatch(event.toolName, event.input)) {
+            for (const value of values) {
+              if (typeof value.childThreadId === "string" && db) refs.push({ source: "t3", id: value.childThreadId, association: "dispatch" });
+              if (typeof value.agent_id === "string") refs.push({ ...nativeRef(value.agent_id), association: "dispatch" });
+              if (typeof value.agentId === "string") refs.push({ ...nativeRef(value.agentId), association: "dispatch" });
+            }
+            if (!refs.length) {
+              gaps.push({ reason: "dispatch-result-unresolved; use host read-only relation lookup", location: event.location });
+            }
+          }
+          const controlIds = agentControlIds({ ...event, output: resultInRange ? event.output : null });
+          for (const id of controlIds) refs.push({ ...nativeRef(id), association: "control" });
+          if (isAgentControl(event.toolName, event.input) && !controlIds.length) {
+            gaps.push({ reason: "control-target-unresolved; inspect parent call at location", location: event.location });
+          }
+        }
+        for (const ref of new Map(refs.map((r) => [`${r.source}:${r.id}`, r])).values()) {
+          if (node.source === "codex") parent.nativeParentId = node.id;
+          else if (data.providers?.length === 1) parent.nativeParentId = data.providers[0].nativeThreadRef?.nativeId;
+          queue.push({ ref, parent: { ...parent, association: ref.association }, inherited: fingerprints, referenced: isRoot ? rootInRange(event) : inTime(event) });
+        }
+      }
+    }
+    // Propagate active descendants through idle ancestors without recurring forever
+    // on malformed/cyclic host relations. Each identity is indexed only once.
+    const retained = new Set([...nodes.entries()].filter(([key, n]) => key !== rootKey && (n.referenced || n.active)).map(([key]) => key));
+    const pending = [...retained];
+    for (let i = 0; i < pending.length; i++) {
+      for (const parent of nodes.get(pending[i])?.parents || []) {
+        const key = `${parent.source}:${parent.id}`;
+        if (key !== rootKey && !retained.has(key)) { retained.add(key); pending.push(key); }
+      }
+    }
+    globalGaps.push(...(nodes.get(rootKey)?.evidence?.gaps || []));
+    for (const node of nodes.values()) {
+      if (node.evidence.coverage !== "missing" && node.evidence.gaps.length) node.evidence.coverage = "partial-index; not a completed review";
+    }
+    return {
+      snapshotAt, sinceTime: lower === null ? null : new Date(lower).toISOString(),
+      untilTime: Number.isFinite(upper) ? new Date(upper).toISOString() : null,
+      rule: "Explicit relation candidates; task relevance, retries, quality and parent adoption require model review. Child ordinals are local. Previews are excerpts; follow locations for necessary coverage.",
+      gaps: globalGaps,
+      children: [...nodes.entries()].filter(([key]) => retained.has(key)).map(([, node]) => node),
+    };
+  } finally {
+    if (db) { db.exec("ROLLBACK"); db.close(); }
+  }
+}
+
+function formatSubagentEvidence(evidence) {
+  const lines = [`## Subagent Evidence (${evidence.children.length} relation candidates; model review required)`,
+    `- Window: ${evidence.sinceTime || "session start"} <= time < ${evidence.untilTime || "unknown"}`,
+    `- ${evidence.rule}`];
+  for (const gap of evidence.gaps) lines.push(`- GAP: ${gap.reason}${gap.location ? ` (${gap.location})` : ""}`);
+  for (const child of evidence.children) {
+    lines.push("", `### ${child.source}:${child.id}`, `- Relevance: ${child.taskRelevance}`, `- Coverage: ${child.evidence.coverage}; events=${child.evidence.eventCount}`);
+    for (const parent of child.parents) lines.push(`- Parent ${parent.source}:${parent.id} ${parent.location}${parent.requirementPreview ? `: ${parent.requirementPreview}` : ""}`);
+    const e = child.evidence;
+    for (const req of e.requirements || []) lines.push(`- Request ${req.location}${req.itemId ? ` [item ${req.itemId}]` : ""}: ${req.preview}${req.truncated ? " [excerpt]" : ""}`);
+    for (const sk of e.skills || []) lines.push(`- Skill ${sk.location}: ${sk.name || sk.path} ${sk.access || ""}`);
+    for (const tool of e.tools || []) lines.push(`- Tool ${tool.name}: calls=${tool.calls}, failed=${tool.failed}, outputChars=${tool.outputChars}`);
+    for (const call of e.toolCalls || []) lines.push(`- Call ${call.timestamp || "time unknown"} ${call.location}${call.itemId ? ` [item ${call.itemId}]` : ""} -> ${call.outputLocation} (${call.completedAt || "end unknown"}) ${call.name}${call.failed ? " FAILED" : ""}: ${call.commandPreview}`);
+    for (const repeat of e.repeatedCalls || []) lines.push(`- Repeated ${repeat.count}x ${repeat.firstLocation} -> ${repeat.lastLocation}: ${repeat.commandPreview}`);
+    for (const fail of e.failures || []) lines.push(`- Check ${fail.location}: ${fail.reason}`);
+    if (e.result) lines.push(`- Last assistant (${e.result.phase || "phase unknown"}) ${e.result.location}${e.result.itemId ? ` [item ${e.result.itemId}]` : ""}: ${e.result.preview}${e.result.truncated ? " [excerpt]" : ""}`);
+    for (const gap of e.gaps) lines.push(`- GAP: ${gap.reason}${gap.location ? ` (${gap.location})` : ""}`);
+  }
+  return lines.join("\n");
+}
+
 function formatMarkdown(report) {
+  if (report.subagentsOnly) return formatSubagentEvidence(report.subagentEvidence);
   const lines = [];
   const s = report.session;
+  for (const gap of report.historicalGaps || []) lines.push(`- GAP ${gap.location}: ${gap.reason}`);
   lines.push(`# Session Evidence Report: ${s.id || "unknown"}`);
   if (s.title) {
     lines.push(`- Title: \`${s.title}\``);
@@ -2026,7 +2689,7 @@ function formatMarkdown(report) {
     for (const sub of report.subagents) {
       const childNote =
         sub.childItemCount > 0
-          ? `, childItems=${sub.childItemCount}, childFailed=${sub.childFailedCount || 0}`
+          ? `, unbounded childItems=${sub.childItemCount}, childFailed=${sub.childFailedCount || 0}; bounded evidence below`
           : "";
       const cleanTitle = (sub.title || "").replace(/\s+/g, " ").trim().slice(0, 120);
       lines.push(
@@ -2076,6 +2739,20 @@ function formatMarkdown(report) {
         nz.commandPreview || ""
       ).replace(/\s+/g, " ")}\``
     );
+  }
+  const suspiciousOutputs = Array.isArray(report.suspiciousSuccessOutputs) ? report.suspiciousSuccessOutputs : [];
+  if (suspiciousOutputs.length > 0) {
+    lines.push("");
+    lines.push(`## Suspicious Exit-0 Outputs (Verify in Context) (${suspiciousOutputs.length})`);
+    for (const item of suspiciousOutputs) {
+      const itemNote = item.itemId ? ` [item \`${item.itemId}\`]` : "";
+      const agentNote = item.agent ? ` (${item.agent})` : "";
+      lines.push(
+        `- ${item.callLocation}->${item.outputLocation}${itemNote}${agentNote} (exit: ${item.exitCodes.join(",") || "0"}; ${item.note}): \`${(
+          item.commandPreview || ""
+        ).replace(/\s+/g, " ")}\``
+      );
+    }
   }
   if (Array.isArray(report.scheduledTriggers) && report.scheduledTriggers.length > 0) {
     lines.push("");
@@ -2139,6 +2816,7 @@ function formatMarkdown(report) {
       );
     }
   }
+  if (report.subagentEvidence) lines.push("", formatSubagentEvidence(report.subagentEvidence));
   return lines.join("\n");
 }
 
@@ -2173,7 +2851,9 @@ async function main() {
       writeOutput(JSON.stringify(result, null, 2), opts.output);
       return;
     }
-    const report = analyzeT3Thread(opts.t3Db, opts.sessionId, opts);
+    const subagentEvidence = await collectSubagentEvidence(opts);
+    const report = opts.subagentsOnly ? { subagentsOnly: true, subagentEvidence } :
+      { ...analyzeT3Thread(opts.t3Db, opts.sessionId, { ...opts, untilTime: subagentEvidence.untilTime }), subagentEvidence };
     const outText =
       opts.format === "md" ? formatMarkdown(report) : JSON.stringify(report, null, 2);
     writeOutput(outText, opts.output);
@@ -2196,7 +2876,9 @@ async function main() {
     return;
   }
 
-  const report = await analyzeFiles(targetFiles, opts);
+  const subagentEvidence = await collectSubagentEvidence({ ...opts, files: targetFiles });
+  const report = opts.subagentsOnly ? { subagentsOnly: true, subagentEvidence } :
+    { ...await analyzeFiles(targetFiles, opts), subagentEvidence };
   const outText =
     opts.format === "md" ? formatMarkdown(report) : JSON.stringify(report, null, 2);
   writeOutput(outText, opts.output);

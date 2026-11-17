@@ -67,19 +67,64 @@ export function matchesBilibiliSubtitleFile(url, identity, linkedUrls = []) {
   return new RegExp(`^/bfs/ai_subtitle/prod/${identity.aid}${identity.cid}[a-f0-9]{32}$`, 'i').test(parsed.pathname);
 }
 
-async function activateBilibiliSubtitleTrack(tab) {
+function normalizeBilibiliTrack(track, baseUrl) {
+  const lan = typeof track?.lan === 'string' && track.lan ? track.lan : null;
+  const lanDoc = typeof track?.lan_doc === 'string' && track.lan_doc ? track.lan_doc : null;
+  const subtitleUrl = track?.subtitle_url ? new URL(track.subtitle_url, baseUrl).href : null;
+  const isAi = Boolean(track?.ai_type || (lan && /^ai[-_]/i.test(lan)) || (lanDoc && /AI|自动/i.test(lanDoc)));
+  return {
+    id: track?.id ?? null,
+    lan,
+    lan_doc: lanDoc,
+    is_ai: isAi,
+    subtitle_url: subtitleUrl,
+  };
+}
+
+function matchesRequestedTrack(track, wanted) {
+  const needle = String(wanted ?? '').trim().toLowerCase();
+  if (!needle) return false;
+  return [track.lan, track.lan_doc, track.id != null ? String(track.id) : null]
+    .some((candidate) => typeof candidate === 'string' && candidate.toLowerCase() === needle);
+}
+
+async function listBilibiliDomTracks(tab) {
+  if (!tab?.playwright?.evaluate) return [];
+  try {
+    return await tab.playwright.evaluate(() => {
+      const items = [...document.querySelectorAll('.bpx-player-ctrl-subtitle-language-item')];
+      return items.map((el) => ({
+        lan: el.getAttribute('data-lan') ?? null,
+        lan_doc: (el.textContent ?? '').trim() || null,
+      }));
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function activateBilibiliSubtitleTrack(tab, preferredTrack = null) {
   const button = tab.playwright.locator('.bpx-player-ctrl-subtitle-result');
   if (await button.count() === 0) return false;
   await button.click();
   await tab.playwright.waitForTimeout(250);
-  const language = tab.playwright.getByText('中文', { exact: true });
-  if (await language.count() > 0 && await language.isVisible()) {
-    await language.click();
-    return true;
+  if (preferredTrack) {
+    const candidates = [preferredTrack.lan_doc, preferredTrack.lan].filter(Boolean);
+    for (const label of candidates) {
+      const item = tab.playwright.getByText(label, { exact: true });
+      const target = typeof item?.first === 'function' ? item.first() : item;
+      if (target && await target.count() > 0 && (typeof target.isVisible !== 'function' || await target.isVisible())) {
+        await target.click();
+        return true;
+      }
+    }
+    if (candidates.length > 0) return false;
   }
-  const track = tab.playwright.locator('.bpx-player-ctrl-subtitle-language-item').first();
-  if (await track.count() > 0 && await track.isVisible()) {
-    await track.click();
+  const items = tab.playwright.locator('.bpx-player-ctrl-subtitle-language-item');
+  const count = await items.count();
+  const single = typeof items?.first === 'function' ? items.first() : items;
+  if (count === 1 && single && (typeof single.isVisible !== 'function' || await single.isVisible())) {
+    await single.click();
     return true;
   }
   return false;
@@ -93,9 +138,12 @@ export async function inspectYouTubeTab(tab) {
     const element = document.querySelector('video');
     return element ? { duration: element.duration, currentTime: element.currentTime, paused: element.paused } : null;
   });
-  const access = dom.includes('请登录，以便我们确认你不是聊天机器人') || dom.includes('登录')
-    ? status('login_or_verification_required')
-    : dom.includes('账号菜单')
+  const botPrompt = dom.includes('请登录，以便我们确认你不是聊天机器人') || dom.includes('Sign in to confirm you’re not a bot');
+  const hasSignInButton = /button\s+"(?:登录|Sign in)"|link\s+"(?:登录|Sign in)"/i.test(dom);
+  const hasAccountMenu = dom.includes('账号菜单') || /button\s+"(?:Account menu|账号菜单)"/i.test(dom);
+  const access = botPrompt
+    ? status('login_or_verification_required', { reason: 'bot_verification_prompt' })
+    : hasAccountMenu
       ? status('confirmed')
       : status('unverified');
   return {
@@ -103,6 +151,11 @@ export async function inspectYouTubeTab(tab) {
     url,
     title,
     access,
+    access_signals: {
+      bot_verification_prompt: botPrompt,
+      sign_in_button_candidate: hasSignInButton,
+      account_menu_visible: hasAccountMenu,
+    },
     identity: status(title ? 'page_loaded' : 'unverified'),
     duration_seconds: Number.isFinite(video?.duration) ? video.duration : null,
     subtitle_ui: /button "[^"]*字幕[^"]*"/.test(dom) ? status('visible') : status('unverified'),
@@ -168,7 +221,7 @@ export async function inspectBilibiliTab(tab) {
 
 export async function captureBilibiliSubtitle(
   tab,
-  { reload = true, waitMs = 4000, activateTrack = true, resolveIdentity = resolveBilibiliIdentity, expectedIdentity = null } = {},
+  { reload = true, waitMs = 4000, activateTrack = true, track = null, discoverOnly = false, resolveIdentity = resolveBilibiliIdentity, expectedIdentity = null } = {},
 ) {
   const identity = await resolveIdentity(tab);
   if (!identity.cid || identity.status !== 'identity_verified') return {
@@ -197,6 +250,8 @@ export async function captureBilibiliSubtitle(
   await collect();
   const responseOf = (event) => event.params?.response;
   const linkedUrls = [];
+  const discoveredTracks = [];
+  const seenTrackKeys = new Set();
   let metadataResult = null;
   let metadataResponse = null;
   const processed = new Set();
@@ -210,15 +265,71 @@ export async function captureBilibiliSubtitle(
       try {
         const value = JSON.parse(decodeResponseBody(body).toString('utf8'));
         const tracks = value.data?.subtitle?.subtitles ?? value.subtitle?.subtitles ?? value.subtitles ?? [];
-        for (const track of tracks) if (track.subtitle_url) linkedUrls.push(new URL(track.subtitle_url, responseOf(event).url).href);
+        for (const rawTrack of tracks) {
+          const normalized = normalizeBilibiliTrack(rawTrack, responseOf(event).url);
+          const dedupeKey = `${normalized.lan ?? ''}|${normalized.subtitle_url ?? ''}`;
+          if (!seenTrackKeys.has(dedupeKey)) {
+            seenTrackKeys.add(dedupeKey);
+            discoveredTracks.push(normalized);
+          }
+          if (normalized.subtitle_url) linkedUrls.push(normalized.subtitle_url);
+        }
       } catch { /* Binary metadata may still be followed by a linked AI file. */ }
     }
   };
   await processMetadata();
-  const files = () => events.filter((event) => responseOf(event)?.url && matchesBilibiliSubtitleFile(responseOf(event).url, identity, linkedUrls));
+
+  if (discoverOnly) {
+    const domTracks = await listBilibiliDomTracks(tab);
+    return {
+      status: 'subtitle_tracks_discovered',
+      tracks: discoveredTracks,
+      dom_tracks: domTracks,
+      source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
+    };
+  }
+
+  let selectedTrack = null;
+  if (track) {
+    selectedTrack = discoveredTracks.find((item) => matchesRequestedTrack(item, track))
+      ?? { lan: String(track), lan_doc: String(track), is_ai: null, subtitle_url: null };
+    if (discoveredTracks.length > 0 && !discoveredTracks.some((item) => matchesRequestedTrack(item, track))) {
+      return {
+        status: 'subtitle_track_not_found',
+        requested_track: track,
+        tracks: discoveredTracks,
+        source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
+      };
+    }
+  } else if (discoveredTracks.length > 1) {
+    return {
+      status: 'subtitle_track_selection_required',
+      tracks: discoveredTracks,
+      source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
+      next_action: 'Multiple subtitle tracks found. Re-run captureBilibiliSubtitle with explicit track (lan or lan_doc) selected by the model.',
+    };
+  } else if (discoveredTracks.length === 1) {
+    selectedTrack = discoveredTracks[0];
+  } else {
+    const domTracks = await listBilibiliDomTracks(tab);
+    if (domTracks.length > 1) {
+      return {
+        status: 'subtitle_track_selection_required',
+        tracks: domTracks,
+        source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
+        next_action: 'Multiple DOM subtitle tracks found. Re-run captureBilibiliSubtitle with explicit track selected by the model.',
+      };
+    }
+  }
+
+  const activeUrls = () => {
+    if (track && selectedTrack?.subtitle_url) return [selectedTrack.subtitle_url];
+    return linkedUrls;
+  };
+  const files = () => events.filter((event) => responseOf(event)?.url && matchesBilibiliSubtitleFile(responseOf(event).url, identity, activeUrls()));
   let trackActivated = false;
-  if (files().length === 0 && (linkedUrls.length > 0 || !['subtitle_exported', 'subtitle_empty_response'].includes(metadataResult?.status)) && activateTrack) {
-    trackActivated = await activateBilibiliSubtitleTrack(tab);
+  if (files().length === 0 && (activeUrls().length > 0 || !['subtitle_exported', 'subtitle_empty_response'].includes(metadataResult?.status)) && activateTrack) {
+    trackActivated = await activateBilibiliSubtitleTrack(tab, selectedTrack);
     if (trackActivated) {
       await tab.playwright.waitForTimeout(1000);
       await collect();
@@ -232,7 +343,7 @@ export async function captureBilibiliSubtitle(
   const after = await resolveIdentity(tab);
   if (after.status !== 'identity_verified' || !sameBilibiliPage(identity, after) || identity.cid !== after.cid) return { status: 'source_changed' };
   if (!finalClassified) return { status: 'subtitle_request_not_observed', track_activated: trackActivated };
-  if (!file && linkedUrls.length > 0 && finalClassified.status !== 'subtitle_exported') return {
+  if (!file && activeUrls().length > 0 && finalClassified.status !== 'subtitle_exported') return {
     status: 'subtitle_track_not_loaded', track_activated: trackActivated,
     source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
   };
@@ -240,10 +351,16 @@ export async function captureBilibiliSubtitle(
   return {
     ...finalClassified,
     track_activated: trackActivated,
+    ...(selectedTrack ? { selected_track: selectedTrack } : {}),
+    ...(discoveredTracks.length ? { tracks: discoveredTracks } : {}),
     source_identity: { bvid: identity.bvid, page: identity.page, cid: identity.cid, aid: identity.aid },
     source_url: new URL(response.url).origin + new URL(response.url).pathname,
     http_status: response.status,
   };
+}
+
+export async function discoverBilibiliSubtitleTracks(tab, options = {}) {
+  return captureBilibiliSubtitle(tab, { ...options, discoverOnly: true, activateTrack: false });
 }
 
 export async function inspectVideoTab(tab) {

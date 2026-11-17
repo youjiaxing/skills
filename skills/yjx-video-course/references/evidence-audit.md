@@ -27,6 +27,7 @@
 - `information_added`：相对字幕/音频新增的学习信息；
 - `why_text_evidence_is_insufficient`：仅靠文字证据不足的原因；
 - `duplicate_of_existing_image`：是否与已有图片重复；
+- `disposition`：结构化去留值，必须显式为 `"keep"` 或 `"discard"`（`"discard"` 禁止同时设置 `embedded_file`；旧底稿若缺少该字段，须通过 `--allow-legacy-missing-disposition` 显式标记 `legacy_missing_disposition` 警告并由人工/模型补齐，禁止从 `keep_or_discard_reason` 自然语言猜测补值）；
 - `keep_or_discard_reason`：保留或丢弃理由。
 
 图片数量不由视频时长决定。审核应检查关键视觉主张是否覆盖、每张图片是否带来新增学习信息，以及是否存在重复图片；纯演讲可以没有图片，短视频也可以因多个独立状态变化保留多张图片。

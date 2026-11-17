@@ -5,10 +5,10 @@ import { isMainModule } from './is-main.mjs';
 import process from 'node:process';
 
 const TIMESTAMP_RE = /^\[(?<time>\d+:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)\]\s*(?<text>.*)$/;
-const FORMATS = new Set(['auto', 'text', 'vtt', 'srt']);
+const FORMATS = new Set(['auto', 'text', 'vtt', 'srt', 'bilibili-json', 'hard-subtitles-json', 'whisper-json']);
 const INLINE_TIME = /<\d{2,}:\d{2}(?::\d{2})?\.\d{3}>/;
 const HELP = `Usage: normalize-transcript.mjs --input <file> [--output <file>]
-  --format auto|text|vtt|srt   Default: auto
+  --format auto|text|vtt|srt|bilibili-json|hard-subtitles-json|whisper-json   Default: auto
   --duration <seconds>        Infer the final end time for [mm:ss] text only
   --language <code>           Selected track language
   --captions <type>           manual, automatic, translated, or a source label
@@ -136,6 +136,46 @@ function parseTimedText(text, durationSeconds) {
   return body;
 }
 
+function parseJsonTranscript(input, format) {
+  let parsed;
+  try {
+    parsed = JSON.parse(input);
+  } catch (err) {
+    throw new Error(`invalid JSON transcript: ${err.message}`);
+  }
+  if (format === 'bilibili-json' || (format === 'auto' && Array.isArray(parsed?.body) && parsed.body.some((c) => typeof c?.content === 'string'))) {
+    const rows = Array.isArray(parsed?.body) ? parsed.body : [];
+    const body = [];
+    for (const cue of rows) {
+      if (!Number.isFinite(cue?.from) || !Number.isFinite(cue?.to) || cue.to <= cue.from) throw new Error('invalid bilibili-json cue timing');
+      const text = String(cue.content ?? '').trim();
+      if (text) body.push({ from: Number(cue.from), to: Number(cue.to), text });
+    }
+    return { format: 'bilibili-json', body };
+  }
+  if (format === 'hard-subtitles-json' || (format === 'auto' && Array.isArray(parsed?.body) && parsed.body.some((c) => typeof c?.zh === 'string' || typeof c?.en === 'string'))) {
+    const rows = Array.isArray(parsed?.body) ? parsed.body : [];
+    const body = [];
+    for (const cue of rows) {
+      if (!Number.isFinite(cue?.from) || !Number.isFinite(cue?.to) || cue.to <= cue.from) throw new Error('invalid hard-subtitles-json cue timing');
+      const parts = [typeof cue.zh === 'string' ? cue.zh.trim() : '', typeof cue.en === 'string' ? cue.en.trim() : ''].filter(Boolean);
+      if (parts.length) body.push({ from: Number(cue.from), to: Number(cue.to), text: parts.join('\n') });
+    }
+    return { format: 'hard-subtitles-json', body };
+  }
+  if (format === 'whisper-json' || (format === 'auto' && Array.isArray(parsed?.segments))) {
+    const rows = Array.isArray(parsed?.segments) ? parsed.segments : [];
+    const body = [];
+    for (const seg of rows) {
+      if (!Number.isFinite(seg?.start) || !Number.isFinite(seg?.end) || seg.end <= seg.start) throw new Error('invalid whisper-json segment timing');
+      const text = String(seg.text ?? '').trim();
+      if (text) body.push({ from: Number(seg.start), to: Number(seg.end), text });
+    }
+    return { format: 'whisper-json', body, detectedLanguage: parsed?.language ?? null };
+  }
+  throw new Error('unsupported JSON transcript structure');
+}
+
 export function normalizeTranscript(text, {
   durationSeconds = null, language = null, captions = null, format = 'auto', dedupeRolling = false,
 } = {}) {
@@ -146,17 +186,23 @@ export function normalizeTranscript(text, {
   const input = String(text).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
   if (format === 'auto') {
     if (/^WEBVTT(?:[\t ]|\n|$)/.test(input)) format = 'vtt';
+    else if (input.startsWith('{')) format = 'json-auto';
     else if (/^\s*\d[\d:.,]*\s+-->/m.test(input)) format = /\d{2},\d{3}\s+-->/.test(input) ? 'srt' : 'vtt';
     else if (input.split('\n').some((line) => TIMESTAMP_RE.test(line))) format = 'text';
     else throw new Error('unsupported or empty transcript: expected VTT, SRT or [mm:ss] text');
   }
-  if (dedupeRolling && (captions !== 'automatic' || format === 'text')) {
+  if (dedupeRolling && (captions !== 'automatic' || !['vtt', 'srt'].includes(format))) {
     throw new Error('rolling deduplication requires automatic VTT/SRT captions');
   }
   const cueMap = [];
   let body;
   let sourceCues;
-  if (format === 'text') body = parseTimedText(input, durationSeconds);
+  if (format === 'json-auto' || format.endsWith('-json')) {
+    const parsedJson = parseJsonTranscript(input, format === 'json-auto' ? 'auto' : format);
+    format = parsedJson.format;
+    body = parsedJson.body;
+    if (!language && parsedJson.detectedLanguage) language = parsedJson.detectedLanguage;
+  } else if (format === 'text') body = parseTimedText(input, durationSeconds);
   else {
     const cues = parseCues(input, format);
     sourceCues = cues;

@@ -317,6 +317,7 @@ test('candidate window classifies standalone active items for auto-intake and ke
   const single = candidateTasks([fresh], config, new Map(), {});
   assert.equal(single.candidates.length, 1);
   assert.deepEqual(single.autoIntakeIds, [id]);
+  assert.equal(single.untrackedParentAutoIntakes[0].parentId, other);
   assert.equal(single.decisionGroups.length, 0);
   const trackedParent = candidateTasks([fresh], config, new Map([[`TB:${other}`, [page('进行中')]]]), {});
   assert.deepEqual(trackedParent.autoIntakeIds, []);
@@ -450,4 +451,24 @@ test('latest task and personal plans invalidate old instructions even after prep
   await assert.rejects(hub.handle({ action: 'prepare', planId: p1.planId, confirmed: true }), /计划不存在/);
   const op = await hub.handle({ action: 'prepare', planId: p2.planId, confirmed: true });
   assert.equal(op.properties['下一步动作'], '新进度');
+});
+
+test('prepare-batch and commit-batch isolate failures and preserve dispatched on unknown outcomes', async t => {
+  const second = 'dddddddddddddddddddddddd';
+  const { hub } = fixture(t);
+  const p2 = { ...page('进行中'), pageId: '44444444-4444-4444-8444-444444444444', properties: { ...page('进行中').properties, '来源标识': `TB:${second}` } };
+  await hub.handle({ action: 'inventory', complete: true, pages: [page('进行中'), p2] });
+  const planned = await hub.handle({ action: 'plan-batch', tasks: [task({ statusName: '新状态A' }), task({ id: second, statusName: '新状态B' })] });
+  const prepared = await hub.handle({ action: 'prepare-batch', items: [{ planId: planned.results[0].plan.planId }, { planId: 'missing-plan' }, { planId: planned.results[1].plan.planId }] });
+  assert.equal(prepared.results[0].prepared.phase, 'prepared');
+  assert.match(prepared.results[1].error, /计划不存在/);
+  assert.equal(prepared.results[2].prepared.phase, 'prepared');
+  await hub.handle({ action: 'dispatch', opId: prepared.results[0].prepared.opId });
+  await hub.handle({ action: 'dispatch', opId: prepared.results[2].prepared.opId });
+  const committed = await hub.handle({ action: 'commit-batch', items: [{ opId: prepared.results[0].prepared.opId, apiSucceeded: true }, { opId: prepared.results[2].prepared.opId, apiSucceeded: false }] });
+  assert.equal(committed.results[0].committed.committed, true);
+  assert.match(committed.results[1].error, /明确成功/);
+  assert.equal(hub.pending().length, 1);
+  assert.equal(hub.pending()[0].opId, prepared.results[2].prepared.opId);
+  assert.equal(hub.pending()[0].phase, 'dispatched');
 });

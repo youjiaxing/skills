@@ -202,6 +202,67 @@ export function formatTime(value, timeZone = 'Asia/Shanghai') {
   return parts + ' ' + timeZone;
 }
 
+/**
+ * Parse either epoch ms or a calendar date / datetime string in an explicit timeZone
+ * so callers never manually compute epoch milliseconds.
+ */
+export function parseTimeInput(value, { timeZone = 'Asia/Shanghai', endOfDay = false } = {}) {
+  if (value === null || value === undefined || value === '' || value === true) return null;
+  const raw = String(value).trim();
+  if (raw === '') return null;
+  if (/^-?\d+$/.test(raw)) {
+    const num = Number(raw);
+    if (!Number.isSafeInteger(num)) throw new Error(`invalid epoch milliseconds: ${raw}`);
+    return num;
+  }
+  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const localDateTime = raw.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/);
+  if (dateOnly || localDateTime) {
+    const m = dateOnly ?? localDateTime;
+    const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
+    const hour = dateOnly ? (endOfDay ? 23 : 0) : Number(m[4]);
+    const minute = dateOnly ? (endOfDay ? 59 : 0) : Number(m[5]);
+    const second = dateOnly ? (endOfDay ? 59 : 0) : (m[6] !== undefined ? Number(m[6]) : (endOfDay ? 59 : 0));
+    const ms = dateOnly ? (endOfDay ? 999 : 0) : (m[7] !== undefined ? Number(m[7].padEnd(3, '0')) : (endOfDay ? 999 : 0));
+    const probe = new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms));
+    if (
+      probe.getUTCFullYear() !== year ||
+      probe.getUTCMonth() !== month - 1 ||
+      probe.getUTCDate() !== day ||
+      hour > 23 || minute > 59 || second > 59
+    ) {
+      throw new Error(`invalid calendar date/time: ${raw}`);
+    }
+    return zonedWallClockToEpochMs({ year, month, day, hour, minute, second, ms }, timeZone);
+  }
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
+    const parsed = Date.parse(raw);
+    if (!Number.isFinite(parsed)) throw new Error(`invalid ISO-8601 time: ${raw}`);
+    return parsed;
+  }
+  throw new Error(`unsupported time format (use epoch ms, YYYY-MM-DD, YYYY-MM-DD HH:MM[:SS], or ISO-8601 with zone): ${raw}`);
+}
+
+function zonedWallClockToEpochMs({ year, month, day, hour, minute, second, ms }, timeZone) {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second, ms);
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const getOffsetMs = (epoch) => {
+    const parts = Object.fromEntries(fmt.formatToParts(new Date(epoch)).map((p) => [p.type, p.value]));
+    const h = parts.hour === '24' ? 0 : Number(parts.hour);
+    const asUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), h, Number(parts.minute), Number(parts.second), epoch % 1000 < 0 ? (epoch % 1000) + 1000 : epoch % 1000);
+    return asUtc - epoch;
+  };
+  const offset1 = getOffsetMs(utcGuess);
+  const candidate = utcGuess - offset1;
+  const offset2 = getOffsetMs(candidate);
+  return utcGuess - offset2;
+}
+
 export function renderLines(messages, options) {
   const lines = [];
   for (const row of messages) {

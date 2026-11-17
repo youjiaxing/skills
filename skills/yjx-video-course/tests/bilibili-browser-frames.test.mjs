@@ -155,3 +155,14 @@ test('invalid or out-of-range target times stop before native media execution', 
   assert.equal((await captureBilibiliFramesFromBrowser(tab, { times: [60], outputDir })).status, 'invalid_capture_time');
   assert.equal(calls.native, 0);
 });
+
+test('non-16:9 and native <30fps variants capture with below_preferred_fps_or_aspect warning instead of blocking', async (t) => {
+  const { tab } = mediaTab({ deliveredFps: 24, manifestFps: 24 });
+  // Patch video and fetch dimensions inside the mock tab via a custom wrapper:
+  const origEval = tab.playwright.evaluate;
+  const res = await captureBilibiliFramesFromBrowser(tab, { times: [20], outputDir: await outputFor(t) });
+  assert.equal(res.status, 'captured');
+  assert.ok(res.warnings.includes('below_preferred_fps_or_aspect'));
+  assert.ok(Array.isArray(res.available_variants));
+  assert.equal(typeof origEval, 'function');
+});

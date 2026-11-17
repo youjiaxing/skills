@@ -130,9 +130,51 @@ export async function waitForServiceUnload({domain, label, execute = run, timeou
 }
 
 export async function serviceAction(config, action, name, {exclusive = false, execute = run, lockHeld = false, definition: supplied} = {}) {
-  if (!['plan', 'status'].includes(action) && !lockHeld) {
+  if (!['plan', 'status', 'audit'].includes(action) && !lockHeld) {
     await requireMaintenance(config, exclusive)
     return withFileLock(config.sessionFile + '.lock', () => serviceAction(config, action, name, {exclusive, execute, lockHeld: true, definition: supplied}))
+  }
+  if (action === 'audit') {
+    const names = name ? [name] : ['appium', 'tunnel']
+    const services = []
+    for (const svc of names) {
+      const def = supplied || await serviceDefinition(config, svc)
+      let installed = false, regularFile = false, actualSha256 = null, inspectError = null
+      try {
+        const st = await lstat(def.target)
+        regularFile = st.isFile() && !st.isSymbolicLink()
+        installed = regularFile
+        if (regularFile) actualSha256 = sha(await readFile(def.target))
+      } catch (error) {
+        if (error.code !== 'ENOENT') inspectError = error.message
+      }
+      const expectedSha256 = sha(def.content)
+      const record = config.managedServices?.[svc] || null
+      let loaded = false
+      try { execute('/bin/launchctl', ['print', `${def.domain}/${def.label}`]); loaded = true } catch {}
+      let portOccupied = null, loopbackOnly = null
+      if (svc === 'appium') {
+        const port = new URL(config.appiumUrl).port || '4723'
+        try {
+          const listeners = execute('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'])
+          const rows = listeners.split('\n').filter((line) => line.includes(`:${port}`))
+          portOccupied = rows.length > 0
+          loopbackOnly = rows.length > 0 && rows.every((line) => /127\.0\.0\.1|\[::1\]/.test(line))
+        } catch (error) {
+          if (error.status === 1) { portOccupied = false; loopbackOnly = null }
+        }
+      }
+      services.push({
+        name: svc, label: def.label, domain: def.domain, target: def.target,
+        installed, regularFile, loaded,
+        owned: Boolean(record && record.path === def.target && actualSha256 && record.sha256 === actualSha256),
+        upToDate: Boolean(actualSha256 && actualSha256 === expectedSha256),
+        actualSha256, expectedSha256,
+        ...(svc === 'appium' ? {portOccupied, loopbackOnly} : {}),
+        ...(inspectError ? {inspectError} : {}),
+      })
+    }
+    return {ok: true, action: 'audit', services}
   }
   const definition = supplied || await serviceDefinition(config, name)
   const {root, domain, label, target, content} = definition
@@ -220,7 +262,7 @@ export async function serviceAction(config, action, name, {exclusive = false, ex
   return {ok: true, action, name, next: 'Run doctor, session, recover, and an actual target App observation before claiming repaired'}
 }
 
-export async function wdaAction(config, action, {exclusive, teamId, appPath, allowRegistration = false, execute = run} = {}) {
+export async function wdaAction(config, action, {exclusive, teamId, appPath, allowRegistration = false, execute = run, readPlist = plist} = {}) {
   requireDevice(config)
   await requireMaintenance(config, exclusive)
   return withFileLock(config.sessionFile + '.lock', async () => {
@@ -238,7 +280,7 @@ export async function wdaAction(config, action, {exclusive, teamId, appPath, all
     }
     if (action !== 'install') throw new Error('Use wda build or wda install')
     appPath ||= path.join(derived, 'Build/Products/Debug-iphoneos/WebDriverAgentRunner-Runner.app')
-    const info = plist(path.join(appPath, 'Info.plist'))
+    const info = readPlist(path.join(appPath, 'Info.plist'))
     if (info.CFBundleIdentifier !== `${config.wdaBundleId}.xctrunner` ||
       !await exists(path.join(appPath, 'PlugIns/WebDriverAgentRunner.xctest'))) throw new Error('Only the configured WebDriverAgent Runner may be installed by this skill')
     execute('/usr/bin/codesign', ['--verify', '--deep', '--strict', appPath])
@@ -292,7 +334,7 @@ async function main() {
     return {ok: true, next: 'Discover paths again, prepare WDA, then verify the full control chain'}
     })
   }
-  throw new Error('Use discover [--udid ID --output PATH], show, dependencies [--apply --exclusive], wda <build|install> [--team-id ID --app-path PATH --exclusive], service <plan|status|adopt|install|start|restart|stop> <appium|tunnel> [--exclusive]')
+  throw new Error('Use discover [--udid ID --output PATH], show, dependencies [--apply --exclusive], wda <build|install> [--team-id ID --app-path PATH --exclusive], service <plan|status|audit|adopt|install|start|restart|stop> [<appium|tunnel>] [--exclusive]')
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main().then((result) => console.log(JSON.stringify(result, null, 2))).catch((error) => {

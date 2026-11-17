@@ -8,7 +8,9 @@ import { cleanArtifacts, ensureCacheRoot, isInside, readManifest, registerEntry,
 import { candidateDataRoots, discoverAccounts } from '../scripts/paths.mjs';
 import { deriveKey, looksLikeSqlitePage, readSalt } from '../scripts/crypto-v3.mjs';
 import { readFrames, readWalHeader } from '../scripts/wal.mjs';
-import { formatTime, isRecalled, parseContent, renderMessage, summariseAttachments } from '../scripts/messages.mjs';
+import { formatTime, isRecalled, parseContent, parseTimeInput, renderMessage, summariseAttachments } from '../scripts/messages.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { findContacts, findConversations, queryMessages, searchMessages, summariseMessages } from '../scripts/query.mjs';
 
 function tempRoot(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yjx-dingtalk-test-'));
@@ -233,4 +235,53 @@ test('attachment summary stays bounded and reports readable fields', () => {
   const summary = summariseAttachments(JSON.stringify([{ extension: JSON.stringify({ f_name: 'a.zip' }), filepath: 'C:/x' }]));
   assert.equal(summary.length, 1);
   assert.equal(summary[0].f_name, 'a.zip');
+});
+
+test('parseTimeInput converts local dates and datetimes in explicit timezone without manual epoch math', () => {
+  assert.equal(parseTimeInput('1700000000000'), 1700000000000);
+  assert.equal(parseTimeInput('2026-11-16', { timeZone: 'Asia/Shanghai' }), Date.parse('2026-11-16T00:00:00.000+08:00'));
+  assert.equal(parseTimeInput('2026-11-16', { timeZone: 'Asia/Shanghai', endOfDay: true }), Date.parse('2026-11-16T23:59:59.999+08:00'));
+  assert.equal(parseTimeInput('2026-11-16 09:30:15', { timeZone: 'Asia/Shanghai' }), Date.parse('2026-11-16T09:30:15.000+08:00'));
+  assert.throws(() => parseTimeInput('2026-02-30'), /invalid calendar/);
+});
+
+test('queryMessages latest/order, searchMessages readable filter/offset, contacts and summary work deterministically', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    CREATE TABLE tbconversation (cid TEXT, title TEXT, type INTEGER, lastModify INTEGER, memberCount INTEGER, ownerId TEXT);
+    CREATE TABLE tbuser_profile_v2 (uid TEXT, nick TEXT, realName TEXT, alias TEXT);
+    CREATE TABLE tbmsg_001 (primaryKey INTEGER, cid TEXT, mid TEXT, senderId TEXT, type INTEGER, contentType INTEGER, createdAt INTEGER, lastModify INTEGER, recallStatus INTEGER, content TEXT, attachments TEXT);
+  `);
+  db.prepare('INSERT INTO tbconversation VALUES (?, ?, ?, ?, ?, ?)').run('c1', '测试群', 2, 1700000005000, 12, 'u1');
+  db.prepare('INSERT INTO tbuser_profile_v2 VALUES (?, ?, ?, ?)').run('u1', '小张', '张三', '');
+  db.prepare('INSERT INTO tbuser_profile_v2 VALUES (?, ?, ?, ?)').run('u2', '小李', '李四', '');
+  const ins = db.prepare('INSERT INTO tbmsg_001 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  ins.run(1, 'c1', 'm1', 'u1', 1, 1, 1000, 1000, 0, JSON.stringify({ text: '第一条消息' }), '[]');
+  ins.run(2, 'c1', 'm2', 'u2', 1, 2, 2000, 2000, 0, '{}', JSON.stringify([{ extension: JSON.stringify({ photo_content_ocr: '报价单内容' }) }]));
+  ins.run(3, 'c1', 'm3', 'u1', 1, 1, 3000, 3000, 0, JSON.stringify({ text: '第三条消息 报价' }), '[]');
+  ins.run(4, 'c1', 'm4', 'u1', 1, 1, 4000, 4000, 1, JSON.stringify({ text: '已撤回 报价' }), '[]');
+
+  const convs = findConversations(db, { query: '测试' });
+  assert.equal(convs.matches[0].lastModifyLocal.includes('Asia/Shanghai'), true);
+
+  const latest = queryMessages(db, { conversationId: 'c1', latest: true, limit: 2 });
+  assert.deepEqual(latest.messages.map((m) => m.mid), ['m3', 'm4']);
+  const desc = queryMessages(db, { conversationId: 'c1', order: 'desc', limit: 2, offset: 1 });
+  assert.deepEqual(desc.messages.map((m) => m.mid), ['m3', 'm2']);
+
+  // Searching 'photo_content_ocr' must NOT match raw JSON key names.
+  assert.equal(searchMessages(db, { keyword: 'photo_content_ocr' }).total, 0);
+  const hits = searchMessages(db, { keyword: '报价', limit: 1, offset: 1 });
+  assert.equal(hits.total, 2);
+  assert.deepEqual(hits.matches.map((m) => m.mid), ['m2']);
+
+  const contacts = findContacts(db, { query: '张三' });
+  assert.equal(contacts.total, 1);
+  assert.equal(contacts.matches[0].uid, 'u1');
+
+  const summary = summariseMessages(db, { conversationId: 'c1' });
+  assert.equal(summary.total, 3);
+  assert.equal(summary.recalledCount, 1);
+  assert.deepEqual(summary.byKind, [{ kind: 'text', count: 2 }, { kind: 'image', count: 1 }]);
+  db.close();
 });

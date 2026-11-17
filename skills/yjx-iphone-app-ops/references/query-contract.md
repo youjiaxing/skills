@@ -33,7 +33,7 @@ factStatus 始终是 unverified。识别置信度不表示事实真实性。need
 
 正常停止原因：max-pages、page-unchanged、two-pages-without-new-businesses。它们只表示本轮停止，不证明全站结果耗尽。
 
-异常停止：unexpected-overlay、screen-not-readable、query-input-unverified、search-page-unverified、blocked-verification、blocked-login、blocked-credential、blocked-permission、needs-user-consent、protocol-timeout、capture-failed、insufficient-result-evidence、query-or-result-scope-unverified。已有成功页面时发布 status=partial 与 failure（状态、阶段、结果是否未知、最后通过阶段）；下游可以使用已捕获候选，但须保留停止原因，停止后不得继续点击或滚动。
+异常停止：unexpected-overlay、screen-not-readable、query-input-unverified、search-page-unverified、blocked-verification、blocked-login、blocked-credential、device-locked-recoverable、blocked-permission、needs-user-consent、protocol-timeout、capture-failed、insufficient-result-evidence、query-or-result-scope-unverified。已有成功页面时发布 status=partial 与 failure（状态、阶段、结果是否未知、最后通过阶段）；下游可以使用已捕获候选，但须保留停止原因，停止后不得继续点击或滚动。
 
 导航阶段遇到未知画面返回 coordinate-target-unverified，不猜坐标。已验证的坐标补充入口仅适用于当前 414×896 竖屏布局。语义 locator 先从当前页面树验证目标，再检查 active bundle 与 `queryAppState=4` 后点击；避免在定位元素后为同一按钮再取一次昂贵的全页面树。坐标动作点击前后仍检查页面与前台；同画面不重复点击。输入前确认专属输入框与键盘搜索按钮，按下述规则核对完整查询词。滚动用 mobile: swipe，避免长按触发反馈菜单。超时动作的 outcome=unknown，先观察状态，不自动重放输入、点击或滚动。
 

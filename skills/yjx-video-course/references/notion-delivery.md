@@ -18,6 +18,7 @@
      2. **原生图片块就绪**：图片已成功解析为 `notion-file-block://` 原生图片块，数量与文件名和本地 `visual_coverage.embedded_files` 严格一致，无临时上传 notice；
      3. **页面状态就绪**：属性“状态”已成功确认为“已整理”或目标库对应的完成选项；
    - 三项核验全部通过后，立即落盘 `notion-readback.json` 并将 `delivery.json` 流转至 `readback_verified` 和 `completed`；
+   - 可将单次回读对象传给 `node <skill目录>/scripts/verify-notion-readback.mjs <evidence.json> <notion-page.json>` 确定性校验图片文件名顺序、状态属性值与零占位符，再将返回的 `notion` 块写入 `delivery.json`。
    - 只有单次回读发现截断、丢块、图片失败或属性未生效时，才进入下述恢复流程；
 7. **`INVALID_ARGUMENT` 强制恢复流程**：
    - 先重新 fetch 目标页面，确认页面仍存在、父级和当前正文未被部分修改；记录失败命令、参数形态和回读结果。

@@ -52,7 +52,8 @@ export function classifyBilibiliSession(signals) {
     if (authenticated.isLogin === true) evidence.push('user.isLogin=true');
     if (Number(authenticated.mid) > 0) evidence.push(`user.mid=${Number(authenticated.mid)}`);
     if (hasAvatar) evidence.push('header-avatar');
-    return { state: SESSION_STATE.LOGGED_IN, evidence };
+    if (hasLoginEntry) evidence.push('login-entry-also-present');
+    return { state: SESSION_STATE.LOGGED_IN, evidence, ...(hasLoginEntry ? { candidate_conflict: true } : {}) };
   }
 
   if (hasAvatar) return { state: SESSION_STATE.LOGGED_IN, evidence: ['header-avatar'] };
@@ -61,7 +62,7 @@ export function classifyBilibiliSession(signals) {
   if (sawAnonymousFlag && hasLoginEntry) {
     return { state: SESSION_STATE.LOGGED_OUT, evidence: ['user.isLogin=false', 'login-entry'] };
   }
-  if (hasLoginEntry) return { state: SESSION_STATE.LOGGED_OUT, evidence: ['login-entry'] };
+  if (hasLoginEntry) return { state: SESSION_STATE.UNVERIFIED, evidence: ['login-entry-only'] };
   return { state: SESSION_STATE.UNVERIFIED, evidence: [] };
 }
 
