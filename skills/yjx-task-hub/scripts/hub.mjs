@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { privateRoot, safeFile, readJson, atomicJson, validateConfig, acquireLock } from './storage.mjs';
 import { Coordinator } from './coordinator.mjs';
+import { ProjectCoordinator, projectStatus } from './project.mjs';
 
 const script = fileURLToPath(import.meta.url);
 const address = root => process.platform === 'win32' ? `\\\\.\\pipe\\yjx-task-hub-${createHash('sha256').update(root.toLowerCase()).digest('hex').slice(0, 24)}` : path.join(root, 'hub.sock');
@@ -63,13 +64,13 @@ async function request(root, payload) {
   });
 }
 
-async function serve(root, syncRun = false) {
+async function serve(root, syncRun = false, projectMode = false) {
   const lock = acquireLock(root);
   let coordinator;
   let server;
   const socketPath = address(root);
   try {
-    coordinator = new Coordinator(root);
+    coordinator = projectMode ? new ProjectCoordinator(root) : new Coordinator(root);
     const startedAt = new Date().toISOString();
     if (syncRun) saveSyncRun(root, { session: lock.lockId, startedAt, status: 'running' });
     if (process.platform !== 'win32' && fs.existsSync(socketPath)) {
@@ -108,7 +109,7 @@ async function serve(root, syncRun = false) {
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
     if (process.platform !== 'win32') fs.chmodSync(socketPath, 0o600);
-    print({ session: lock.lockId, pid: process.pid, root, pending: coordinator.pending() });
+    print({ session: lock.lockId, pid: process.pid, root, mode: projectMode ? 'project' : 'personal', pending: coordinator.pending() });
     process.stdout.end();
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => { lock.release(); process.exit(0); }));
   } catch (e) {
@@ -119,9 +120,11 @@ async function serve(root, syncRun = false) {
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   if (!cmd || cmd === '--help') {
-    print({ usage: 'node <skill-dir>/scripts/hub.mjs init [--file <json-path>]|status|history|start [--sync]|request --session <token> [--file <json-path>]|stop --session <token>', input: 'init/request 支持 --file <json-path> 或从 stdin 读取 JSON；start 持有本地锁直到 stop；--sync 记录本轮同步；外部 MCP 调用由 Agent 执行', home: '~/.yjx-task-hub/ 或绝对路径 YJX_TASK_HUB_HOME' }); return;
+    print({ usage: 'node <skill-dir>/scripts/hub.mjs init [--file <json-path>]|status [--project]|history|start [--sync|--project]|request --session <token> [--file <json-path>]|stop --session <token>', input: 'init/request 支持 --file <json-path> 或从 stdin 读取 JSON；start 持有本地锁直到 stop；--project 不依赖 TB 初始化；外部 MCP 调用由 Agent 执行', home: '~/.yjx-task-hub/ 或绝对路径 YJX_TASK_HUB_HOME' }); return;
   }
-  const root = privateRoot(undefined, cmd === 'init');
+  const projectMode = args.includes('--project');
+  if (projectMode && args.includes('--sync')) throw new Error('--project 与 --sync 不能同时使用');
+  const root = privateRoot(undefined, cmd === 'init' || (cmd === 'start' && projectMode));
   if (cmd === 'history') { print(readJson(root, 'sync-run.json', { version: 1, runs: [] })); return; }
   if (cmd === 'init') {
     const config = validateConfig({ version: 1, activeWindowDays: 90, watchedTasks: [], ignoredTaskIds: [], ...await inputJson(args) });
@@ -136,15 +139,16 @@ async function main() {
     return;
   }
   if (cmd === 'status') {
+    if (projectMode) { print({ root, ...projectStatus(root), lock: readJson(root, 'lock.json', null) }); return; }
     const config = validateConfig(readJson(root, 'config.json'));
     const state = readJson(root, 'state.json');
     const history = readJson(root, 'sync-run.json', { runs: [] });
     const lastSync = Array.isArray(history.runs) ? history.runs.at(-1) ?? null : history;
     print({ root, config, entries: Object.keys(state.entries).length, pending: Object.entries(state.entries).filter(([, e]) => e.pendingOp).map(([key, e]) => ({ key, ...e.pendingOp })), lock: readJson(root, 'lock.json', null), lastSync }); return;
   }
-  if (cmd === '_serve') return serve(root, args.includes('--sync'));
+  if (cmd === '_serve') return serve(root, args.includes('--sync'), projectMode);
   if (cmd === 'start') {
-    const child = spawn(process.execPath, [script, '_serve', ...(args.includes('--sync') ? ['--sync'] : [])], { detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, YJX_TASK_HUB_HOME: root } });
+    const child = spawn(process.execPath, [script, '_serve', ...(args.includes('--sync') ? ['--sync'] : []), ...(projectMode ? ['--project'] : [])], { detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, YJX_TASK_HUB_HOME: root } });
     const result = await new Promise((resolve, reject) => {
       let stdout = '', stderr = '';
       child.once('error', reject);

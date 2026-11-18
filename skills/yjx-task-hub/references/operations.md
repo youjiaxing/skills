@@ -1,5 +1,7 @@
 # 本地写入协议
 
+本协议只处理个人总清单属性与 TB 同步；项目页正文、模块表和项目待办走[项目写入协议](project-operations.md)。
+
 协调器只管理本地状态与计划，**不会调用 Notion/TB**。Agent 根据返回的计划调用当前 MCP 工具，并将真实响应结果送回协调器。写入授权来自用户指令及已配置规则，JSON 的 confirmed 是 agent 对已存在授权的记录，不是向用户另设固定措辞。
 
 ## 持锁会话与标准输入
@@ -42,6 +44,12 @@ TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，�
 
 `complete:true` 只用于**已经读完**无过滤全库分页的结果；空库同样须取得终止分页证据。view 模式先 fetch 检查无过滤且全字段展示，逐页累积；有过滤/隐藏所需字段则换可完整读取的方式，权限/额度限制时停止写入，不拿抽样冒充全量。
 
+## Notion 属性保护
+
+编辑页面时先单页回读完整属性，以用户明确指令或[字段所有权](setup.md#字段所有权)为依据建立允许改变的字段清单。名称含“人工”的字段只有用户明确点名时才可列入。`dispatch` 返回字段补丁；由调用方核对补丁中的每项变化都已获准，再把补丁覆盖到快照，按当前 Notion 工具的 schema 写回全部可写属性，其余可写字段原样保留。只读、计算和系统属性不回传；无法读全属性、无损回传可写属性或确认字段权限时，停止该页写入。缺失不表示空值；只有已授权的清空操作才传空值。
+
+每次 `update_page` 明确成功后，按返回的 `pageId` 回读完整属性：核对允许修改的字段与拟写值一致，其余可写字段与更新前快照一致。只读属性的系统更新或重新计算不视为字段误改。回读失败、属性缺失或比对不一致时，保持操作未决并停止后续批量写入。批量更新逐页执行和核对。
+
 **Notion 读取反斜杠转义知识与单次入口解码**：已观察到 Notion 读取接口（`view` / `rows` / `fetch`）的文本属性会对下划线追加反斜杠转义（例如将 `3.5.1_hotfix_2026.10.29` 返回为 `3.5.1\_hotfix_2026.10.29`）。协调器在 `inventory`（及显式传入的外部页面）适配入口处，会自动对受控同步字段 `迭代` 与 `来源状态` 执行**单次** `\_ → _` 还原；调用方直接传入读取到的属性即可，无需手写反转义。人工自由编辑字段（`任务`、`下一步动作`）保持原样不作反转义。TB 原值和内部合成页面不再解码；受控字段若本就包含字面量 `\_`，本适配规则会将其视为 `_`，不能用它声称字节级保真。
 
 ## 计划与外部执行
@@ -60,9 +68,9 @@ TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，�
 | plan-personal | pageId（编辑时）、properties | 新人工事项或个人安排生成计划；个人顺序须有用户确认 |
 | prepare | planId、confirmed:true（创建/个人编辑必需） | 持久化 prepared 意图，返回 opId |
 | prepare-batch | items 数组（每项含 planId、confirmed） | 逐项持久化 prepared 意图，返回各自 opId 或错误；仍须逐项走 `dispatch → 外部调用` |
-| dispatch | opId（可选 currentPage / noMatchConfirmed） | 基于本轮 `inventory` 核对页面快照与唯一性，持久化 dispatched，返回 permitted:true 及精确拟写 properties |
-| commit | opId、apiSucceeded:true、pageId（更新可省略，创建必填；兼容旧 page） | 当前 MCP 写入明确返回成功 `page_id` 后直接校验 ID 身份并合成提交基线，无需写后 `fetch` 回读 |
-| commit-batch | items 数组（每项含 opId、apiSucceeded:true 等） | 逐项校验明确成功响应并提交基线，未知或失败项保持 `dispatched` 禁止重发，留待 `resolve` |
+| dispatch | opId、currentPage（更新传入）或 noMatchConfirmed（创建可选） | 核对页面快照与唯一性，持久化 dispatched，返回 permitted:true 及精确拟写 properties 补丁 |
+| commit | opId、apiSucceeded:true、pageId、page（传回读结果，形状同 inventory） | 调用方核对完整属性后，协调器校验页面身份及拟写字段，提交基线 |
+| commit-batch | items 数组（每项同 commit） | 各项均已完成回读核对才提交；未知或失败项保持 `dispatched` 禁止重发，留待 `resolve` |
 | cancel | opId | 仅取消 prepared，外部未发请求 |
 | resolve | opId、confirmed:true、outcome 等 | 人工对账，见下节 |
 
@@ -74,9 +82,9 @@ TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，�
 
 1. `plan` 或 `plan-personal` 生成计划。若 `plan` 返回 `unchanged: true`（`committed: true`），说明 Notion 当前页面属性与最新 TB 快照完全一致且本地基线已对齐（即便同时附带 `notices` 提示，也无需为提示重复写回相同属性），**直接结束该条，不发任何外部 Notion 写入请求**，仅按需向用户汇报 `notices`。个人编辑传用户要求的最小 patch；暂停/等待他人要连同恢复位置写入 `下一步动作`，内容缺失先询问或从实际进度取证，不编造。
 2. 需要写入的计划调用 `prepare`；`prepare` 成功前不发外部请求。
-3. 自动修改个人状态（`auto_complete`、`auto_reopen`）时先单页重读，按 inventory 的字段形状传 `currentPage` 给 `dispatch`。读取失败或页面变化时取消 prepared 并报告该条；已 dispatched 的结果未知不得取消。其他更新可基于本轮 inventory；创建校验来源唯一性。重读与外部写入之间仍有竞态。
-4. 只有 `dispatch` 返回 `permitted: true`，才调用 Notion `create_pages` 或 `update_page`，目标固定为配置数据源/返回 `pageId`、`properties` 固定为派发结果。不执行 TB 写回。
-5. 当 Notion `create_pages` 或 `update_page` 明确返回成功（返回创建的 `pages[].id` 或更新的 `page_id`，且无 `isError`）时，直接调用 `commit`（传入 `apiSucceeded: true` 与返回的 `pageId`），**无需写后再调用 `notion.fetch` 回读页面**。协调器校验 `pageId` 身份无冲突后合成更新内存 `inventory` 并原子提交 `state.json` 基线。本地基线代表“基于本轮初始 `inventory` 快照与 API 明确成功响应确认的拟写结果”，实际落盘与跨会话并发修改留待下轮全表读取发现。
+3. 所有更新均在派发前单页重读，按[属性保护](#notion-属性保护)用快照和计划补丁核对字段权限并组装 `properties`，再按 inventory 的字段形状传 `currentPage` 给 `dispatch`。读取或校验失败时取消 prepared 并报告；页面与计划快照不符则取消 prepared，按最新快照重算。创建校验来源唯一性。重读与外部写入之间仍有竞态。
+4. `dispatch` 返回 `permitted: true` 后，创建按派发结果向配置数据源调用 `create_pages`；更新核对返回的补丁与已校验的计划补丁一致，再用组装好的 `properties` 向返回的 `pageId` 调用 `update_page`。如果派发后才发现无法满足写入条件，不发送外部请求，按未决流程对账。此流程不写回 TB。
+5. 接口明确返回成功（创建返回 `pages[].id` 或更新返回 `page_id`，且无 `isError`）后，按返回 ID 回读页面。更新按属性保护比对，创建核对拟写字段及来源标识。核对通过才调用 `commit`，传 `apiSucceeded: true`、返回的 `pageId` 和按 inventory 形状构造的回读 `page`。回读未知或不一致时保持 `dispatched`，停止后续批量写入。
 6. TB 同步轮次先用 `action:status` 检查遗漏并补齐。核实身份及策略、分页终点、迭代、实际写入回执和候选均已处理后提交 `sync-attest`；存在待决候选、读取失败或结果未知时不提交。随后调用 `stop --session <token>`，检查返回的覆盖、未决和 `syncStatus`，再以独立 `status` 确认锁已释放。诊断只统计成功判定与候选计算；调用方仍须核实外部证据。读取受阻时照常 stop 并报告；个人编辑会话不要求 TB 覆盖。
 
 ## 未决与人工对账

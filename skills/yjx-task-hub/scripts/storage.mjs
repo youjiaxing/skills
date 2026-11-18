@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 const repository = fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..'));
-const names = new Set(['config.json', 'state.json', 'lock.json', 'lock.reclaim', 'sync-run.json']);
+const names = new Set(['config.json', 'state.json', 'project-state.json', 'lock.json', 'lock.reclaim', 'sync-run.json']);
 const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)); };
 const isNetwork = p => /^(\\\\|\/\/)/.test(p) || /^\\\\\?\\/i.test(p);
 

@@ -95,6 +95,30 @@ export async function writeJournal(file, record) {
   await rename(temporary, file);
 }
 
+
+const PLACEHOLDER_STATUS = new Set(['blocked', 'unconfirmed', 'failed', 'interrupted']);
+
+export async function deliverHarvestedFollowUp({ directory, requestId, answer, reply, prepareReply }) {
+  if (typeof answer !== 'string' || !answer.trim() || typeof requestId !== 'string') return null;
+  const file = path.join(directory, `${requestId}.json`);
+  let record;
+  try { record = JSON.parse(await readFile(file, 'utf8')); }
+  catch { return null; }
+  if (record.codexStatus === 'completed' || record.answerFollowUpAttempted || !record.replyMessageId) return null;
+  if (!PLACEHOLDER_STATUS.has(record.codexStatus)) return null;
+  record.answerFollowUpAttempted = true;
+  await writeJournal(file, record);
+  const rendered = prepareReply(answer);
+  const sent = await reply(record.messageId, answer, requestId, rendered);
+  if (sent?.message_id) {
+    record.answerFollowUpMessageId = sent.message_id;
+    record.codexStatus = 'completed';
+    record.answer = answer;
+    await writeJournal(file, record);
+  }
+  return sent;
+}
+
 // Single receiver owns this directory. ACK waits for admission to be persisted,
 // not for the Codex turn. Interrupted journals are retained for human recovery.
 export function createReceiver({ appId, botId, config, stateDir, reply, send = sendAgent, context = async item => item.text,
@@ -129,12 +153,20 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
         agentTarget:record.agentTarget, t3Command:config.t3Command,t3BaseDir:config.t3BaseDir,
         autoUnarchive:record.autoUnarchive, stateDir, codex: config.codex, cwd: config.cwd,
         waitMode:'state',timeoutMs:record.codexRpcTimeoutMs });
+      if (Array.isArray(result.releasedPriors)) {
+        for (const prior of result.releasedPriors) {
+          if (prior.status === 'completed' && prior.answer) {
+            try { await deliverHarvestedFollowUp({ directory, requestId: prior.requestId, answer: prior.answer, reply, prepareReply }); }
+            catch { log({ type: 'follow-up-failed', requestId: prior.requestId }); }
+          }
+        }
+      }
       record.codexStatus = result.status;
       record.codexSubmitted = typeof result.submitted === 'boolean' ? result.submitted : null;
       if (result.waitTimedOut) record.waitTimedOut=true;
       if (typeof result.interruptRequested==='boolean') record.interruptRequested=result.interruptRequested;
       if (['TARGET_ARCHIVED','TARGET_UNAVAILABLE','TARGET_UNKNOWN','HOST_INTERACTION_REQUIRED',
-        'COMPLETION_UNCONFIRMED','NOT_SUBMITTED','CODEX_NOT_FOUND','TURN_FAILED','TURN_INTERRUPTED'].includes(result.error?.code)) record.codexCode=result.error.code;
+        'COMPLETION_UNCONFIRMED','NOT_SUBMITTED','CODEX_NOT_FOUND','TURN_FAILED','TURN_INTERRUPTED','NO_FINAL_REPLY'].includes(result.error?.code)) record.codexCode=result.error.code;
       // Never present unconfirmed/blocked turns as successfully completed.
       const baseAnswer = record.routeError ?? resultText(result, record.requestId);
       if (typeof baseAnswer !== 'string' || !baseAnswer.length) throw new Error('No final answer');
