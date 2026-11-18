@@ -76,6 +76,9 @@ export function createDeliveryJobs({directory, stateDir, appId, reply, prepareRe
 
   async function reject(item, code) {
     const requestId = `fs-${digest(`${appId}:${item.messageId}`)}`;
+    // A duplicate of an admitted message must never claim it was not submitted.
+    try { await readFile(path.join(directory, `${requestId}.json`)); return; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
     const file = path.join(rejectionDirectory, `${requestId}.json`);
     await mkdir(rejectionDirectory, {recursive:true, mode:0o700});
     let record;
@@ -187,7 +190,8 @@ export function createDeliveryJobs({directory, stateDir, appId, reply, prepareRe
     else record.replyAttempted = true;
     await save(entry);
     try {
-      const sent = await bounded(() => reply(record.messageId, delivery.text, delivery.key, delivery.rendered), operationMs);
+      const deadlineMs = delivery.unknownSince + HOUR - 60000;
+      const sent = await bounded(() => reply(record.messageId, delivery.text, delivery.key, delivery.rendered, {deadlineMs}), operationMs);
       if (!sent?.message_id || (answer && sent.message_id === record.replyMessageId)) throw new Error('Unknown or reused reply receipt');
       delivery.state = 'confirmed';
       delete delivery.unknownSince;
@@ -273,6 +277,12 @@ export function createDeliveryJobs({directory, stateDir, appId, reply, prepareRe
             let latest;
             try { latest=await readRecord(stateDir,record.requestId); }
             catch { latest={status:'blocked',submitted:false,error:{code:'NOT_SUBMITTED'}}; }
+            // Submission intent is persisted before the host send. A crash in
+            // the earlier waiting state is a known non-submission, not a run
+            // to observe or replay.
+            if (latest.status === 'waiting' && latest.submitted === false) {
+              latest={...latest,status:'blocked',error:{code:'NOT_SUBMITTED'}};
+            }
             await applyResult(entry,{...latest,agent:'t3'});
             continue;
           }

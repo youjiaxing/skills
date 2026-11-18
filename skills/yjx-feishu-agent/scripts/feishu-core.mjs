@@ -297,12 +297,12 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
   return {
     handle(data) {
       if (!accepting) {
-        void rejectFeedback(data,'RECEIVER_STOPPING');
+        void admission.then(() => rejectFeedback(data,'RECEIVER_STOPPING'));
         return Promise.reject(new Error('Receiver is stopping'));
       }
       if (pendingAdmissions >= 32) {
         log({type:'admission-rejected',code:'ADMISSION_QUEUE_FULL'});
-        void rejectFeedback(data,'ADMISSION_QUEUE_FULL');
+        void admission.then(() => rejectFeedback(data,'ADMISSION_QUEUE_FULL'));
         return Promise.reject(new Error('Receiver admission queue is full'));
       }
       pendingAdmissions += 1;

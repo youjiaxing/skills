@@ -243,6 +243,11 @@ export function createFeishuRateLimiter({
     const limit = Number.isInteger(options.maxRetries) ? options.maxRetries : maxRetries;
     for (let attempt = 0; ; attempt++) {
       await reserveSlot({ deadlineMs: Number.isFinite(deadlineMs) ? deadlineMs - headroomMs : Infinity });
+      // Mutex acquisition and timers can overrun the reserved slot, even when
+      // the rate-limit gate is disabled. Recheck immediately before the write.
+      if (now() + headroomMs >= deadlineMs) {
+        throw Object.assign(new Error('Feishu operation deadline exceeded'), {notSent:true});
+      }
       try {
         return await fn(attempt);
       } catch (error) {

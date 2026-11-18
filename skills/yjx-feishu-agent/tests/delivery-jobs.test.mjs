@@ -82,6 +82,35 @@ test('recovery covers a crash after submission but before the first notification
   assert.equal((await f.read()).answerDelivery.state,'confirmed');await f.jobs.stop();
 });
 
+test('recovery reports a known pre-submission crash without observing or resubmitting',async t=>{
+  const f=await fixture(t,{refresh:()=>assert.fail('non-submitted request must not be observed')});
+  await writeJournal(path.join(f.directory,f.record.requestId+'.json'),{...f.record,deliveryVersion:2,status:'processing'});
+  await reserveRecord(f.stateDir,{...f.record,agent:'t3',status:'waiting',submitted:false});
+  await f.jobs.recover();f.jobs.tick();await f.jobs.drain();
+  const record=await f.read();
+  assert.equal(record.codexStatus,'blocked');assert.equal(record.codexSubmitted,false);
+  assert.equal(record.codexCode,'NOT_SUBMITTED');assert.equal(f.calls.length,1);
+  assert.equal(record.statusDelivery.state,'confirmed');await f.jobs.stop();
+});
+
+test('rejection feedback cannot contradict a durable admitted request',async t=>{
+  const f=await fixture(t),messageId='om_admitted';
+  const requestId=`fs-${digest(`${appId}:${messageId}`)}`;
+  await writeJournal(path.join(f.directory,requestId+'.json'),{requestId,status:'processing',codexSubmitted:true});
+  await f.jobs.reject({binding:{chatId:'oc_test'},messageId},'ADMISSION_QUEUE_FULL');
+  await f.jobs.drain();assert.equal(f.calls.length,0);await f.jobs.stop();
+});
+
+test('delivery passes the original deduplication deadline across retries',async t=>{
+  const deadlines=[];
+  const f=await fixture(t,{reply:async(_id,_text,_key,_rendered,options)=>{
+    deadlines.push(options.deadlineMs);throw new Error('lost receipt');
+  }});
+  await f.jobs.track(f.record,{binding:{chatId:'oc_test'}},{status:'completed',submitted:true,answer:'answer'});
+  await f.jobs.drain();f.advance(10000);f.jobs.tick();await f.jobs.drain();
+  assert.deepEqual(deadlines,[100000+3540000,100000+3540000]);await f.jobs.stop();
+});
+
 test('routing failure retries bookkeeping independently and never sends the answer again',async t=>{
   let routes=0;
   const f=await fixture(t,{confirmReply:async()=>{if(++routes===1) throw new Error('disk unavailable');}});
@@ -147,6 +176,21 @@ test('rejection feedback uses its own durable lane and is deduplicated without a
 
 const event=id=>({sender:{sender_type:'user',sender_id:{open_id:'ou_user'}},message:{message_id:id,
   chat_id:'oc_test',chat_type:'group',message_type:'text',content:JSON.stringify({text:'@bot input'}),mentions:[{key:'@bot',id:{open_id:'ou_bot'}}]}});
+
+test('overflow rejection waits for earlier admission of the same event before deciding feedback',async t=>{
+  const f=await fixture(t);let release,submissions=0;
+  const gate=new Promise(resolve=>release=resolve);
+  const receiver=createReceiver({appId,botId:'ou_bot',stateDir:f.stateDir,
+    config:{version:1,bindings:[{chatId:'oc_test',threadId:source,users:['ou_user']}]},
+    admitRoute:async(_item,save)=>{await gate;await save({threadId:source});},
+    send:async()=>{submissions++;return {status:'completed',submitted:true,answer:'answer'};},
+    reply:f.options.reply,feedback:f.options.feedback});
+  const admitted=Array.from({length:32},()=>receiver.handle(event('om_duplicate')));
+  const overflow=assert.rejects(receiver.handle(event('om_duplicate')),/admission queue is full/);
+  release();await Promise.all(admitted);await overflow;await receiver.drain();await receiver.stop();
+  assert.equal(submissions,1);assert.equal(f.calls.length,1);assert.equal(f.calls[0].text,'answer');
+});
+
 test('old unknown observation and failed feedback do not occupy fresh submission slots',async t=>{
   const f=await fixture(t);let finishObservation,observationStarted,nextSubmitted;
   const observationGate=new Promise(r=>finishObservation=r),started=new Promise(r=>observationStarted=r),next=new Promise(r=>nextSubmitted=r);

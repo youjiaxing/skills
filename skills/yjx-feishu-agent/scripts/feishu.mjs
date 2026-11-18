@@ -224,9 +224,9 @@ export async function main(argv) {
   const rateLimiter = createFeishuRateLimiter({ gateDir: stateDir, appId: credentials.appId });
   const router = createMessageRouter({stateDir,appId:credentials.appId});
   const outboundFollowUps = createOutboundFollowUps({stateDir,appId:credentials.appId,log:print,
-    async reply(messageId,text,uuid) {
+    async reply(messageId,text,uuid,{deadlineMs=Infinity}={}) {
       const response=await rateLimiter.execute(()=>api(()=>client.im.v1.message.reply({path:{message_id:messageId},
-        data:{msg_type:'text',content:JSON.stringify({text}),uuid}})),{maxOperationMs:25000,attemptHeadroomMs:15000});
+        data:{msg_type:'text',content:JSON.stringify({text}),uuid}})),{deadlineMs:Math.min(Date.now()+25000,deadlineMs),attemptHeadroomMs:15000});
       return response.data;
     }});
   const feedback = createProcessingFeedback({stateDir, appId:credentials.appId,
@@ -235,11 +235,11 @@ export async function main(argv) {
     feedback,
     prepareReply: renderReply,
     context:item => resolveContext(item,contextOptions), admitRoute:router.admit, confirmReply:router.rememberReply,
-    async reply(messageId, answer, requestId, prepared) {
+    async reply(messageId, answer, requestId, prepared, {deadlineMs=Infinity}={}) {
       // One bounded text response; keep UUID stable for Feishu deduplication.
       const rendered = prepared ?? renderReply(answer.length > 12000 ? `${answer.slice(0, 12000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : answer);
       const response = await rateLimiter.execute(() => api(() => client.im.v1.message.reply({ path: { message_id: messageId },
-        data: { msg_type: rendered.msgType, content: JSON.stringify(rendered.content), uuid: digest(requestId).slice(0, 32) } })), {maxOperationMs:25000,attemptHeadroomMs:15000});
+        data: { msg_type: rendered.msgType, content: JSON.stringify(rendered.content), uuid: digest(requestId).slice(0, 32) } })), {deadlineMs:Math.min(Date.now()+25000,deadlineMs),attemptHeadroomMs:15000});
       return {message_id:response.data?.message_id,msg_type:rendered.msgType,body:{content:JSON.stringify(rendered.content)},renderMode:rendered.mode};
     },
   });

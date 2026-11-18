@@ -73,7 +73,8 @@ export async function processOutboundFollowUp({stateDir,appId,requestId,reply,he
     notice.firstSubmittedAt ??= new Date(now()).toISOString();
     notice.state='submitting';await writeJournal(file,record);
     try {
-      const sent=await reply(record.acknowledgement?.messageId ?? record.messageId,notice.text,notice.uuid);
+      const deadlineMs=Date.parse(notice.firstSubmittedAt)+3600000-60000;
+      const sent=await reply(record.acknowledgement?.messageId ?? record.messageId,notice.text,notice.uuid,{deadlineMs});
       if (!sent?.message_id) throw new Error('Missing notice receipt');
       notice.messageId=sent.message_id;notice.state='confirmed';await writeJournal(file,record);
       await createMessageRouter({stateDir,appId}).rememberReply({binding:{chatId:record.chatId}},sent,

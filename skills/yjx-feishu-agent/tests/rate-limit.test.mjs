@@ -12,6 +12,11 @@ import {
 } from '../scripts/feishu-rate-limit.mjs';
 import { reactionTransport } from '../scripts/reaction-transport.mjs';
 
+test('an operation deadline still prevents writes when rate limiting is disabled',async()=>{
+  const limiter=createFeishuRateLimiter({disabled:true,now:()=>100});
+  await assert.rejects(limiter.execute(()=>assert.fail('expired remote write'),{deadlineMs:100}),{notSent:true});
+});
+
 test('rate-limit error detection distinguishes rate limits from quota exhaustion and invalid cards', () => {
   assert.equal(isRateLimitError(Object.assign(new Error('rl'), { apiCode: 230429 })), true);
   assert.equal(isRateLimitError(Object.assign(new Error('rl'), { apiCode: 230020 })), true);

@@ -11,6 +11,7 @@ import {routeFile} from '../scripts/message-routes.mjs';
 import {createMessageRouter} from '../scripts/message-routes.mjs';
 import {bridgeAuthority} from '../scripts/push-contract.mjs';
 import {receiverPaths} from '../scripts/receiver-runtime.mjs';
+import {createFeishuRateLimiter} from '../scripts/feishu-rate-limit.mjs';
 
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
 async function setup(t) {
@@ -63,6 +64,23 @@ test('lost status receipt retries frozen reply UUID without resending original',
   await processOutboundFollowUp(options);await processOutboundFollowUp(options);
   assert.equal(uuids.length,2);assert.equal(uuids[0],uuids[1]);assert.equal(f.sends(),1);
   await processOutboundFollowUp({...options,now:()=>Date.now()+3600001});assert.equal(uuids.length,2);
+});
+
+test('status retry delayed by the rate-limit gate cannot cross its original deduplication deadline',async t=>{
+  const f=await setup(t);await deliver(f.input,f.options);
+  let clock=100000,calls=0;
+  const limiter=createFeishuRateLimiter({gateDir:f.stateDir,appId:'cli_test',now:()=>clock,
+    sleep:async ms=>{clock+=ms+3600000;},minIntervalMs:1});
+  const options={stateDir:f.stateDir,appId:'cli_test',requestId:'test',now:()=>clock,
+    health:async()=>({state:'unavailable'}),reply:async(_parent,_text,_uuid,{deadlineMs})=>{
+      assert.equal(deadlineMs,100000+3540000);
+      return limiter.execute(async()=>{calls++;throw new Error('lost receipt');},{deadlineMs});
+    }};
+  await processOutboundFollowUp(options);
+  const record=await processOutboundFollowUp(options);
+  assert.equal(calls,1);assert.equal(record.followUpNotice.state,'unknown');
+  const expired=await processOutboundFollowUp(options);
+  assert.equal(expired.followUpNotice.state,'needs_reconciliation');assert.equal(calls,1);
 });
 test('acknowledged pending route is recovered but an older revision never steals a newer source',async t=>{
   const f=await setup(t);const card={...f.input,msgType:'interactive',content:{elements:[]}};await deliver(card,f.options);
