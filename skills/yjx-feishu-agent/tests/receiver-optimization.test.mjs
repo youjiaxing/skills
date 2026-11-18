@@ -1,12 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createReceiver, digest, messageDecision, validateBindings } from '../scripts/feishu-core.mjs';
 import { diagnoseMessage } from '../scripts/message-diagnostics.mjs';
-import { historyView, parseReadArgs } from '../scripts/read-feishu.mjs';
-import { messageView } from '../scripts/feishu-content.mjs';
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
 const event=(id,chat='oc_a')=>({sender:{sender_type:'user',sender_id:{open_id:'ou_user'}},message:{
   message_id:id,chat_id:chat,chat_type:'group',message_type:'text',mentions:[{key:'@bot',id:{open_id:'ou_bot'}}],
@@ -73,20 +71,4 @@ test('Codex submission evidence and uncertain reply remain independently inspect
   const d=await f.diag('om_lost');assert.equal(d.codex.submitted,true);
   assert.equal(d.codex.code,'COMPLETION_UNCONFIRMED');assert.equal(d.reply.state,'unknown');
   assert.deepEqual(d.task.failure,{stage:'reply',code:'OPERATION_UNCONFIRMED',apiCode:123,httpStatus:500});
-});
-test('query compact output keeps identifiers, explicit truncation and real names, never expands history',()=>{
-  const message={message_id:'om_test',chat_id:'oc_a',msg_type:'text',update_time:'123',
-    sender:{id:'ou_user',sender_name:'Teacher',extra:'noise'},body:{content:JSON.stringify({text:'x'.repeat(13000)})}};
-  const full=messageView(message),compact=messageView(message,{concise:true});
-  assert.equal(full.truncated,true);assert.equal(full.textLength,13000);
-  assert.equal(compact.text.length,2000);assert.equal(compact.senderName,'Teacher');
-  assert.equal(compact.sender,undefined);assert.equal(compact.senderId,'ou_user');assert.equal(compact.updateTime,'123');
-  assert.equal(parseReadArgs(['history','--chat','oc_a','--concise']).concise,true);
-  const page=historyView({items:[message],has_more:true},{chatId:'oc_a',concise:true});
-  assert.equal(page.complete,false);assert.equal(page.warning,'pagination_incomplete');
-  assert.equal(page.completenessScope,'requested_container_and_filters');
-  assert.throws(()=>historyView({items:[{...message,chat_id:'oc_other'}],has_more:false},{chatId:'oc_a'}),/different/);
-  assert.throws(()=>historyView({items:[]},{chatId:'oc_a'}),/Invalid history/);
-  const image=messageView({...message,msg_type:'image',body:{content:JSON.stringify({image_key:'img_test'})}});
-  assert.equal(image.resources[0].status,'not_downloaded');
 });

@@ -1,6 +1,10 @@
+# 历史：原 yjx-show-me
+
+原技能维护记录的迁移快照，保留历史陈述及未核实事项；当前入口与取舍见 [维护说明](../MAINTENANCE.md)。本文件不注册技能，也不提供旧名转接。原文中的相对链接已定位到新包。
+
 # Maintenance: yjx-show-me
 
-评审、修改或重新设计本 skill 时读取。运行时规则由 [SKILL.md](SKILL.md) 负责；本文件记录来源、取舍和更新依据。
+评审、修改或重新设计本 skill 时读取。运行时规则由 [SKILL.md](../SKILL.md) 负责；本文件记录来源、取舍和更新依据。
 
 ## 上游与准确基线
 
@@ -10,7 +14,7 @@
 | 原记录路径 | `skills/engineering/show-me/` 未在本次 Matt 固定目标中找到；当时读取的是本机安装副本 `C:\Users\Administrator\.agents\skills\show-me\SKILL.md` |
 | 基线文件指纹 | `SKILL.md` git blob `f0ccd047c136d7b702b385e0ecad775ccb773eae` |
 | 关系 | 在上述已知 blob 内容基础上独立维护的个人中文增强版；内容指纹与仓库来源归属分别核实 |
-| 许可 | 现有 [LICENSE](LICENSE) 为 MIT、署名 Matt Pocock；该署名的来源依据待核，本轮未改版权文件 |
+| 许可 | 现有 [LICENSE](../LICENSE) 为 MIT、署名 Matt Pocock；该署名的来源依据待核，本轮未改版权文件 |
 
 ## 能力承接与本地取舍
 
@@ -50,4 +54,4 @@
 - HTML 浏览器视口具备明确触发边界，常规代码走读默认使用内联视口；《呈现准则》集中承载“首句结论先行 + 紧接视口 + 字面直接表述”且与首段无重复定义。
 - 第三方 `C:\Users\Administrator\.agents\skills\show-me\SKILL.md` 保持未修改。
 
-遵循仓库 [Skill Verification](../../AGENTS.md#skill-verification)：静态文档审阅、一致性、包装和链接检查，不创建或运行模拟会话行为测试。
+遵循仓库 [Skill Verification](../../../AGENTS.md#skill-verification)：静态文档审阅、一致性、包装和链接检查，不创建或运行模拟会话行为测试。

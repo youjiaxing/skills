@@ -6,6 +6,8 @@
 
 已授权群默认必须 `@机器人` 才转发；仅当某群显式配置 `requireMention:false`（停服后运行 `bindings.mjs require-mention --chat oc_GROUP --enabled false`）时，允许该群白名单用户在未 `@机器人` 的情况下直接发送文本或富文本触发转发（前提是飞书应用已开通接收群内所有消息的权限并订阅 `im.message.receive_v1`）。白名单用户校验、机器人消息过滤与显式 `@机器人` 前缀剥离仍照常生效。
 
+对要求全部通知可追问的群设置 `requireFollowUp:true`，采用仅引用接入时不设置任意默认会话。调用方同步带 `requireFollowUp:true`，来源登记、单向例外和状态目录检查见 [主动投递](outbound.md#必须可追问的群)。
+
 ## 来源与投递
 
 出站 send/update 显式提供 `sourceThreadId`，由已授权的本机调用方按 [主动投递的来源约定](outbound.md#命令与输入) 从专用 `YJX_*_SOURCE_THREAD` 环境变量取得已核实的来源 UUID；T3 映射时使用来源键。它不是从消息正文、标题、最近聊天或群默认会话推断的，也不是授予群成员访问所有本机会话的入口。群用户白名单和明确 @ 条件保持不变。

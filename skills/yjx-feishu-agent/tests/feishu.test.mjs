@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { acceptedMessage, createReceiver, validateBindings, resultText } from '../scripts/feishu-core.mjs';
+import { acceptedMessage, createReceiver, validateBindings } from '../scripts/feishu-core.mjs';
 import { renderReply } from '../scripts/reply-renderer.mjs';
 
 const config = { version: 1, bindings: [{ chatId: 'oc_test', users: ['ou_user'], threadId: '11111111-1111-4111-8111-111111111111' }] };
@@ -100,24 +100,65 @@ test('uncertain reply is retained and not retried after receiver restart', async
   assert.equal(replyAttempts, 1);
 });
 
-test('not-submitted request explains the safe next step without imposing an unresolved gate',()=>{
-  const failed=resultText({status:'blocked',submitted:false,error:{code:'NOT_SUBMITTED'}},'request');
-  assert.match(failed,/未提交/);assert.match(failed,/重新发送/);assert.doesNotMatch(failed,/不要重复/);
-});
-
-test('missing executable explains the concrete local repair without exposing paths', () => {
-  const text = resultText({ status: 'blocked', submitted: false,
-    error: { code: 'CODEX_NOT_FOUND', message: 'private-path-secret' } }, 'request');
-  assert.match(text, /Codex 程序/); assert.match(text, /Desktop 安装或桥接程序配置/); assert.match(text, /未提交/);
-  assert.doesNotMatch(text, /private-path-secret|不要重复/);
-});
-
 test('unconfirmed Codex results are reported without a successful answer claim', async (t) => {
   const f = await fixture(t, { send: async () => ({ status: 'unconfirmed', answer: 'late partial' }) });
   await f.receiver.handle(event());
   await f.receiver.stop();
-  assert.match(f.replies[0][1], /unconfirmed/);
-  assert.doesNotMatch(f.replies[0][1], /late partial/);
+  assert.match(f.replies[0][1], /还在处理/);
+  assert.doesNotMatch(f.replies[0][1], /late partial|请求：|请在本机|不要重复/);
+});
+
+test('accepted reaction suppresses the duplicate pending-text reply', async (t) => {
+  const f = await fixture(t, {
+    feedback: { update: async () => ({ delivered:true }) },
+    admitRoute: async (_item, persist) => persist({ threadId:null, agentTarget:{kind:'t3',threadId:'t3-test'} }),
+    send: async () => ({ status:'running', submitted:true }),
+  });
+  f.options.reply = async (...input) => { f.replies.push(input); return { message_id:'om_reply' }; };
+  const receiver = createReceiver(f.options);
+  await receiver.handle(event());
+  for (let index = 0; index < 50; index++) {
+    await new Promise(resolve => setImmediate(resolve));
+    if ((await receiver.unsettled()).length) break;
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(f.replies.length, 0);
+  await receiver.stop();
+  assert.equal(f.replies.length, 0);
+});
+
+test('failed accepted reaction leaves the pending-text fallback', async (t) => {
+  const f = await fixture(t, {
+    feedback: { update: async () => ({ delivered:false }) },
+    admitRoute: async (_item, persist) => persist({ threadId:null, agentTarget:{kind:'t3',threadId:'t3-test'} }),
+    send: async () => ({ status:'running', submitted:true }),
+  });
+  f.options.reply = async (...input) => { f.replies.push(input); return { message_id:`om_status_${f.replies.length}` }; };
+  const receiver = createReceiver(f.options);
+  await receiver.handle(event());
+  for (let index = 0; index < 50; index++) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+    if (f.replies.length) break;
+  }
+  assert.match(f.replies[0]?.[1] ?? '', /还在处理/);
+  await receiver.stop();
+});
+
+test('accepted reaction never hides a terminal failure', async (t) => {
+  const f = await fixture(t, {
+    feedback: { update: async () => ({ delivered:true }) },
+    admitRoute: async (_item, persist) => persist({ threadId:null, agentTarget:{kind:'t3',threadId:'t3-test'} }),
+    send: async () => ({ status:'failed', submitted:true }),
+  });
+  f.options.reply = async (...input) => { f.replies.push(input); return { message_id:`om_status_${f.replies.length}` }; };
+  const receiver = createReceiver(f.options);
+  await receiver.handle(event());
+  for (let index = 0; index < 50; index++) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+    if (f.replies.length) break;
+  }
+  assert.match(f.replies[0]?.[1] ?? '', /这次没答上/);
+  await receiver.stop();
 });
 
 test('bridge research requests wait for task state with independently bounded RPC calls',async t=>{
@@ -130,14 +171,6 @@ test('bridge research requests wait for task state with independently bounded RP
   for(const value of [0,999,120001,NaN,'30000']) {
     assert.throws(()=>validateBindings({...config,codexRpcTimeoutMs:value}),/codexRpcTimeoutMs/);
   }
-});
-
-test('wait timeout explains interruption request or ongoing queue without claiming a final answer',()=>{
-  const common={status:'unconfirmed',submitted:true,waitTimedOut:true,timeoutMs:900000,answer:'partial'};
-  const owned=resultText({...common,interruptRequested:true},'request');
-  assert.match(owned,/15 分钟/);assert.match(owned,/已请求中断/);assert.doesNotMatch(owned,/partial/);
-  const queued=resultText({...common,route:'queue'},'request');
-  assert.match(queued,/可能仍在/);assert.doesNotMatch(queued,/已请求中断/);
 });
 
 test('reply rendering metadata is persisted before the remote reply',async t=>{

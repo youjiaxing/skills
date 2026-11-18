@@ -1,37 +1,39 @@
-# Formal Contract
+# 正式对齐方案
 
-Read this file in full when a slice requires a Formal Contract, before drafting, reviewing, or requesting approval. The entrypoint owns the question gate, coverage, shared presentation, risk review, completion, and authorization rules; this reference adds only formal-contract requirements.
+仅在当前切片需要正式对齐方案时阅读全文，再起草、送审或请求批准。入口负责提问、覆盖核查、通用呈现、完成判定和授权；本文件只补充正式方案的要求，不把普通讨论变成审批流程。
 
-## Assemble the Candidate
+## 整理候选方案
 
-After convergence, assemble one candidate for the current slice using the entrypoint's result synthesis and Presentation Density. Connect the solution to the understood problem and intended outcome. Keep each change's observable behavior, implementation-critical consequences, and independently useful acceptance results together under a topic named for the actual change. State agreed content naturally and identify new unconfirmed proposals or material assumptions without requiring proposal blockquotes.
+围绕用户真正要解决的问题组织方案，把每项行为、理由、代价和可独立验证的结果放在同一主题下。只把本次对齐引入的变化列为拟改内容；既有事实作为背景，既有约束只在遗漏会导致实施风险时保留。
 
-Give each semantic claim one primary home. Include only changes introduced by this alignment as proposed changes. Supporting facts are context, not commitments. Include preserved constraints only when omission creates material implementation risk. Keep key reasons and accepted costs with the decision they explain; retain the full alternative comparison in the discussion and reviewer record rather than repeating it as a second summary.
+每个含义保留一个主要归宿。已确认内容直接陈述；新增建议、未确认前提和重大推断明确标识。完整的备选比较及来源映射保留在内部记录和评审材料中，不在方案里再复制一份问答流水。
 
-Preserve the owner, source of truth, identities, interfaces/data shapes, lifecycle and state transitions, compatibility/migration, concurrency and failure guarantees, and strategic boundaries when they cannot be safely derived from observable behavior. When an entity, schema, enum, field, interface, or state machine is part of the decision, keep its shape concrete and copyable.
+保留影响实施正确性的精度：
 
-Where the project reserves design decisions for the user, carry the applicable governance pointers (including the root `GRILL.md` when present), the actual scope and source of confirmation or delegation, and the selected structures precise enough for implementation. Preserve outstanding reserved decisions at their real scope under the entrypoint's coverage and handoff rules; a general approval does not silently settle unpresented details or authorize their implementation.
+- 所有权、状态真源、身份、对外契约及数据结构。
+- 生命周期和状态转换、兼容与迁移、并发一致性、失败与恢复保证。
+- 已接受的代价、约束、假设和真实剩余事项。
 
-Add acceptance conditions only when they introduce independently observable consequences, not paraphrases. Use a verification table only when it compresses at least three branching scenarios; do not repeat its rows in nearby prose. Diagrams or alternate forms earn their place only by adding a distinct boundary or observable consequence.
+涉及结构体、协议、字段、枚举或状态机时给出具体、可复制的结构，不能用抽象摘要替代。携带适用的项目参与约定（含根 `GRILL.md`，若存在）、实际确认或委托范围；未讨论的重要设计决定不能悄悄变成实施自由度。
 
-Exclude routine mechanics, unaffected call-site inventories, local test filenames, shell commands, PR plans, and syntax-level advice unless the user's decision directly concerns them. Brevity must not remove implementation-critical meaning.
+验收条件应增加可独立观察的结果，不重复方案正文。至少三个分支场景能压缩成表时再使用验证表；图和其他表现形式也须承担不同的信息作用。不把常规命令、临时测试文件名、无关调用点清单或 PR 步骤写成契约，除非用户讨论的正是这些对象。
 
-## Review Before Approval
+## 批准前评审
 
-Apply the entrypoint's review protocol (isolated Reviewer subagent when supported by the host, or same-standard current-session review with explicit disclosure when subagent tools are unavailable or fail) to this candidate and the complete decision record. Start every subagent with a fresh context window (do not fork the current conversation). Check that every material implementation-affecting claim remains traceable, that each changed guarantee has a supported basis, and that no inference has been presented as the user's requirement or decision.
+按[独立评审](review.md)执行，检查候选方案与完整确认记录。未解决的实质发现阻止批准；发现新的人类决策时先返回讨论，再修订相关范围。已经拒绝的方案不能仅因审阅者偏好重新打开。
 
-Keep the candidate out of the approval step until it has no unresolved substantiated findings. Review may identify another consequential question; return to that frontier, then update and re-review the material revision. A preference for a rejected design is insufficient to reopen it.
+评审通过后再呈交正式方案，不能先请求批准再补审。
 
-## Present and Confirm
+## 呈交与选择
 
-Present the reviewed contract once, organized by the resulting solution rather than question order, with provenance clear in the wording. Name this contract or its concrete scope before asking for approval. Other aligned results shown as background retain their own approval status and stay outside this request; grouping creates neither new approval units nor cross-contract authorization.
+按入口的提问布局，先说明这次要批准的具体方案范围，再自包含地展示合并最新修改后的完整内容。其他切片的结论只作背景，不因放在同一条消息里就共享批准。
 
-Use the entrypoint's question-first layout for this required approval request. To avoid splitting contract approval and implementation handoff into two separate turns while still protecting planning-only scenarios, provide three explicit options localized to the user's language (place the recommended option first as `1` based on session context—when the current slice has no remaining alignment blockers and can be implemented directly in the current session, recommend "Approve and start implementation"; when the user explicitly asked for planning/spec-only or remaining slices block execution, recommend "Approve conclusion only, do not implement yet"):
+方案说明和执行选项分开呈现：说明使用主题段落或项目符号，最后单独列出以下三个真实选项，数字从 `1` 开始。不要用同一组编号混放建议内容和操作选择。
 
-- **Approve this conclusion and start implementation:** confirms the reviewed conclusion and its boundaries, grants implementation authorization for this contract's scope, and directs immediate execution once no blocking alignment slices remain.
-- **Approve this conclusion only (do not implement yet):** confirms the reviewed conclusion and its boundaries without granting implementation authority, suitable for planning-only work or handing off to downstream workflows (such as `to-spec` or `to-tickets`).
-- **Items need adjustment:** keeps the contract unapproved and returns to alignment and required re-review.
+- **批准方案并开始实施**：批准本方案及边界，同时授权并指示执行；没有剩余阻塞时直接进入实施，不再索要一句“开始”。
+- **仅批准方案，暂不实施**：只确认结论，不授予实施权限，适用于仅规划或交给后续流程的工作。
+- **需要调整**：保持未批准，继续对齐并完成必要复审。
 
-A reply with a material condition or change returns to alignment and required re-review before renewed approval; an old candidate's approval cannot approve new content.
+推荐项排第一，按当前上下文选择：切片已无对齐阻塞且本会话可实施时，推荐“批准方案并开始实施”；用户明确要求只规划，或其他切片仍阻塞执行时，推荐“仅批准方案，暂不实施”。选项语言与用户一致。
 
-After approval, return to the entrypoint's slice-completion loop rather than ending a multi-slice request prematurely. When the user selects "Approve this conclusion and start implementation" (or a still-valid earlier execution instruction covers this scope), hand off and execute without asking a second time for "start implementation", subject to remaining dependencies and the execution boundary.
+带有实质条件或修改的同意仍是调整，先解决并完成必要复审，再请求批准；旧方案的批准不能覆盖新内容。批准后返回入口的剩余工作循环，不把单个切片获批当作整个任务完成。

@@ -6,13 +6,14 @@ export function reactionTransport({ appId, appSecret }, { fetchImpl = fetch, tim
   function rejected(response, body) {
     const error = new Error('Reaction API failed');
     if (Number.isSafeInteger(body?.code)) error.apiCode = body.code;
+    if (Number.isSafeInteger(body?.code) && body.code !== 0) error.notSent = true;
     if (Number.isSafeInteger(response.status)) error.httpStatus = response.status;
     const retryAfterMs = parseRetryAfterHeaders(response.headers);
     if (retryAfterMs !== null) error.retryAfterMs = retryAfterMs;
     return error;
   }
   const runWrite = fn => rateLimiter
-    ? rateLimiter.execute(fn, { maxRetries: timeoutMs >= 3000 ? 2 : 0 })
+    ? rateLimiter.execute(fn, { maxRetries: timeoutMs >= 3000 ? 2 : 0, maxOperationMs:10000, attemptHeadroomMs:timeoutMs })
     : fn();
   async function request(messageId, { method = 'GET', emoji, reactionId, pageToken, signal }) {
     if (!token || Date.now() >= expiresAt) {

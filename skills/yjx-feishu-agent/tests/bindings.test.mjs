@@ -55,8 +55,3 @@ test('only known path components classify active/archive; notLoaded is not delet
   assert.equal((await readTarget({ call: async () => { throw new RpcError({ code: -32600, message: `thread not loaded: ${old}` }); } }, old, 1)).state, 'unavailable');
   assert.equal((await readTarget({ call: async () => { throw Error('transport failed'); } }, old, 1)).state, 'unknown');
 });
-test('receiver distinguishes safe target block from uncertain submitted task', () => {
-  assert.match(resultText({ status:'blocked', submitted:false, error:{code:'TARGET_ARCHIVED'} }, 'r'), /已归档.*未提交/);
-  assert.match(resultText({ status:'blocked', submitted:false, error:{code:'TARGET_UNAVAILABLE'} }, 'r'), /不能据此判断/);
-  assert.match(resultText({ status:'unconfirmed', submitted:true, error:{code:'TARGET_ARCHIVED'} }, 'r'), /不要重复/);
-});

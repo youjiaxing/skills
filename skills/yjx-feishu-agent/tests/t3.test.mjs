@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { sendT3, requestT3Status, inspectT3Target, applyT3Snapshot } from '../scripts/t3.mjs';
+import { sendT3, requestT3Status, inspectT3Target, applyT3Snapshot, applyT3Projection } from '../scripts/t3.mjs';
 import { deliverHarvestedFollowUp, writeJournal, createReceiver, digest } from '../scripts/feishu-core.mjs';
 import { targetFor, validateAgentTargets } from '../scripts/agent-targets.mjs';
 import { createMessageRouter } from '../scripts/message-routes.mjs';
@@ -17,92 +17,88 @@ async function setup(t) {
 }
 const readable={code:0,data:{thread:{threadId:target,archived:false},messages:[]}};
 
-test('one durable submission; duplicate ID never invokes CLI again',async t=>{
+test('submission is durable, bounded, non-waiting and deduplicated per request',async t=>{
   const input=await setup(t),calls=[];
-  const run=async(cmd,args,message)=>{
+  const run=async(cmd,args,message,options)=>{
     calls.push(args[1]);
     if(args[1]==='show') return readable;
     const stored=await requestT3Status(input);
-    assert.equal(stored.submitted,true);assert.equal(stored.status,'unconfirmed');
+    assert.equal(stored.submitted,true);assert.equal(stored.status,'submitted');
     assert.equal(message,stored.wireMessage);
-    return {code:0,data:{threadId:target,runId:'run-1',status:'completed',reply:'answer'}};
+    assert.ok(!args.includes('--wait'));assert.ok(options.timeoutMs>0 && options.timeoutMs<=15000);
+    return {code:0,data:{threadId:target,runId:'run-1',delivery:'queued'}};
   };
-  const first=await sendT3(input,{run});assert.equal(first.answer,'answer');
+  const first=await sendT3(input,{run});assert.equal(first.status,'queued');assert.equal(first.turnId,'run-1');
   const duplicate=await sendT3(input,{run});assert.equal(duplicate.deduplicated,true);
   assert.deepEqual(calls,['show','send']);
   await assert.rejects(sendT3({...input,message:'different'},{run}),/different input/);
 });
 
-test('lost CLI receipt waits until later work starts before a fresh ID may send',async t=>{
-  const input=await setup(t);let sends=0,shows=0;
+test('an unknown prior and stale target gate cannot stop a fresh request',async t=>{
+  const input=await setup(t);let sends=0;
   const run=async(cmd,args)=>{
-    if(args[1]==='show'){
-      shows++;
-      if(shows===1) return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'old-run'},messages:[]}};
-      return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'digest-run',status:'completed',activeRunId:null},messages:[]}};
-    }
+    if(args[1]==='show') return readable;
     sends++;
     if(sends===1) throw new Error('lost receipt');
-    return {code:0,data:{threadId:target,runId:'run-2',status:'completed',reply:'next'}};
+    return {code:0,data:{threadId:target,runId:'run-2',delivery:'queued'}};
   };
-  const first=await sendT3({...input,pollMs:1},{run});
-  assert.equal(first.status,'failed');assert.equal(first.error.code,'NO_FINAL_REPLY');assert.equal(first.submitted,true);
-  const second=await sendT3({...input,requestId:'r2',threadId:'33333333-3333-4333-8333-333333333333',pollMs:1,message:'next'},{run});
-  assert.equal(second.status,'completed');assert.equal(second.submitted,true);assert.equal(second.answer,'next');assert.equal(sends,2);
-  assert.equal(second.blockedByRequestId,undefined);
+  const first=await sendT3(input,{run});assert.equal(first.status,'unconfirmed');
+  await claimThreadRequest(input.stateDir,{...first,threadId:'t3-'+target});
+  await mkdir(path.join(input.stateDir,'locks','t3-'+target),{recursive:true});
+  const second=await sendT3({...input,requestId:'r2',message:'next'},{run});
+  assert.equal(second.status,'queued');assert.equal(second.turnId,'run-2');assert.equal(sends,2);
+  const stored=await requestT3Status(input);assert.equal(stored.status,'unconfirmed');
 });
 
-test('waiting send receipt keeps observing until the marker harvests an answer',async t=>{
-  const input=await setup(t);let shows=0;
-  const run=async(cmd,args)=>{
-    if(args[1]==='show'){
-      shows++;
-      const rec=await requestT3Status(input);
-      const text=rec.wireMessage;
-      if(!text) return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:null},messages:[]}};
-      if(shows<4) return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'run-1',activeRunId:'run-1',status:'running'},messages:[{role:'user',runId:'run-1',text}]}};
-      return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'run-1',activeRunId:null,status:'completed'},messages:[{role:'user',runId:'run-1',text},{role:'assistant',runId:'run-1',text:'answer'}]}};
-    }
-    return {code:2,data:{threadId:target,runId:'run-1',status:'waiting',reply:null}};
-  };
-  const record=await sendT3({...input,pollMs:1},{run});
-  assert.equal(record.submitted,true);assert.equal(record.status,'completed');assert.equal(record.answer,'answer');
+test('wrong receipt remains unknown; archived target is not submitted',async t=>{
+  const input=await setup(t);let sends=0;
+  const wrong=await sendT3(input,{run:async(cmd,args)=>{
+    if(args[1]==='show') return readable;
+    sends++;return {code:0,data:{threadId:source,runId:'wrong',status:'completed',reply:'wrong'}};
+  }});
+  assert.equal(wrong.status,'unconfirmed');assert.equal(wrong.turnId,null);assert.equal(sends,1);
+  const blocked=await sendT3({...input,requestId:'archived'},{run:async()=>({code:0,data:{thread:{threadId:target,archived:true}}})});
+  assert.equal(blocked.submitted,false);assert.equal(blocked.error.code,'TARGET_ARCHIVED');
 });
 
-test('wrong receipt target stays unknown until later work ends the gate; archived target never submitted',async t=>{
-  const input=await setup(t);let shows=0;
-  let run=async(cmd,args)=>{
-    if(args[1]==='show'){
-      shows++;
-      if(shows===1) return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'old-run'},messages:[]}};
-      return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'other-run',status:'completed',activeRunId:null},messages:[]}};
-    }
-    return {code:0,data:{threadId:source,runId:'run-1',status:'completed',reply:'wrong'}};
-  };
-  const unknown=await sendT3({...input,pollMs:1},{run});
-  assert.equal(unknown.submitted,true);assert.equal(unknown.status,'failed');assert.equal(unknown.error.code,'NO_FINAL_REPLY');
-  const other=await setup(t);other.requestId='archived';
-  run=async()=>({code:0,data:{thread:{threadId:target,archived:true}}});
-  const blocked=await sendT3(other,{run});assert.equal(blocked.submitted,false);assert.equal(blocked.error.code,'TARGET_ARCHIVED');
+const baseRecord=()=>({agent:'t3',threadId:target,wireMessage:'unique-marker',turnId:null,status:'unconfirmed',baselineLatestRunId:'old'});
+const projection=(runId='run-1',status='completed',text='final')=>({thread:{id:target},
+  runs:[{id:runId,threadId:target,status,completedAt:status==='completed'?'2026-11-18T10:00:00Z':null}],
+  messages:[{threadId:target,runId,role:'user',text:'unique-marker'},
+    {threadId:target,runId,role:'assistant',text,streaming:false,createdAt:'2026-11-18T10:00:00Z'}]});
+
+test('baseline/latest changes and running assistant text are not terminal evidence',()=>{
+  for(const turnId of [null,'queued-run']) {
+    const record={...baseRecord(),turnId};
+    applyT3Snapshot(record,{thread:{threadId:target,latestRunId:'old',activeRunId:'old',status:'running'},messages:[]});
+    assert.equal(record.status,'unconfirmed');
+  }
+  const record=baseRecord();applyT3Projection(record,projection('run-1','running','progress'));
+  assert.equal(record.status,'running');assert.equal(record.answer,undefined);
+  const waiting=applyT3Projection(baseRecord(),projection('run-1','waiting','prompt'));
+  assert.equal(waiting.status,'waiting');assert.equal(waiting.error.code,'HOST_INTERACTION_REQUIRED');
 });
 
-test('read-only recovery harvests the marker even after a later run starts',async t=>{
-  const input=await setup(t);let sends=0,shows=0;
-  const run=async(cmd,args)=>{
-    if(args[1]==='show'){
-      shows++;
-      if(shows===1) return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'old-run'},messages:[]}};
-      return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'digest-run',status:'completed',activeRunId:null},messages:[]}};
-    }
-    sends++;throw new Error('lost');
-  };
-  const initial=await sendT3({...input,pollMs:1},{run});
-  assert.equal(initial.status,'failed');
-  const harvested=applyT3Snapshot({...initial,status:'unconfirmed',threadId:target,error:{code:'COMPLETION_UNCONFIRMED'}}, {thread:{threadId:target,latestRunId:'later-run',status:'completed',activeRunId:null},messages:[{role:'user',runId:'run-1',text:initial.wireMessage},{role:'assistant',runId:'run-1',text:'answer'}]});
-  assert.equal(harvested.status,'completed');assert.equal(harvested.answer,'answer');
-  const noAnswer=applyT3Snapshot({agent:'t3',threadId:target,wireMessage:initial.wireMessage,turnId:'run-1',status:'unconfirmed',baselineLatestRunId:'old-run'}, {thread:{threadId:target,latestRunId:'later-run',status:'completed',activeRunId:null},messages:[{role:'user',runId:'run-1',text:initial.wireMessage}]});
-  assert.equal(noAnswer.status,'failed');assert.equal(noAnswer.error.code,'NO_FINAL_REPLY');
-  assert.equal(sends,1);
+test('original run result is recovered after later runs without accepting conflicting identity',()=>{
+  const data=projection();data.thread.latestRunId='later';
+  const record=applyT3Projection(baseRecord(),data);
+  assert.equal(record.status,'completed');assert.equal(record.answer,'final');assert.equal(record.turnId,'run-1');
+  const conflict=applyT3Projection({...baseRecord(),turnId:'original'},projection('copy'));
+  assert.equal(conflict.status,'unconfirmed');assert.equal(conflict.turnId,'original');assert.equal(conflict.answer,undefined);
+  const streaming=projection();streaming.messages[1].streaming=true;
+  assert.equal(applyT3Projection(baseRecord(),streaming).status,'unconfirmed');
+});
+
+test('status refresh repairs inferred NO_FINAL_REPLY without resending; true failures stay terminal',async t=>{
+  const input=await setup(t),record={...baseRecord(),requestId:input.requestId,submitted:true,status:'failed',error:{code:'NO_FINAL_REPLY'}};
+  await reserveRecord(input.stateDir,record);
+  let reads=0;
+  const refreshed=await requestT3Status({...input,refresh:true},{run:async()=>{throw new Error('must not invoke CLI');},projectionReader:async()=>{reads++;return projection();}});
+  assert.equal(refreshed.status,'completed');assert.equal(refreshed.answer,'final');assert.equal(reads,1);
+  const other=await setup(t);other.requestId='true-failure';
+  await reserveRecord(other.stateDir,{...record,requestId:other.requestId,error:{code:'TURN_FAILED'}});
+  const failed=await requestT3Status({...other,refresh:true},{projectionReader:async()=>{throw new Error('must not query');}});
+  assert.equal(failed.error.code,'TURN_FAILED');
 });
 
 test('mappings are group-scoped and frozen when routing is admitted',async t=>{
@@ -136,54 +132,6 @@ test('hung read-only CLI is bounded without submitting or accepting a result',as
   const result=await inspectT3Target({threadId:target,timeoutMs:50,
     t3Command:[process.execPath,'-e','setInterval(()=>{},1000)','--']});
   assert.equal(result.state,'unknown');assert.ok(performance.now()-before<2000);
-});
-
-test('in-flight prior does not block a later ID after it completes',async t=>{
-  const input=await setup(t);let sends=0;
-  const firstRun=async(cmd,args)=>{
-    if(args[1]==='show') return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:null},messages:[]}};
-    sends++;
-    return {code:0,data:{threadId:target,runId:'run-1',status:'completed',reply:'first'}};
-  };
-  const first=await sendT3({...input,pollMs:1},{run:firstRun});
-  assert.equal(first.status,'completed');
-  const second=await sendT3({...input,requestId:'r2',pollMs:1,message:'next'},{run:async(cmd,args)=>{
-    if(args[1]==='show') return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'run-1',activeRunId:null,status:'completed'},messages:[]}};
-    sends++;
-    return {code:0,data:{threadId:target,runId:'run-2',status:'completed',reply:'second'}};
-  }});
-  assert.equal(second.status,'completed');assert.equal(second.answer,'second');assert.equal(sends,2);
-});
-
-test('later ID waits for an unconfirmed prior, then sends and releases the harvested answer',async t=>{
-  const input=await setup(t);
-  const marker='[yjx-feishu-agent:prior]';
-  const wire=marker + '\n' + 'prior';
-  const reserved=await reserveRecord(input.stateDir,{
-    version:1,agent:'t3',requestId:'r1',threadId:target,inputHash:'prior-hash',marker,
-    wireMessage:wire,t3Command:input.t3Command,status:'unconfirmed',submitted:true,route:'t3',
-    turnId:'run-1',answer:null,baselineLatestRunId:'old-run',createdAt:new Date().toISOString(),
-  });
-  await claimThreadRequest(input.stateDir,{...reserved.record,threadId:'t3-' + target});
-  let shows=0,sends=0;
-  const run=async(cmd,args)=>{
-    if(args[1]==='show'){
-      shows++;
-      if(shows<3) return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'run-1',activeRunId:'run-1',status:'running'},messages:[{role:'user',runId:'run-1',text:wire}]}};
-      if(shows===3) return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'run-1',activeRunId:null,status:'completed'},messages:[{role:'user',runId:'run-1',text:wire},{role:'assistant',runId:'run-1',text:'first'}]}};
-      return {code:0,data:{thread:{threadId:target,archived:false,latestRunId:'run-1',activeRunId:null,status:'completed'},messages:[]}};
-    }
-    sends++;
-    return {code:0,data:{threadId:target,runId:'run-2',status:'completed',reply:'second'}};
-  };
-  const second=await sendT3({...input,requestId:'r2',pollMs:1,message:'next'},{run});
-  assert.equal(second.status,'completed');assert.equal(second.answer,'second');assert.equal(sends,1);
-  assert.equal(second.blockedByRequestId,undefined);
-  assert.equal(second.releasedPriors.length,1);
-  assert.equal(second.releasedPriors[0].requestId,'r1');
-  assert.equal(second.releasedPriors[0].answer,'first');
-  const prior=await requestT3Status({...input,requestId:'r1'});
-  assert.equal(prior.status,'completed');assert.equal(prior.answer,'first');
 });
 
 test('placeholder Feishu reply is followed up once after harvest',async t=>{

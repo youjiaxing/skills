@@ -4,7 +4,7 @@ import path from 'node:path';
 import { lockThread, validateRequestId } from './state.mjs';
 import { validateThreadId } from './codex.mjs';
 import { withRoutes } from './message-routes.mjs';
-import { requirePushSource } from './push-contract.mjs';
+import { requirePushSource, pushConfiguration } from './push-contract.mjs';
 import { isRateLimitError } from './feishu-rate-limit.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -44,6 +44,7 @@ export function outboundPaths(stateDir, appId) {
 
 export async function prepareContent(input, directory = process.cwd()) {
   if (input.oneWay !== undefined && typeof input.oneWay !== 'boolean') throw new Error('oneWay must be boolean');
+  if (input.requireFollowUp !== undefined && typeof input.requireFollowUp !== 'boolean') throw new Error('requireFollowUp must be boolean');
   if (input.oneWay === true && input.sourceThreadId !== undefined) throw new Error('oneWay conflicts with sourceThreadId');
   if (input.sourceThreadId !== undefined) validateThreadId(input.sourceThreadId);
   if (!['text', 'post', 'interactive'].includes(input.msgType)) throw new Error('msgType must be text, post or interactive');
@@ -314,7 +315,7 @@ export async function supersedeUpdate({ stateDir, appId, requestId }) {
   }
 }
 
-export async function deliver(input, { stateDir, appId, directory, transport, recheckUnknown = false }) {
+export async function deliver(input, { stateDir, authorityDir = stateDir, appId, directory, transport, recheckUnknown = false }) {
   const id = validateRequestId(input.requestId);
   // Older callers using this option get a read-only result too.
   if (recheckUnknown) return recheckOutbound({stateDir,appId,requestId:id,transport});
@@ -339,6 +340,17 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
       if (prior.fingerprint !== prepared.fingerprint) throw new Error('Request ID belongs to different input');
       return { ...prior, deduplicated: true };
     }
+    if(input.operation==='send') {
+      const configuration=await pushConfiguration(authorityDir);
+      const binding=configuration?.bindings.find(item=>item.chatId===input.chatId);
+      for(const legacyDir of binding?.legacyOutboundDirs ?? []) {
+        let legacy;
+        try { legacy=await outboundStatus({stateDir:legacyDir,appId,requestId:id}); }
+        catch(error) { if(error.code==='ENOENT') continue;throw error; }
+        if(legacy.chatId!==input.chatId) throw new Error('Legacy request belongs to another group');
+        return {...legacy,deduplicated:true,legacyStateDir:legacyDir};
+      }
+    }
     const targetId = input.operation === 'update' ? input.targetRequestId : id;
     releaseTarget = await lockThread(paths.root, `target-${hash(targetId)}`, performance.now() + 5000);
     if (!releaseTarget) throw new Error('Target locked; inspect owner before recovery');
@@ -359,7 +371,7 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
       const latest = await json(paths.target(dependency.targetRequestId));
       if (latest.pending || latest.lastRequestId !== dependency.requestId) throw new Error('Required update is no longer the confirmed latest revision');
     }
-    await requirePushSource(input,{stateDir,chatId:target?.chatId ?? input.chatId});
+    const policy = await requirePushSource(input,{stateDir,authorityDir,chatId:target?.chatId ?? input.chatId});
     return await withRoutes({stateDir,appId,chatId:target?.chatId ?? input.chatId},async (routing,saveRoutes) => {
       const previousRoute = target ? routing.messages[target.messageId] : undefined;
       if (previousRoute?.pending) throw new Error('Previous message routing unresolved');
@@ -368,6 +380,8 @@ export async function deliver(input, { stateDir, appId, directory, transport, re
       const record = { version: 2, requestId: id, operation: input.operation, fingerprint: prepared.fingerprint,
         chatId: target?.chatId ?? input.chatId, targetRequestId: targetId, status: 'preparing',
         createdAt: new Date().toISOString(), submitted: false, msgType: input.msgType,
+        ...(policy.required ? {requireFollowUp:true,followUpPending:true} : {}),
+        ...(policy.exception ? {oneWayException:policy.exception} : {}),
         ...(input.oneWay === true ? {oneWay:true} : {}),
         ...(input.sourceThreadId ? {sourceThreadId:validateThreadId(input.sourceThreadId)} : {}),
         ...(input.operation==='update' ? {expectedRevision:input.expectedRevision} : {}),

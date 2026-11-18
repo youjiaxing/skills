@@ -10,6 +10,7 @@ import { defaultStateDir, validateThreadId } from './codex.mjs';
 import { lockThread } from './state.mjs';
 import { validateBindings, writeJournal, digest } from './feishu-core.mjs';
 import { inspectAgentTarget, targetFor } from './agent-targets.mjs';
+import { pushHealth } from './push-contract.mjs';
 
 export async function rebind(config, { chatId, expectedThread, threadId }, check) {
   validateBindings(config);
@@ -68,6 +69,20 @@ export async function main(argv) {
     for (const binding of selected) rows.push({ ...binding, ...(command === 'check' ? {
       target: binding.threadId ? await inspectAgentTarget({ threadId: binding.threadId, agentTarget:targetFor(binding,binding.threadId),t3Command:config.t3Command,t3BaseDir:config.t3BaseDir,codex: config.codex ?? 'codex', cwd: config.cwd ?? process.cwd() })
         : {state:'unconfigured',reason:'quote_only_group'} } : {}) });
+    if(command==='check' && selected.some(binding=>binding.requireFollowUp)) {
+      const {appId}=await loadCredentials(stateDir);
+      for(const row of rows.filter(binding=>binding.requireFollowUp)) {
+        const sources=Object.keys(row.threadTargets ?? {});
+        if(row.threadId && !sources.includes(row.threadId)) sources.push(row.threadId);
+        row.followUp={state:sources.length?'ready':'blocked',sources:[]};
+        for(const sourceThreadId of sources) {
+          const health=await pushHealth({stateDir,appId,chatId:row.chatId,sourceThreadId});
+          row.followUp.sources.push({sourceThreadId,...health});
+          if(health.state!=='ready') row.followUp.state='degraded';
+        }
+      }
+      if(rows.some(row=>row.followUp && row.followUp.state!=='ready')) process.exitCode=3;
+    }
     console.log(JSON.stringify({ bindings: rows }));
     return;
   }

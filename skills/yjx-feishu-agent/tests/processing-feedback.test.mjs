@@ -59,6 +59,18 @@ test('unknown create is only reconciled read-only, never posted again even if ab
   assert.equal(f.warnings.length,1);
 });
 
+test('a confirmed reaction rejection can recover on a later feedback update',async t=>{
+  let refused=true;
+  const f=await fixture(t,{async create(id,emoji) {
+    if(refused) throw Object.assign(new Error('permission rejected'),{notSent:true});
+    return reaction(emoji);
+  }});
+  f.feedback.update(record,'attention');await f.feedback.stop();
+  assert.equal((await f.journal()).attempts.attention.status,'rejected');
+  refused=false;f.feedback.update(record,'attention');await f.feedback.stop();
+  assert.equal((await f.journal()).attempts.attention.status,'created');
+});
+
 test('ambiguous create with later proven bot receipt is cleaned after terminal mark', async t => {
   const f = await fixture(t, {async create(id, emoji) {
     f.calls.push(['create',id,emoji]); const item = reaction(emoji); f.items.push(item);
@@ -69,6 +81,26 @@ test('ambiguous create with later proven bot receipt is cleaned after terminal m
   f.feedback.update(record,'attention'); await f.feedback.stop();
   assert.deepEqual(f.items.map(i => i.reaction_id),['CrossMark']);
   assert.equal((await f.journal()).attempts.accepted.status,'deleted');
+});
+
+test('an old unknown reaction read cannot suppress the latest completion mark', async t => {
+  let createdOnIt=false;
+  const f=await fixture(t,{
+    async create(id,emoji) {
+      f.calls.push(['create',id,emoji]);
+      if(emoji==='OnIt') {createdOnIt=true;throw new Error('lost receipt');}
+      return reaction(emoji);
+    },
+    async list(id,emoji) {
+      if(emoji==='OnIt' && createdOnIt) throw new Error('old state lookup unavailable');
+      return [];
+    },
+  });
+  f.feedback.update(record,'accepted');await f.feedback.stop();
+  f.feedback.update({...record,feedbackRevision:2},'completed');await f.feedback.stop();
+  assert.ok(f.calls.some(call=>call[0]==='create' && call[2]==='DONE'));
+  f.feedback.update({...record,feedbackRevision:1},'attention');await f.feedback.stop();
+  assert.equal((await f.journal()).desired,'completed');
 });
 
 test('preexisting own emoji is never adopted or removed; permission failure is best effort', async t => {

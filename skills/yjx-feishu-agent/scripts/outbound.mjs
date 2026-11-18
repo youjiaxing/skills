@@ -8,7 +8,8 @@ import { loadCredentials } from './feishu-credentials.mjs';
 import { defaultStateDir } from './codex.mjs';
 import { deliver, outboundStatus, prepareContent, recheckOutbound, reconcileOutbound, recoverUpdate, supersedeUpdate, submissionOutcome } from './outbound-core.mjs';
 import { readTransport } from './feishu-context.mjs';
-import { describePush } from './push-contract.mjs';
+import { describePush, bridgeAuthority, requirePushSource, pushHealth } from './push-contract.mjs';
+import { processOutboundFollowUp } from './outbound-followup.mjs';
 import { createFeishuRateLimiter, parseRetryAfterHeaders } from './feishu-rate-limit.mjs';
 
 export const HELP = `Usage:
@@ -16,6 +17,7 @@ export const HELP = `Usage:
   node outbound.mjs update --input request.json [--state-dir PATH] [--credentials-dir PATH]
   node outbound.mjs status --request-id ID [--state-dir PATH]
   node outbound.mjs preflight --input request.json
+  node outbound.mjs check-connection --input request.json [--state-dir PATH] [--credentials-dir PATH]
   node outbound.mjs recheck --request-id ID [--state-dir PATH]
   node outbound.mjs reconcile --request-id ID [--state-dir PATH]
   node outbound.mjs recover-update --request-id ID [--not-after ISO8601] [--state-dir PATH]
@@ -35,7 +37,7 @@ Exit: 0 confirmed/read, 2 blocked/error, 3 unconfirmed.
 export function parseArgs(argv) {
   const [operation, ...args] = argv;
   if (!operation || ['--help','-h'].includes(operation)) return { help: true };
-  if (!['send','update','status','preflight','recheck','reconcile','recover-update','supersede-update'].includes(operation)) throw new Error('Unknown operation');
+  if (!['send','update','status','preflight','check-connection','recheck','reconcile','recover-update','supersede-update'].includes(operation)) throw new Error('Unknown operation');
   const result = { operation };
   const keys = { '--input': 'input', '--state-dir': 'stateDir', '--credentials-dir': 'credentialsDir', '--request-id': 'requestId', '--not-after': 'notAfter' };
   while (args.length) {
@@ -79,6 +81,14 @@ export async function main(argv) {
   const stateDir = path.resolve(options.stateDir ?? defaultStateDir());
   const credentialsDir = path.resolve(options.credentialsDir ?? stateDir);
   const credentials = await loadCredentials(credentialsDir);
+  const authorityDir = await bridgeAuthority(credentialsDir,credentials.appId);
+  if(options.operation==='check-connection') {
+    const input=JSON.parse(await readFile(path.resolve(options.input),'utf8'));
+    await requirePushSource({...input,requireFollowUp:true},{stateDir,authorityDir,chatId:input.chatId});
+    const health=await pushHealth({stateDir,appId:credentials.appId,chatId:input.chatId,sourceThreadId:input.sourceThreadId});
+    process.stdout.write(`${JSON.stringify({scope:'bridge-deployment',readOnly:true,status:health.state==='ready'?'ready':'degraded',health})}\n`);
+    return health.state==='ready'?0:3;
+  }
   let record;
   if (options.operation === 'status') {
     try { record = await outboundStatus({ stateDir, appId: credentials.appId, requestId: options.requestId }); }
@@ -158,17 +168,26 @@ export async function main(argv) {
         return messageId;
       },
     };
+    transport.reply=async (messageId,text,uuid) => {
+      const response=await rateLimiter.execute(()=>callSdk(()=>client.im.v1.message.reply({path:{message_id:messageId},
+        data:{msg_type:'text',content:JSON.stringify({text}),uuid}})),{deadlineMs:invocationDeadlineMs});
+      return check(response);
+    };
     record = options.operation === 'recover-update'
       ? await recoverUpdate({ stateDir, appId: credentials.appId, requestId: options.requestId,
         transport, notAfter: options.notAfter })
       : await deliver({ ...input, operation: options.operation },
-        { stateDir, appId: credentials.appId, directory: path.dirname(file), transport });
+        { stateDir, authorityDir, appId: credentials.appId, directory: path.dirname(file), transport });
+    if(record.requireFollowUp && !record.legacyStateDir && submissionOutcome(record)==='sent') {
+      try { record=await processOutboundFollowUp({stateDir,appId:credentials.appId,requestId:record.requestId,reply:transport.reply}); }
+      catch { /* Durable intent is recovered by the receiver; never resend the notification. */ }
+    }
   }
   // Status includes durable content; never serialize SDK objects.
   const evidence = record.status !== 'missing'
-    ? await outboundStatus({stateDir,appId:credentials.appId,requestId:record.requestId}) : record;
+    ? await outboundStatus({stateDir:record.legacyStateDir ?? stateDir,appId:credentials.appId,requestId:record.requestId}) : record;
   const described = record.status === 'missing' ? {delivery:'unknown',followUp:{state:'unknown',reason:'receipt_missing'},checkedAt:new Date().toISOString()} : await describePush(evidence,
-    {stateDir,appId:credentials.appId,outcome:submissionOutcome(evidence)});
+    {stateDir:record.legacyStateDir ?? stateDir,appId:credentials.appId,outcome:submissionOutcome(evidence)});
   process.stdout.write(`${JSON.stringify({...record,delivery:described.delivery,followUp:described.followUp,checkedAt:described.checkedAt})}\n`);
   if(record.status==='missing') return 3;
   if (options.operation==='recheck') return record.outcome==='sent' ? 0 : record.outcome==='not_submitted' ? 2 : 3;
@@ -179,6 +198,12 @@ export async function main(argv) {
 try {
   if (realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
     main(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {
+      const policyFailure=error.submitted===false && /^[A-Z_]+$/.test(error.code ?? '');
+      if(policyFailure) {
+        process.stdout.write(`${JSON.stringify({status:'blocked',code:error.code,submitted:false,delivery:'not_submitted',
+          followUp:{state:'unavailable',reason:error.code},message:'Check the receiver state directory, group authorization, registered source and one-way exceptions; no new message submitted'})}\n`);
+        process.exitCode=2;return;
+      }
       process.stdout.write(`${JSON.stringify({status:'error',
         delivery:error.code==='SOURCE_REQUIRED' ? 'not_submitted' : 'unknown',
         followUp:{state:'unknown',reason:'operation_failed'},

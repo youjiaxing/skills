@@ -1,0 +1,5 @@
+interface:
+  display_name: "YJX Unslop"
+  short_description: "组织清楚的说明与报告，精简复述，并用图示和真实代码解释关系"
+policy:
+  allow_implicit_invocation: true

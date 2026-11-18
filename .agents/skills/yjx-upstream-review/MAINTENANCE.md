@@ -8,7 +8,7 @@
 
 `metadata.internal: true` 利用 Skills CLI 的默认过滤，不是访问控制。创建时核对本机 Skills CLI 1.5.19 的发现和解析实现：默认跳过内部 skill，显式指定或 `INSTALL_INTERNAL_SKILLS` 可包含它。其他安装器或后续版本需重新核实。禁止模型自动调用由 `disable-model-invocation: true` 与 `agents/openai.yaml` 的 `policy.allow_implicit_invocation: false` 控制，正文不重复调用触发或频率说明。
 
-具体来源关系和评估进度以各本地 skill 的 `MAINTENANCE.md` 为真源。README 的演进映射用于发现线索，不另建重复的固定来源名单。`yjx-retro-skill` 复盘实际使用，本入口评估上游变化。
+具体来源关系和评估进度以各本地 skill 入口指定的维护/来源记录为真源。README 的演进映射用于发现线索，不另建重复的固定来源名单。`yjx-retro-skill` 复盘实际使用，本入口评估上游变化。
 
 ## 仓库级扫描记录
 
@@ -32,8 +32,8 @@
 - [yjx-implement](../../../skills/yjx-implement/MAINTENANCE.md)：I1，引用工单时读取实际正文、核实唯一身份并展示目标；后续经用户明确实施指令，已落地文档。
 - [yjx-local-tracker-setup](../../../skills/yjx-local-tracker-setup/MAINTENANCE.md)：T1，兼容上游合法省略 triage 映射文件，缺省仅维护既有机器 JSON；已落地，并联动 [local-kanban](../../../skills/yjx-local-kanban/MAINTENANCE.md) 前提与 T2 旧 Closed 说明清理。
 - [yjx-video-course](../../../skills/yjx-video-course/MAINTENANCE.md)：V1，yt-dlp 证书错误的条件化恢复已落地文档；参考获官方固定版本说明支持，未做本机网络验收。VTT 解析修复已有覆盖；不移植上游会话复制/云端转写。
-- [yjx-show-me](../../../skills/yjx-show-me/MAINTENANCE.md)：S1，Matt 来源声明与一手证据冲突，已记录为待核；Humanlayer 固定目标文件与已记 blob 一致，但创作时安装来源和许可链仍未知。未改运行规则或 LICENSE。
-- [yjx-to-spec](../../../skills/yjx-to-spec/MAINTENANCE.md)、[yjx-to-tickets](../../../skills/yjx-to-tickets/MAINTENANCE.md)、[yjx-wayfinder](../../../skills/yjx-wayfinder/MAINTENANCE.md)、[yjx-grill](../../../skills/yjx-grill/MAINTENANCE.md)、[yjx-prototype](../../../skills/yjx-prototype/MAINTENANCE.md)：当前相关能力已有覆盖，保留已确认的本地取舍，无新增采用项。
+- [yjx-unslop](../../../skills/yjx-unslop/MAINTENANCE.md)：承接原 `yjx-show-me` 的 S1 记录：Matt 来源声明与一手证据冲突，已记录为待核；Humanlayer 固定目标文件与已记 blob 一致，但创作时安装来源和许可链仍未知。该次检查未改运行规则或 LICENSE。
+- [yjx-to-spec](../../../skills/yjx-to-spec/MAINTENANCE.md)、[yjx-to-tickets](../../../skills/yjx-to-tickets/MAINTENANCE.md)、[yjx-wayfinder](../../../skills/yjx-wayfinder/MAINTENANCE.md)、[yjx-grill](../../../skills/yjx-grill/references/maintenance.md)、[yjx-prototype](../../../skills/yjx-prototype/MAINTENANCE.md)：当前相关能力已有覆盖，保留已确认的本地取舍，无新增采用项。
 - [yjx-gh-kanban](../../../skills/yjx-gh-kanban/MAINTENANCE.md)：与上游 GitHub tracker 契约对应评估；保留原生关系边界，缺失标签映射已有默认值，无新增采用项。
 
 **轻量扫描的其他结果：**

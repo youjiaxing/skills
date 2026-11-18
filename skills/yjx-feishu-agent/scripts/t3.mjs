@@ -1,20 +1,23 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
-import { readRecord, reserveRecord, saveRecord, lockThread, resolveThreadRequest, claimThreadRequest, validateRequestId } from './state.mjs';
+import { readRecord, reserveRecord, saveRecord, validateRequestId } from './state.mjs';
 import { validateThreadId } from './codex.mjs';
+import { createT3Reader } from './t3-reader.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'interrupted']);
 
 // The CLI owns local authentication. Never read, log, or persist its credentials.
-export function runT3(command, args, message, {timeoutMs}={}) {
+export function runT3(command, args, message, {timeoutMs,signal}={}) {
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
     const child = spawn(command[0], [...command.slice(1), ...args], {
       shell:false, windowsHide:true, stdio:['pipe','pipe','pipe'],
       env:{...process.env,ELECTRON_RUN_AS_NODE:'1',T3CODE_DESKTOP_CLI_LAUNCHER:'1'},
     });
     let output='', failed=false;
     const timer=timeoutMs ? setTimeout(()=>{child.kill();reject(new Error('T3 read timeout'));},timeoutMs) : undefined;
+    const onAbort = () => {child.kill();reject(new Error('T3 request observation stopped'));};
+    signal?.addEventListener('abort',onAbort,{once:true});
     timer?.unref();
     child.on('error', () => {clearTimeout(timer);reject(new Error('T3 CLI unavailable'));});
     child.stdin.on('error', () => {});
@@ -26,9 +29,13 @@ export function runT3(command, args, message, {timeoutMs}={}) {
     });
     child.on('close', code => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort',onAbort);
       if (failed) return reject(new Error('T3 CLI response exceeded limit'));
       try { resolve({code,data:JSON.parse(output)}); }
-      catch { reject(new Error('T3 CLI response unavailable')); }
+      catch {
+        if (args[0] === 'auth' && args[2] === 'revoke' && code === 0) resolve({code,data:null});
+        else reject(new Error('T3 CLI response unavailable'));
+      }
     });
     child.stdin.end(message ?? '');
   });
@@ -42,13 +49,6 @@ function isTerminal(status) {
   return TERMINAL.has(status);
 }
 
-function laterWorkStarted(record, thread) {
-  const latest = thread?.latestRunId ?? null;
-  if (record.turnId) return Boolean(latest && latest !== record.turnId);
-  if (!latest || record.baselineLatestRunId == null) return false;
-  return latest !== record.baselineLatestRunId;
-}
-
 function harvestFromMessages(record, messages) {
   if (!Array.isArray(messages)) return { matches: 0 };
   const matches = messages.filter(m => m.role === 'user' && m.text === record.wireMessage);
@@ -58,41 +58,30 @@ function harvestFromMessages(record, messages) {
   return { matches: 1, runId, answer: typeof answer === 'string' && answer.trim() ? answer : null };
 }
 
-function failWithoutReply(record) {
-  record.status = 'failed';
-  record.error = { code: 'NO_FINAL_REPLY' };
-  return record;
-}
-
-function rememberReleased(list, prior) {
-  if (!prior?.requestId || prior.status !== 'completed' || typeof prior.answer !== 'string' || !prior.answer.trim()) return;
-  if (list.some(item => item.requestId === prior.requestId)) return;
-  list.push({ requestId: prior.requestId, status: prior.status, answer: prior.answer });
-}
-
 // Marker identity only. A later run's reply never becomes this request's answer.
 export function applyT3Snapshot(record, data) {
   if (!data?.thread || data.thread.threadId !== record.threadId) return record;
   const harvest = harvestFromMessages(record, data.messages);
-  if (harvest.matches === 1) record.turnId = harvest.runId;
-  if (harvest.matches === 1 && harvest.answer) {
+  if (harvest.matches === 1 && (!record.turnId || record.turnId === harvest.runId)) record.turnId = harvest.runId;
+  const identityMatches = harvest.matches === 1 && (!record.turnId || record.turnId === harvest.runId);
+  const latestIsThisRun = data.thread.latestRunId === record.turnId;
+  const runIsIdle = !data.thread.activeRunId;
+  const runIsComplete = data.thread.status === 'completed' && latestIsThisRun && runIsIdle;
+  if (identityMatches && harvest.answer && runIsComplete) {
     record.status = 'completed';
     record.answer = harvest.answer;
     record.error = null;
     return record;
   }
-  const latest = data.thread.latestRunId ?? null;
-  const active = data.thread.activeRunId ?? null;
-  const state = data.thread.status;
-  if (harvest.matches === 1 && latest === harvest.runId && !active) {
-    if (['failed', 'interrupted', 'cancelled'].includes(state)) {
-      record.status = state === 'cancelled' ? 'interrupted' : state;
+  if (identityMatches && latestIsThisRun && runIsIdle) {
+    if (['failed', 'interrupted', 'cancelled'].includes(data.thread.status)) {
+      record.status = data.thread.status === 'cancelled' ? 'interrupted' : data.thread.status;
       record.error = { code: record.status === 'failed' ? 'TURN_FAILED' : 'TURN_INTERRUPTED' };
       return record;
     }
-    if (state === 'completed') return failWithoutReply(record);
+    // A completed thread without a matching final answer is still ambiguous.
+    // Keep it observable and recoverable instead of inventing a failure.
   }
-  if (laterWorkStarted(record, data.thread)) return failWithoutReply(record);
   return record;
 }
 
@@ -110,32 +99,57 @@ export async function inspectT3Target(options, {run=runT3}={}) {
   } catch { return { state: 'unknown' }; }
 }
 
-export async function requestT3Status(options, {run=runT3}={}) {
-  const record=await readRecord(options.stateDir,options.requestId);
-  if (record.agent!=='t3') throw new Error('Request belongs to another transport');
-  if (!options.refresh || !record.submitted || isTerminal(record.status)) return record;
-  try {
-    const data = await showThread(run, record, { timeoutMs: options.timeoutMs ?? 15000 });
-    if (!data || !Array.isArray(data.messages)) return record;
-    applyT3Snapshot(record, data);
-    await saveRecord(options.stateDir, record);
-  } catch { /* Unknown remains unknown; no resend. */ }
+const readProjection = createT3Reader({run:runT3});
+
+export function applyT3Projection(record, projection) {
+  if (projection?.thread?.id !== record.threadId) return record;
+  const matches = projection.messages.filter(m => m.role === 'user' && m.text === record.wireMessage);
+  if (!record.turnId && matches.length === 1 && matches[0].runId) record.turnId = matches[0].runId;
+  if (!record.turnId) { record.observationState = 'unknown'; return record; }
+  if (matches.length && !matches.some(m => m.runId === record.turnId)) {
+    record.observationState = 'identity_conflict'; return record;
+  }
+  const run = projection.runs.find(run => run.id === record.turnId && run.threadId === record.threadId);
+  if (!run) { record.observationState = 'unknown'; return record; }
+  const ended = Number.isFinite(Date.parse(run.completedAt));
+  if (ended && ['failed','interrupted','cancelled','rolled_back'].includes(run.status)) {
+    record.status = run.status === 'failed' ? 'failed' : 'interrupted';
+    record.error = {code:record.status === 'failed' ? 'TURN_FAILED' : 'TURN_INTERRUPTED'};
+  } else if (ended && run.status === 'completed') {
+    const answer = projection.messages.filter(m => m.runId === run.id && m.threadId === record.threadId && m.role === 'assistant' && m.streaming === false)
+      .sort((a,b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).at(-1)?.text;
+    if (typeof answer === 'string' && answer.trim()) {
+      record.status = 'completed'; record.answer = answer; record.error = null;
+    } else { record.status = 'unconfirmed'; record.observationState = 'awaiting_final'; return record; }
+  } else {
+    record.status = ['queued','preparing','starting'].includes(run.status) ? 'queued' : ['running','waiting'].includes(run.status) ? run.status : 'unconfirmed';
+    if (record.status !== 'unconfirmed') record.error = record.status === 'waiting' ? {code:'HOST_INTERACTION_REQUIRED'} : null;
+  }
+  record.observationState = record.status;
   return record;
 }
 
-async function observeUntilTerminal(stateDir, record, run, { pollMs, timeoutMs } = {}) {
-  const interval = Number.isSafeInteger(pollMs) && pollMs >= 0 ? pollMs : 1000;
-  while (!isTerminal(record.status)) {
-    try {
-      const data = await showThread(run, record, { timeoutMs: timeoutMs ?? 15000 });
-      if (data && Array.isArray(data.messages)) {
-        applyT3Snapshot(record, data);
-        await saveRecord(stateDir, record);
-      }
-    } catch { /* Keep observing; a failed show is not a terminal state. */ }
-    if (isTerminal(record.status)) break;
-    if (interval > 0) await delay(interval);
-  }
+export async function requestT3Status(options, {run=runT3, projectionReader = run === runT3 ? readProjection : null}={}) {
+  const record=await readRecord(options.stateDir,options.requestId);
+  if (record.agent!=='t3') throw new Error('Request belongs to another transport');
+  const recoverable = record.status === 'failed' && record.error?.code === 'NO_FINAL_REPLY';
+  if (!options.refresh || !record.submitted || (isTerminal(record.status) && !recoverable)) return record;
+  record.lastObservedAt = new Date().toISOString();
+  const deadline = Date.now() + (options.timeoutMs ?? 15000);
+  try {
+    let projection;
+    if (projectionReader) {
+      try { projection = await projectionReader(record,{timeoutMs:options.timeoutMs ?? 15000}); }
+      catch { record.lastObservationError = 'RUN_QUERY_UNAVAILABLE'; }
+    }
+    if (projection) applyT3Projection(record, projection);
+    else if (Date.now() < deadline) {
+      const data = await showThread(run, record, { timeoutMs: deadline - Date.now() });
+      if (data && Array.isArray(data.messages)) applyT3Snapshot(record, data);
+    }
+    if (projection) delete record.lastObservationError;
+  } catch { record.lastObservationError = 'STATUS_QUERY_UNAVAILABLE'; }
+  await saveRecord(options.stateDir, record);
   return record;
 }
 
@@ -150,7 +164,9 @@ function applySendReceipt(record, data, threadId) {
     record.status = data.status === 'cancelled' ? 'interrupted' : data.status;
     record.error = { code: record.status === 'failed' ? 'TURN_FAILED' : 'TURN_INTERRUPTED' };
   } else {
-    record.error = { code: 'COMPLETION_UNCONFIRMED' };
+    record.status = data.delivery === 'queued' ? 'queued' : 'submitted';
+    record.delivery = data.delivery;
+    record.error = null;
   }
 }
 
@@ -166,59 +182,32 @@ export async function sendT3(input, {run=runT3}={}) {
     if(record.inputHash!==inputHash || record.agent!=='t3') throw new Error('Request ID belongs to different input');
     return {...record,deduplicated:true,releasedPriors:[]};
   }
-  const gate={...record,threadId:`t3-${threadId}`};
-  const releasedPriors=[];
-  const pollMs=input.pollMs;
   const timeoutMs=input.timeoutMs ?? 15000;
-  for (;;) {
-    let release;
-    try {
-      release=await lockThread(input.stateDir,gate.threadId,performance.now()+30000);
-      if(!release) throw new Error('T3 target busy');
-      const prior=await resolveThreadRequest(input.stateDir,gate,id=>requestT3Status({stateDir:input.stateDir,requestId:id,refresh:true,timeoutMs},{run}));
-      rememberReleased(releasedPriors, prior.old);
-      if(prior.old?.submitted && !isTerminal(prior.old.status)) {
-        await release();
-        release=undefined;
-        await observeUntilTerminal(input.stateDir, prior.old, run, { pollMs, timeoutMs });
-        rememberReleased(releasedPriors, prior.old);
-        continue;
-      }
-      const target=await inspectT3Target({...input,threadId,timeoutMs},{run});
-      if(target.state!=='readable') {
-        record.status='blocked';record.error={code:target.state==='archived'?'TARGET_ARCHIVED':'TARGET_UNKNOWN'};
-        await saveRecord(input.stateDir,record);
-        return {...record,releasedPriors};
-      }
-      record.baselineLatestRunId = target.latestRunId ?? null;
-      await claimThreadRequest(input.stateDir,gate);
-      record.submitted=true;record.status='unconfirmed';await saveRecord(input.stateDir,record);
-      try {
-        const {data}=await run(input.t3Command,cliArgs(input,['thread','send',threadId,'-','--wait','--json']),record.wireMessage);
-        applySendReceipt(record, data, threadId);
-      } catch {
-        record.status=record.submitted?'unconfirmed':'blocked';
-        record.error={code:record.submitted?'COMPLETION_UNCONFIRMED':'NOT_SUBMITTED'};
-      }
+  const deadline = Date.now() + timeoutMs;
+  try {
+    const target=await inspectT3Target({...input,threadId,timeoutMs},{run});
+    if(target.state!=='readable') {
+      record.status='blocked';record.error={code:target.state==='archived'?'TARGET_ARCHIVED':'TARGET_UNKNOWN'};
       await saveRecord(input.stateDir,record);
-      await release();
-      release=undefined;
-      if (!isTerminal(record.status) && record.submitted) {
-        await observeUntilTerminal(input.stateDir, record, run, { pollMs, timeoutMs });
-      }
-      return {...record,releasedPriors};
-    } catch (error) {
-      if (record.submitted && !isTerminal(record.status)) {
-        if (release) { await release(); release=undefined; }
-        await observeUntilTerminal(input.stateDir, record, run, { pollMs, timeoutMs });
-        if (isTerminal(record.status)) return {...record,releasedPriors};
-      }
-      record.status=record.submitted?'unconfirmed':'blocked';
-      record.error={code:record.submitted?'COMPLETION_UNCONFIRMED':'NOT_SUBMITTED', ...(error?.message ? { message: error.message } : {})};
-      await saveRecord(input.stateDir,record);
-      return {...record,releasedPriors};
-    } finally {
-      if (release) await release();
+      return {...record,releasedPriors:[]};
     }
+    input.signal?.throwIfAborted();
+    if (Date.now() >= deadline) throw new Error('T3 submission deadline exceeded');
+    record.baselineLatestRunId = target.latestRunId ?? null;
+    record.submitted=true;record.status='submitted';await saveRecord(input.stateDir,record);
+    try {
+      const {data}=await run(input.t3Command,cliArgs(input,['thread','send',threadId,'-','--json']),record.wireMessage,{timeoutMs:Math.max(1,deadline-Date.now()),signal:input.signal});
+      applySendReceipt(record, data, threadId);
+    } catch {
+      record.status='unconfirmed';
+      record.error={code:'COMPLETION_UNCONFIRMED'};
+    }
+    await saveRecord(input.stateDir,record);
+    return {...record,releasedPriors:[]};
+  } catch (error) {
+    record.status=record.submitted?'unconfirmed':'blocked';
+    record.error={code:record.submitted?'COMPLETION_UNCONFIRMED':'NOT_SUBMITTED'};
+    await saveRecord(input.stateDir,record);
+    return {...record,releasedPriors:[]};
   }
 }

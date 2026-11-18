@@ -3,7 +3,7 @@ import path from 'node:path';
 import { digest, writeJournal } from './feishu-core.mjs';
 
 export const feedbackEmoji = { accepted: 'OnIt', completed: 'DONE', attention: 'CrossMark' };
-export const feedbackOutcome = record => record.codexStatus === 'completed' && record.replyMessageId
+export const feedbackOutcome = record => record.codexStatus === 'completed' && (record.deliveryVersion === 2 ? record.answerMessageId : record.replyMessageId)
   ? 'completed' : 'attention';
 
 // Separate from task journals: the receiver never awaits network marker work.
@@ -21,17 +21,7 @@ export function createProcessingFeedback({ stateDir, appId, transport, log = () 
 
   async function converge(state, save) {
     const emoji = feedbackEmoji[state.desired];
-    for (const [kind, attempt] of Object.entries(state.attempts)) {
-      if (attempt.status !== 'unknown') continue;
-      // An absent/ambiguous read never authorizes another write.
-      const matches = (await transport.list(state.messageId, feedbackEmoji[kind]))
-        .filter(item => own(item, feedbackEmoji[kind]));
-      if (attempt.baselineEmpty && matches.length === 1) {
-        attempt.id = matches[0].reaction_id;
-        attempt.status = 'created';
-        await save();
-      }
-    }
+    if (state.attempts[state.desired]?.status === 'rejected') delete state.attempts[state.desired];
     if (!state.attempts[state.desired]) {
       const existing = (await transport.list(state.messageId, emoji)).filter(item => own(item, emoji));
       // Preexisting bot reactions belong to someone else; leave them untouched.
@@ -41,12 +31,33 @@ export function createProcessingFeedback({ stateDir, appId, transport, log = () 
       } else {
         const attempt = state.attempts[state.desired] = { status:'unknown', baselineEmpty:true };
         await save(); // Durable before a potentially ambiguous remote write.
-        const result = await transport.create(state.messageId, emoji);
+        let result;
+        try { result = await transport.create(state.messageId, emoji); }
+        catch(error) {
+          if (error.notSent === true) { attempt.status='rejected'; await save(); }
+          throw error;
+        }
         if (!result?.reaction_id || !own(result, emoji)) throw new Error('Unknown reaction receipt');
         attempt.id = result.reaction_id;
         attempt.status = 'created';
         await save();
       }
+    }
+    // Current feedback is independent of stale markers: an old OnIt read
+    // failure must not prevent DONE/CrossMark from being shown.
+    for (const [kind, attempt] of Object.entries(state.attempts)) {
+      if (!['unknown','delete-unknown'].includes(attempt.status)) continue;
+      try {
+        const matches = (await transport.list(state.messageId, feedbackEmoji[kind]))
+          .filter(item => own(item, feedbackEmoji[kind]));
+        if (attempt.status === 'delete-unknown') {
+          if (!matches.some(item => item.reaction_id === attempt.id)) attempt.status = 'deleted';
+        } else if (attempt.baselineEmpty && matches.length === 1) {
+          attempt.id = matches[0].reaction_id;
+          attempt.status = 'created';
+        }
+        await save();
+      } catch (error) { warning(state.requestId,error); }
     }
     const desired = state.attempts[state.desired];
     if (!['created','preexisting'].includes(desired?.status)) return;
@@ -61,7 +72,7 @@ export function createProcessingFeedback({ stateDir, appId, transport, log = () 
   }
 
   function update(record, desired) {
-    const snapshot = { requestId:record.requestId, messageId:record.messageId };
+    const snapshot = { requestId:record.requestId, messageId:record.messageId, revision:record.feedbackRevision ?? 0 };
     const previous = chains.get(snapshot.requestId) ?? Promise.resolve();
     const next = previous.then(async () => {
       await mkdir(directory, {recursive:true, mode:0o700});
@@ -70,14 +81,19 @@ export function createProcessingFeedback({ stateDir, appId, transport, log = () 
       try { state = JSON.parse(await readFile(file, 'utf8')); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       state ??= { version:1, ...snapshot, desired:'accepted', attempts:{} };
+      if ((state.revision ?? 0) > snapshot.revision) return;
+      state.revision = snapshot.revision;
       if (state.desired === 'accepted' || desired !== 'accepted') state.desired = desired;
       const save = () => writeJournal(file, state);
       await save();
       await converge(state, save);
+      state.delivered = state.attempts.accepted?.status === 'created' ||
+        state.attempts.accepted?.status === 'preexisting';
       if (!Object.values(state.attempts).some(attempt=>['unknown','delete-unknown'].includes(attempt.status))) {
         delete state.lastWarning;
         await save();
       }
+      return { delivered: state.delivered === true };
     }).catch(async error => {
       warning(snapshot.requestId, error);
       try {
@@ -91,7 +107,8 @@ export function createProcessingFeedback({ stateDir, appId, transport, log = () 
       } catch { /* Local diagnostic failure must not affect the request. */ }
     });
     chains.set(snapshot.requestId, next);
-    void next.finally(() => { if (chains.get(snapshot.requestId) === next) chains.delete(snapshot.requestId); });
+    return next.finally(() => { if (chains.get(snapshot.requestId) === next) chains.delete(snapshot.requestId); })
+      .then(result => ({ delivered: result?.delivered === true })).catch(() => ({ delivered: false }));
   }
 
   return {

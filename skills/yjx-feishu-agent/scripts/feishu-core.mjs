@@ -1,36 +1,22 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { validateThreadId } from './codex.mjs';
 import { sendAgent, validateAgentTargets } from './agent-targets.mjs';
 import { bodyText, decodeBody } from './feishu-content.mjs';
 import { recordAdmission, safeFailure } from './message-diagnostics.mjs';
+import { createDeliveryJobs, bounded } from './delivery-jobs.mjs';
+import { requestT3Status } from './t3.mjs';
 
 export const digest = (text) => createHash('sha256').update(text).digest('hex');
 
-export function resultText(result, requestId) {
+export function resultText(result, _requestId) {
   if (result.status === 'completed') return result.answer;
-  if (result.status==='interrupted') return `本次 Codex 执行已中断，未取得最终回复；不会自动重跑。请在原会话核查。请求：${requestId}`;
-  if (result.status==='failed') return `本次 Codex 执行已失败，未取得最终回复；请在原会话查看原因。请求：${requestId}`;
-  if (result.waitTimedOut && result.submitted) {
-    const duration=Number.isSafeInteger(result.timeoutMs) ? `（${Number((result.timeoutMs/60000).toFixed(2))} 分钟）` : '';
-    return `等待 Codex 已超时${duration}，尚未取得最终回复。${result.interruptRequested
-      ? '已请求中断本次执行，中断结果请在 Codex 核对。'
-      : '任务可能仍在 Codex 中处理，请查看进度。'}不要重复发送同一任务。请求：${requestId}`;
+  if (['failed', 'interrupted', 'blocked'].includes(result.status) || result.submitted === false) {
+    return '这次没答上。';
   }
-  if (!result.submitted && result.error?.code === 'TARGET_ARCHIVED') {
-    return `绑定的 Codex 聊天已归档，本次消息未提交。请在 Desktop 恢复聊天后发送新消息，或在本机明确重新绑定。请求：${requestId}`;
-  }
-  if (!result.submitted && ['TARGET_UNAVAILABLE','TARGET_UNKNOWN'].includes(result.error?.code)) {
-    return `暂时无法确认绑定的 Codex 聊天可用，本次消息未提交。请在本机检查会话和绑定；不能据此判断聊天已删除。请求：${requestId}`;
-  }
-  if (!result.submitted && result.error?.code === 'CODEX_NOT_FOUND') {
-    return `本机找不到可用的 Codex 程序，本次消息未提交。请在本机检查 Desktop 安装或桥接程序配置，修复后重新发送。请求：${requestId}`;
-  }
-  if (!result.submitted && result.error?.code === 'NOT_SUBMITTED') {
-    return `本次消息未提交给 Codex，未产生执行或重复发送。可以根据提示修正后重新发送。请求：${requestId}`;
-  }
-  return `本次请求状态：${result.status}。请在本机查看请求 ${requestId}，不要重复发送同一任务。`;
+  if (result.status === 'waiting') return '还在等补充信息或授权，有结果会再回。可以继续发新消息。';
+  return '还在处理，有结果会再回。可以继续发新消息。';
 }
 
 export function validateBindings(config) {
@@ -49,6 +35,12 @@ export function validateBindings(config) {
     if (binding.threadId !== undefined) validateThreadId(binding.threadId);
     if (binding.quoteRouting !== undefined && typeof binding.quoteRouting !== 'boolean') throw new Error('quoteRouting must be boolean');
     if (binding.requireMention !== undefined && typeof binding.requireMention !== 'boolean') throw new Error('requireMention must be boolean');
+    if (binding.requireFollowUp !== undefined && typeof binding.requireFollowUp !== 'boolean') throw new Error('requireFollowUp must be boolean');
+    if (binding.legacyOutboundDirs !== undefined && (!Array.isArray(binding.legacyOutboundDirs) ||
+      binding.legacyOutboundDirs.some(directory=>typeof directory!=='string' || !path.isAbsolute(directory)))) throw new Error('Invalid legacy outbound directories');
+    if (binding.oneWayExceptions !== undefined && (!binding.oneWayExceptions || typeof binding.oneWayExceptions !== 'object' ||
+      Array.isArray(binding.oneWayExceptions) || Object.entries(binding.oneWayExceptions).some(([id,reason]) =>
+        !/^[a-zA-Z0-9._-]{1,100}$/.test(id) || typeof reason !== 'string' || !reason.trim()))) throw new Error('Invalid one-way exceptions');
     if (!Array.isArray(binding.users) || !binding.users.length || binding.users.some((id) => !/^ou_[\w]+$/.test(id))) {
       throw new Error('Each group requires an explicit user allowlist');
     }
@@ -88,7 +80,7 @@ export function withPrefix(text,prefix) {
 }
 
 export async function writeJournal(file, record) {
-  const temporary = `${file}.tmp`;
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temporary, 'w', 0o600);
   try { await handle.writeFile(JSON.stringify(record, null, 2)); await handle.sync(); }
   finally { await handle.close(); }
@@ -98,7 +90,7 @@ export async function writeJournal(file, record) {
 
 const PLACEHOLDER_STATUS = new Set(['blocked', 'unconfirmed', 'failed', 'interrupted']);
 
-export async function deliverHarvestedFollowUp({ directory, requestId, answer, reply, prepareReply }) {
+export async function deliverHarvestedFollowUp({ directory, requestId, answer, reply, prepareReply, confirmReply = async () => {} }) {
   if (typeof answer !== 'string' || !answer.trim() || typeof requestId !== 'string') return null;
   const file = path.join(directory, `${requestId}.json`);
   let record;
@@ -109,12 +101,14 @@ export async function deliverHarvestedFollowUp({ directory, requestId, answer, r
   record.answerFollowUpAttempted = true;
   await writeJournal(file, record);
   const rendered = prepareReply(answer);
-  const sent = await reply(record.messageId, answer, requestId, rendered);
+  const sent = await reply(record.messageId, answer, `${requestId}:answer`, rendered);
   if (sent?.message_id) {
+    if (sent.message_id === record.replyMessageId) throw new Error('Follow-up reused placeholder receipt');
     record.answerFollowUpMessageId = sent.message_id;
     record.codexStatus = 'completed';
     record.answer = answer;
     await writeJournal(file, record);
+    await confirmReply({binding:{chatId:record.chatId}},sent,record);
   }
   return sent;
 }
@@ -124,20 +118,24 @@ export async function deliverHarvestedFollowUp({ directory, requestId, answer, r
 export function createReceiver({ appId, botId, config, stateDir, reply, send = sendAgent, context = async item => item.text,
   admitRoute = async (item,persist) => persist({threadId:item.binding.threadId,autoUnarchive:false}),
   confirmReply = async () => {}, prepareReply = answer => ({msgType:'text',content:{text:answer},mode:'text'}),
-  feedback = { update() {} }, log = () => {} }) {
+  feedback = { update() {} }, log = () => {}, refresh = requestT3Status,
+  operationMs = 30000, stopMs = 10000, now = Date.now }) {
   const directory = path.join(stateDir, 'feishu', digest(appId), 'messages');
   const queue = [];
   const active = new Map();
   const concurrency = config.maxConcurrentThreads ?? 2;
   let accepting = true;
+  const shutdown = new AbortController();
   const queueKey=job => job.record.agentTarget
     ? `${job.record.agentTarget.kind}:${job.record.agentTarget.threadId}`
     : job.record.threadId ?? job.record.requestId;
   let admission = Promise.resolve();
   let pendingAdmissions = 0;
+  const jobs = createDeliveryJobs({directory, stateDir, appId, reply, prepareReply, confirmReply, feedback, log, refresh, operationMs, now});
   async function processJob({record,file,item}) {
     let durableAnswerReceipt = false;
     let stage = 'journal';
+    let background = false;
     try {
       record.status = 'processing';
       await writeJournal(file, record);
@@ -145,14 +143,16 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       await writeJournal(file,record);
       const routeNotice=record.routeMode==='binding-fallback'
         ? '引用消息的来源未登记，本次已回退到本群绑定的 Codex 会话处理。' : null;
-      const prepared = record.routeError ? null : await context(item);
+      const prepared = record.routeError ? null : await bounded(() => context(item), operationMs, shutdown.signal);
       const text = typeof prepared==='string' ? prepared : prepared?.text;
       stage = 'codex'; record.stage = stage;
       await writeJournal(file,record);
-      const result = record.routeError ? {status:'blocked',submitted:false} : await send({ threadId: record.threadId, message: text, requestId: record.requestId,
+      const sendInput = { threadId: record.threadId, message: text, requestId: record.requestId,
         agentTarget:record.agentTarget, t3Command:config.t3Command,t3BaseDir:config.t3BaseDir,
         autoUnarchive:record.autoUnarchive, stateDir, codex: config.codex, cwd: config.cwd,
-        waitMode:'state',timeoutMs:record.codexRpcTimeoutMs });
+        waitMode:'state',timeoutMs:record.codexRpcTimeoutMs,signal:shutdown.signal };
+      const result = record.routeError ? {status:'blocked',submitted:false}
+        : await bounded(() => send(sendInput), record.agentTarget?.kind === 't3' ? operationMs : Infinity, shutdown.signal);
       if (Array.isArray(result.releasedPriors)) {
         for (const prior of result.releasedPriors) {
           if (prior.status === 'completed' && prior.answer) {
@@ -160,6 +160,11 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
             catch { log({ type: 'follow-up-failed', requestId: prior.requestId }); }
           }
         }
+      }
+      if (record.agentTarget?.kind === 't3') {
+        background = true;
+        await jobs.track(record, item, {...result, agent:'t3'});
+        return;
       }
       record.codexStatus = result.status;
       record.codexSubmitted = typeof result.submitted === 'boolean' ? result.submitted : null;
@@ -179,7 +184,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       record.replyPayloadDigest = digest(JSON.stringify(rendered.content));
       record.replyAttempted = true;
       await writeJournal(file, record); // A lost API response must not trigger another reply.
-      const sent = await reply(record.messageId, answer, record.requestId, rendered);
+      const sent = await bounded(() => reply(record.messageId, answer, record.requestId, rendered), operationMs);
       if (sent?.message_id) {
         record.replyMessageId = sent.message_id;
         await writeJournal(file,record);
@@ -195,6 +200,12 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       await writeJournal(file, record);
       log({ type: 'request', requestId: record.requestId, status: record.status, codexStatus: result.status });
     } catch (error) {
+      if (record.agentTarget?.kind === 't3') {
+        background = true;
+        const submitted = stage === 'codex';
+        await jobs.track(record, item, {agent:'t3', status:submitted ? 'unconfirmed' : 'blocked', submitted, error:{code:submitted ? 'COMPLETION_UNCONFIRMED' : 'NOT_SUBMITTED'}});
+        return;
+      }
       record.status = 'unconfirmed';
       record.failure = safeFailure(error,stage);
       try {
@@ -207,16 +218,16 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
         record.failureReplyAttempted = true;
         try {
           await writeJournal(file, record);
-              const failureText=`本次请求处理异常，请在本机检查，暂勿重复提交。请求：${record.requestId}`;
+              const failureText='这次没答上。';
               const rendered=prepareReply(failureText);
               record.failureReplyType=rendered.msgType;
-              const sent = await reply(record.messageId,failureText,record.requestId,rendered);
+              const sent = await bounded(() => reply(record.messageId,failureText,record.requestId,rendered), operationMs);
           if (sent?.message_id) { record.failureReplyMessageId = sent.message_id; await writeJournal(file, record); }
         } catch { /* An unknown receipt remains unknown; no retries. */ }
       }
       log({ type: 'request', requestId: record.requestId, status: 'unconfirmed', failure:record.failure });
     } finally {
-      feedback.update(record, record.codexStatus === 'completed' && durableAnswerReceipt ? 'completed' : 'attention');
+      if (!background) feedback.update(record, record.codexStatus === 'completed' && durableAnswerReceipt ? 'completed' : 'attention');
     }
   }
 
@@ -225,7 +236,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       const index=queue.findIndex(job => !active.has(queueKey(job)));
       if(index<0) break;
       const [job]=queue.splice(index,1),key=queueKey(job);
-      const task=processJob(job).finally(()=>{active.delete(key);pump();});
+      const task=processJob(job).catch(error => {log({type:'request-failed',requestId:job.record.requestId,failure:safeFailure(error,'request')});}).finally(()=>{active.delete(key);pump();});
       active.set(key,task);
     }
   }
@@ -258,6 +269,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
     await admitRoute(item, async route => {
       record.threadId = route.threadId ?? null;
       if (route.agentTarget) record.agentTarget = structuredClone(route.agentTarget);
+      if (record.agentTarget?.kind === 't3') record.deliveryVersion = 2;
       record.autoUnarchive = route.autoUnarchive === true;
       if (route.error) record.routeError = route.error;
       if (route.code) record.routeCode = route.code;
@@ -265,16 +277,32 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
       if (route.quotedMessageId) record.quotedMessageId = route.quotedMessageId;
       await writeJournal(file, record);
     });
-    feedback.update(record, 'accepted');
+    if (record.agentTarget?.kind === 't3') jobs.accept(record, item);
+    else {
+      const pending = feedback.update(record, 'accepted');
+      if (pending?.catch) pending.catch(() => {});
+    }
     queue.push({ record, file, item });
     pump();
   }
 
+  async function rejectFeedback(data, code) {
+    const item = messageDecision(data, config, botId).item;
+    if (!item) return;
+    try {
+      await jobs.reject(item, code);
+    } catch { log({type:'rejection-feedback-pending',messageId:item.messageId,code}); }
+  }
+
   return {
     handle(data) {
-      if (!accepting) return Promise.reject(new Error('Receiver is stopping'));
+      if (!accepting) {
+        void rejectFeedback(data,'RECEIVER_STOPPING');
+        return Promise.reject(new Error('Receiver is stopping'));
+      }
       if (pendingAdmissions >= 32) {
         log({type:'admission-rejected',code:'ADMISSION_QUEUE_FULL'});
+        void rejectFeedback(data,'ADMISSION_QUEUE_FULL');
         return Promise.reject(new Error('Receiver admission queue is full'));
       }
       pendingAdmissions += 1;
@@ -284,15 +312,40 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
           const code=error.code==='QUEUE_FULL' ? 'QUEUE_FULL' : 'ADMISSION_FAILED';
           try { await recordAdmission({stateDir,appId},decision.item.messageId,code); } catch { /* Best effort. */ }
           log({type:'admission-rejected',messageId:decision.item.messageId,code});
+          await rejectFeedback(data,code);
         }
         throw error;
       });
       admission = result.catch(() => {});
       return result.finally(() => { pendingAdmissions -= 1; });
     },
+    tick: jobs.tick,
+    recover: jobs.recover,
+    async drain() {
+      await admission;
+      while (active.size) await Promise.all([...active.values()]);
+      await jobs.drain();
+    },
     async stop() {
-      accepting = false; await admission;
-      while(active.size) await Promise.all([...active.values()]);
+      accepting = false;
+      try {
+        await bounded(async () => {
+          await admission;
+          while (active.size || queue.length) {
+            pump();
+            if (active.size) await Promise.all([...active.values()]);
+          }
+        }, stopMs);
+      } catch {
+        shutdown.abort();
+        await admission;
+        while (active.size || queue.length) {
+          pump();
+          if (active.size) await Promise.all([...active.values()]);
+        }
+        log({type:'stop-pending',pending:active.size});
+      }
+      await jobs.stop();
     },
     async unsettled() {
       let files;

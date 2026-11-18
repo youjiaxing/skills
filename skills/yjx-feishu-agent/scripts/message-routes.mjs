@@ -53,6 +53,10 @@ export function createMessageRouter(options) {
     async admit(item, saveAdmission) {
       const persist=choice => {
         const target=targetFor(item.binding,choice.threadId);
+        if(item.binding.requireFollowUp && choice.threadId && !target) {
+          return saveAdmission({code:'SOURCE_NOT_REGISTERED',routeMode:'blocked',
+            error:'这条通知的来源暂不可用，本次没有提交任务；请在本机核查来源登记。'});
+        }
         return saveAdmission({...choice,...(target ? {agentTarget:target}: {})});
       };
       const useDefault=routeMode => item.binding.threadId

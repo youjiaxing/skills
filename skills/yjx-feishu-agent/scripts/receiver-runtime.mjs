@@ -78,6 +78,8 @@ export async function receiverStatus(appId, { home, alive = processAlive } = {})
   const matching = runtime?.pid === owner.pid && runtime?.token === owner.token;
   const fresh = matching && Date.now() - Date.parse(runtime.updatedAt) < 15000;
   return { state: fresh && living === true ? 'running' : 'unknown', pid: owner.pid,
+    ...(matching && runtime.stateDir ? {stateDir:runtime.stateDir} : {}),
+    ...(matching && runtime.configDigest ? {configDigest:runtime.configDigest} : {}),
     connection: matching ? runtime.connection : 'unknown',
     updatedAt: matching ? runtime.updatedAt : null,
     runtimeDirectory: paths.runtime, ...diagnostic };

@@ -9,7 +9,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { defaultStateDir } from './codex.mjs';
 import { loadCredentials } from './feishu-credentials.mjs';
 import { receiverPaths, receiverStatus, recoverReceiverLock, readJson, readRuntimeSnapshot, atomicJson, processAlive } from './receiver-runtime.mjs';
+import { outboundFollowUpSummary } from './outbound-followup.mjs';
 import { withReceiverControl, recoveryEnabled, setRecovery } from './receiver-recovery.mjs';
+import { deliverySummary } from './message-diagnostics.mjs';
 
 const execute = promisify(execFile);
 const script = fileURLToPath(new URL('./feishu.mjs', import.meta.url));
@@ -176,7 +178,7 @@ export async function main(argv) {
   const status = await receiverStatus(appId);
   if (command === 'status') {
     const failure = await readRuntimeSnapshot(path.join(paths.runtime, 'last-failure.json'));
-    print({ ...status, recovery: { enabled: await recoveryEnabled(paths, stateDir),
+    print({ ...status, delivery:await deliverySummary({stateDir,appId}),outboundFollowUp:await outboundFollowUpSummary({stateDir,appId}), recovery: { enabled: await recoveryEnabled(paths, stateDir),
       lastFailure: failure.value, failureState: failure.state } });
     return;
   }

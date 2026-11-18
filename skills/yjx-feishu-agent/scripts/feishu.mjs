@@ -13,6 +13,8 @@ import { createReceiver, digest, resultText, validateBindings, writeJournal } fr
 import { receiverPaths, readJson, atomicJson } from './receiver-runtime.mjs';
 import { readTransport, resolveContext } from './feishu-context.mjs';
 import { createMessageRouter } from './message-routes.mjs';
+import { configurationDigest } from './push-contract.mjs';
+import { createOutboundFollowUps } from './outbound-followup.mjs';
 import { createProcessingFeedback } from './processing-feedback.mjs';
 import { reactionTransport } from './reaction-transport.mjs';
 import { createFeishuRateLimiter, parseRetryAfterHeaders } from './feishu-rate-limit.mjs';
@@ -51,6 +53,7 @@ async function api(operation) {
       const failure = new Error(`Feishu API rejected request (code ${code})`);
       failure.safe = true;
       failure.apiCode = code;
+      failure.notSent = true;
       throw failure;
     }
     return response;
@@ -202,7 +205,7 @@ export async function main(argv) {
   const publish = async (connection) => {
     const updatedAt = new Date().toISOString();
     await atomicJson(path.join(runtimePaths.runtime, 'status.json'), {
-      pid: process.pid, token: owner.token, stateDir, connection, updatedAt,
+      pid: process.pid, token: owner.token, stateDir, configDigest:configurationDigest(config), connection, updatedAt,
       ...(stopReason ? {stopReason} : {}),
       ...(lastFailure ? { failure: lastFailure } : {}),
     });
@@ -220,6 +223,12 @@ export async function main(argv) {
   };
   const rateLimiter = createFeishuRateLimiter({ gateDir: stateDir, appId: credentials.appId });
   const router = createMessageRouter({stateDir,appId:credentials.appId});
+  const outboundFollowUps = createOutboundFollowUps({stateDir,appId:credentials.appId,log:print,
+    async reply(messageId,text,uuid) {
+      const response=await rateLimiter.execute(()=>api(()=>client.im.v1.message.reply({path:{message_id:messageId},
+        data:{msg_type:'text',content:JSON.stringify({text}),uuid}})),{maxOperationMs:25000,attemptHeadroomMs:15000});
+      return response.data;
+    }});
   const feedback = createProcessingFeedback({stateDir, appId:credentials.appId,
     transport:reactionTransport(credentials, { rateLimiter }), log:print});
   const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
@@ -230,7 +239,7 @@ export async function main(argv) {
       // One bounded text response; keep UUID stable for Feishu deduplication.
       const rendered = prepared ?? renderReply(answer.length > 12000 ? `${answer.slice(0, 12000)}\n\n（回答过长，完整内容请在 Codex 查看。）` : answer);
       const response = await rateLimiter.execute(() => api(() => client.im.v1.message.reply({ path: { message_id: messageId },
-        data: { msg_type: rendered.msgType, content: JSON.stringify(rendered.content), uuid: digest(requestId).slice(0, 32) } })));
+        data: { msg_type: rendered.msgType, content: JSON.stringify(rendered.content), uuid: digest(requestId).slice(0, 32) } })), {maxOperationMs:25000,attemptHeadroomMs:15000});
       return {message_id:response.data?.message_id,msg_type:rendered.msgType,body:{content:JSON.stringify(rendered.content)},renderMode:rendered.mode};
     },
   });
@@ -243,6 +252,7 @@ export async function main(argv) {
     await publish('starting');
     runtimeStage = 'feedback_recovery';
     await feedback.recover();
+    await receiver.recover();
     const unsettled = await receiver.unsettled();
     if (unsettled.length) print({ type: 'unsettled', requests: unsettled });
     runtimeStage = 'connection_start';
@@ -256,6 +266,7 @@ export async function main(argv) {
     while (!stopping) {
       runtimeStage = 'connection_status';
       const state = ws.getConnectionStatus().state;
+      if (state === 'connected') { receiver.tick();outboundFollowUps.tick(); }
       if (state !== previous) { print({ type: 'connection', state }); previous = state; }
       runtimeStage = 'heartbeat';
       if (Date.now() - heartbeatAt > 1000) { await publish(state); heartbeatAt = Date.now(); }
@@ -277,7 +288,7 @@ export async function main(argv) {
     throw error;
   } finally {
     ws.close({ force: true });
-    try { await receiver.stop(); await feedback.stop(); }
+    try { await receiver.stop(); await feedback.stop();await outboundFollowUps.stop(); }
     finally {
       try { await publish('stopped'); }
       finally {

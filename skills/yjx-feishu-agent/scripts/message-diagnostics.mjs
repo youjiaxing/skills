@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -23,14 +23,17 @@ async function read(file) {
 }
 export async function diagnoseMessage({stateDir,appId,messageId}) {
   const requestId=messageRequestId(appId,messageId),root=path.join(stateDir,'feishu',hash(appId));
-  const [task,admission,feedback,execution]=await Promise.all([
+  const [task,admission,feedback,execution,rejection]=await Promise.all([
     ...['messages','admissions','feedback'].map(name=>read(path.join(root,name,`${requestId}.json`))),
     read(path.join(stateDir,'requests',requestId,'record.json')),
+    read(path.join(root,'rejections',`${requestId}.json`)),
   ]);
   const record=task.value,marker=feedback.value;
   return {messageId,requestId,readOnly:true,
     admission:record ? {state:'accepted',createdAt:record.createdAt} : admission.value ?? {state:admission.state},
     task:record ? {status:record.status,stage:record.stage,failure:record.failure} : {state:task.state},
+    rejection:rejection.value ? {status:rejection.value.status,delivery:rejection.value.statusDelivery?.state,
+      failure:rejection.value.feedbackFailure} : {state:rejection.state},
     route:record ? {state:record.routeError ? 'blocked' : record.threadId ? 'selected' : 'unknown',
       code:record.routeCode,threadId:record.threadId} : {state:task.state},
     codex:record ? {status:record.codexStatus ?? 'not_observed',submitted:record.codexSubmitted ?? null,code:record.codexCode,
@@ -41,8 +44,35 @@ export async function diagnoseMessage({stateDir,appId,messageId}) {
       observationState:execution.value.observationState,lastObservedAt:execution.value.lastObservedAt,
       lastProgressAt:execution.value.lastProgressAt,lastObservationError:execution.value.lastObservationError,
     } : {state:execution.state},
-    reply:record ? {state:record.replyMessageId ? 'confirmed' : record.replyAttempted ? 'unknown' : 'not_attempted',
+    reply:record ? {state:record.deliveryVersion === 2
+      ? record.answerDelivery?.state ?? 'not_attempted'
+      : record.replyMessageId ? 'confirmed' : record.replyAttempted ? 'unknown' : 'not_attempted',
       type:record.replyType,mode:record.replyMode,messageId:record.replyMessageId,failureMessageId:record.failureReplyMessageId} : {state:task.state},
+    delivery:record ? {answer:record.answerDelivery?.state,status:record.statusDelivery?.state,
+      answerMessageId:record.answerMessageId,statusMessageId:record.statusDelivery?.messageId,
+      failure:record.feedbackFailure,routePending:Boolean(record.routeConfirmationsPending?.length || record.routeConfirmationPending)} : {state:task.state},
     feedback:marker ? {desired:marker.desired,attempts:marker.attempts,lastWarning:marker.lastWarning} : {state:feedback.state},
   };
+}
+
+export async function deliverySummary({stateDir,appId}) {
+  const root=path.join(stateDir,'feishu',hash(appId));
+  const summary={awaitingResults:0,pendingFeedback:0,needsReconciliation:0,requests:[]};
+  for (const directory of ['messages','rejections']) {
+    let names;
+    try { names=await readdir(path.join(root,directory)); }
+    catch(error) { if(error.code==='ENOENT') continue; throw error; }
+    for(const name of names.filter(name=>/^fs-[a-f0-9]{64}\.json$/.test(name))) {
+      const item=await read(path.join(root,directory,name)),record=item.value;
+      if(record?.deliveryVersion!==2) continue;
+      if(record.awaitingResult) summary.awaitingResults++;
+      const delivery=record.codexStatus==='completed' ? record.answerDelivery : record.statusDelivery;
+      if(delivery?.state==='confirmed' && !record.feedbackFailure) continue;
+      summary.pendingFeedback++;
+      if(record.feedbackFailure?.code==='DELIVERY_REQUIRES_RECONCILIATION') summary.needsReconciliation++;
+      if(summary.requests.length<5) summary.requests.push({requestId:record.requestId,messageId:record.messageId,
+        execution:record.codexStatus,delivery:delivery?.state ?? 'pending',failure:record.feedbackFailure});
+    }
+  }
+  return summary;
 }
