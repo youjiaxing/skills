@@ -338,6 +338,11 @@ export function createAcpProxySession(opts) {
         name: defaultIsTighter ? `${baseName} (${formatTokenCountLabel(config.defaultCapTokens)})` : baseName,
       });
 
+      // Do not advertise guessed caps before the upstream has reported a real
+      // usage window. A persisted selection is still restored below so an
+      // existing session can continue without silently changing its model.
+      if (nativeSize === null) continue;
+
       for (const tier of config.variantCaps) {
         if (tier.capTokens === config.defaultCapTokens) continue;
         const rec = await allocateVariant(baseId, tier.suffix, tier.capTokens, false, allocatedInPass);

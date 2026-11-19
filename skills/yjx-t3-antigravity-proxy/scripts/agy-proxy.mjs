@@ -338,7 +338,11 @@ export async function runStatus(options = {}) {
   const { config, configPath, exists: configExists } = await loadConfig(ctx.installDir, env);
   const sPath = settingsFilePath(ctx.t3Home);
   const settingsRes = await readJsonSafe(sPath);
-  const configuredBinaryPath = settingsRes.ok ? settingsRes.value?.providers?.antigravity?.binaryPath ?? null : null;
+  const configuredBinaryPath = settingsRes.ok
+    ? settingsRes.value?.providerInstances?.antigravity?.config?.binaryPath
+      ?? settingsRes.value?.providers?.antigravity?.binaryPath
+      ?? null
+    : null;
 
   let upstream = null;
   let upstreamError = null;

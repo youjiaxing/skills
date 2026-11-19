@@ -400,6 +400,20 @@ export function settingsFilePath(t3Home) {
   return path.join(path.resolve(t3Home), 'userdata', 'settings.json');
 }
 
+function readConfiguredBinaryPath(settings) {
+  const instanceConfig = settings?.providerInstances?.antigravity?.config;
+  if (instanceConfig && typeof instanceConfig === 'object' && typeof instanceConfig.binaryPath === 'string') {
+    return { path: instanceConfig.binaryPath, location: 'providerInstances' };
+  }
+  const legacyConfig = settings?.providers?.antigravity;
+  if (legacyConfig && typeof legacyConfig === 'object' && typeof legacyConfig.binaryPath === 'string') {
+    return { path: legacyConfig.binaryPath, location: 'providers' };
+  }
+  return { path: null, location: Object.prototype.hasOwnProperty.call(settings ?? {}, 'providerInstances')
+    ? 'providerInstances'
+    : 'providers' };
+}
+
 export async function updateT3SettingsBinaryPath({ t3Home, installDir, launcherPath }) {
   const filePath = settingsFilePath(t3Home);
   const backupMetaPath = path.join(installDir, 'runtime', 'settings-backup.json');
@@ -415,7 +429,8 @@ export async function updateT3SettingsBinaryPath({ t3Home, installDir, launcherP
     settings = parsed.value;
   }
 
-  const currentBinaryPath = settings?.providers?.antigravity?.binaryPath;
+  const configured = readConfiguredBinaryPath(settings);
+  const currentBinaryPath = configured.path;
   const alreadyPointing = typeof currentBinaryPath === 'string'
     && path.resolve(currentBinaryPath) === path.resolve(launcherPath);
 
@@ -433,6 +448,10 @@ export async function updateT3SettingsBinaryPath({ t3Home, installDir, launcherP
       hadProviders: Object.prototype.hasOwnProperty.call(settings, 'providers'),
       hadAntigravity: Boolean(settings.providers && Object.prototype.hasOwnProperty.call(settings.providers, 'antigravity')),
       hadBinaryPath: Boolean(settings.providers?.antigravity && Object.prototype.hasOwnProperty.call(settings.providers.antigravity, 'binaryPath')),
+      settingsLocation: configured.location,
+      hadProviderInstances: Object.prototype.hasOwnProperty.call(settings, 'providerInstances'),
+      hadAntigravityInstance: Boolean(settings.providerInstances && Object.prototype.hasOwnProperty.call(settings.providerInstances, 'antigravity')),
+      hadInstanceConfig: Boolean(settings.providerInstances?.antigravity && Object.prototype.hasOwnProperty.call(settings.providerInstances.antigravity, 'config')),
       previousBinaryPath: currentBinaryPath ?? null,
       backupFile,
       savedAt: new Date().toISOString(),
@@ -441,9 +460,21 @@ export async function updateT3SettingsBinaryPath({ t3Home, installDir, launcherP
   }
 
   if (!alreadyPointing) {
-    const nextSettings = {
-      ...settings,
-      providers: {
+    const nextSettings = { ...settings };
+    if (configured.location === 'providerInstances') {
+      const currentInstance = settings.providerInstances?.antigravity;
+      nextSettings.providerInstances = {
+        ...(settings.providerInstances && typeof settings.providerInstances === 'object' ? settings.providerInstances : {}),
+        antigravity: {
+          ...(currentInstance && typeof currentInstance === 'object' ? currentInstance : { driver: 'antigravity' }),
+          config: {
+            ...(currentInstance?.config && typeof currentInstance.config === 'object' ? currentInstance.config : {}),
+            binaryPath: launcherPath,
+          },
+        },
+      };
+    } else {
+      nextSettings.providers = {
         ...(settings.providers && typeof settings.providers === 'object' ? settings.providers : {}),
         antigravity: {
           ...(settings.providers?.antigravity && typeof settings.providers.antigravity === 'object'
@@ -451,8 +482,8 @@ export async function updateT3SettingsBinaryPath({ t3Home, installDir, launcherP
             : {}),
           binaryPath: launcherPath,
         },
-      },
-    };
+      };
+    }
     await writeFileAtomic(filePath, `${JSON.stringify(nextSettings, null, 2)}\n`, 0o644);
   }
 
@@ -473,11 +504,44 @@ export async function restoreT3SettingsBinaryPath({ t3Home, installDir, launcher
   }
   const settings = parsed.value;
   const backup = await readJsonSafe(backupMetaPath);
-  const current = settings?.providers?.antigravity?.binaryPath;
+  const configured = readConfiguredBinaryPath(settings);
+  const current = configured.path;
 
   if (backup.ok && backup.value) {
     const meta = backup.value;
-    if (meta.hadBinaryPath && typeof meta.previousBinaryPath === 'string') {
+    const originalSettings = meta.backupFile ? await readJsonSafe(meta.backupFile) : { ok: false };
+    const originalConfigured = originalSettings.ok ? readConfiguredBinaryPath(originalSettings.value) : null;
+    const settingsLocation = meta.settingsLocation || originalConfigured?.location || configured.location;
+    const hadProviderInstances = meta.hadProviderInstances
+      ?? (originalSettings.ok && Object.prototype.hasOwnProperty.call(originalSettings.value, 'providerInstances'));
+    const hadAntigravityInstance = meta.hadAntigravityInstance
+      ?? Boolean(originalSettings.value?.providerInstances
+        && Object.prototype.hasOwnProperty.call(originalSettings.value.providerInstances, 'antigravity'));
+    const hadInstanceConfig = meta.hadInstanceConfig
+      ?? Boolean(originalSettings.value?.providerInstances?.antigravity
+        && Object.prototype.hasOwnProperty.call(originalSettings.value.providerInstances.antigravity, 'config'));
+    const hadBinaryPath = meta.hadBinaryPath ?? Boolean(originalConfigured?.path);
+    if (settingsLocation === 'providerInstances') {
+      if (hadBinaryPath && typeof meta.previousBinaryPath === 'string') {
+        settings.providerInstances = settings.providerInstances || {};
+        settings.providerInstances.antigravity = settings.providerInstances.antigravity || { driver: 'antigravity' };
+        settings.providerInstances.antigravity.config = settings.providerInstances.antigravity.config || {};
+        settings.providerInstances.antigravity.config.binaryPath = meta.previousBinaryPath;
+      } else if (settings.providerInstances?.antigravity) {
+        if (settings.providerInstances.antigravity.config) {
+          delete settings.providerInstances.antigravity.config.binaryPath;
+          if (!hadInstanceConfig && Object.keys(settings.providerInstances.antigravity.config).length === 0) {
+            delete settings.providerInstances.antigravity.config;
+          }
+        }
+        if (!hadAntigravityInstance && Object.keys(settings.providerInstances.antigravity).length === 0) {
+          delete settings.providerInstances.antigravity;
+        }
+        if (!hadProviderInstances && Object.keys(settings.providerInstances).length === 0) {
+          delete settings.providerInstances;
+        }
+      }
+    } else if (hadBinaryPath && typeof meta.previousBinaryPath === 'string') {
       settings.providers = settings.providers || {};
       settings.providers.antigravity = settings.providers.antigravity || {};
       settings.providers.antigravity.binaryPath = meta.previousBinaryPath;

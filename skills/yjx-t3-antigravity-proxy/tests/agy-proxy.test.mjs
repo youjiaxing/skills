@@ -21,6 +21,7 @@ import {
   readModelWindow,
   readSessionSelection,
   writeFileAtomic,
+  writeModelWindow,
 } from '../scripts/lib/store.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -72,10 +73,13 @@ function appendStepsToDb(dbPath, stepTypes) {
 }
 
 function spawnLauncher(launcherPath, args, options = {}) {
-  return spawn(launcherPath, args, {
-    ...options,
-    ...(process.platform === 'win32' ? { shell: true } : {}),
-  });
+  if (process.platform !== 'win32') return spawn(launcherPath, args, options);
+  const quoteWindowsArg = (value) => {
+    const text = String(value);
+    if (!/[\s"&()<>^|]/u.test(text)) return text;
+    return `"${text.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, '$1$1')}"`;
+  };
+  return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', [quoteWindowsArg(launcherPath), ...args.map(quoteWindowsArg)].join(' ')], options);
 }
 
 function createHarness(options = {}) {
@@ -224,7 +228,7 @@ describe('acp-proxy protocol gating and variant management', () => {
             method: 'session/update',
             params: {
               sessionId: msg.params.sessionId,
-              update: { sessionUpdate: 'usage_update', used: 50000, size: 200000 },
+              update: { sessionUpdate: 'usage_update', used: 50000, size: 1000000 },
             },
           }));
           proxy.handleUpstreamMessage(JSON.stringify({
@@ -242,12 +246,7 @@ describe('acp-proxy protocol gating and variant management', () => {
     await h.sendFromClient({ jsonrpc: '2.0', id: 2, method: 'session/new', params: {} });
     const firstNew = await h.waitForClientMessage((m) => m.id === 2);
     const firstValues = firstNew.result.configOptions[0].options.map((o) => o.value);
-    assert.ok(firstValues.includes('alpha'));
-    assert.ok(firstValues.includes('alpha-256k'));
-    assert.ok(firstValues.includes('alpha-proxy-full'), 'should avoid colliding with upstream alpha-full');
-    assert.ok(firstValues.includes('alpha-full'));
-    assert.ok(firstValues.includes('claude-sonnet-256k'));
-    assert.ok(firstValues.includes('claude-sonnet-full'));
+    assert.deepEqual(firstValues, ['alpha', 'alpha-full', 'claude-sonnet']);
 
     await h.sendFromClient({
       jsonrpc: '2.0',
@@ -264,13 +263,17 @@ describe('acp-proxy protocol gating and variant management', () => {
       params: { sessionId: 's-2', prompt: [{ type: 'text', text: 'hello' }] },
     });
     await h.waitForClientMessage((m) => m.id === 4);
-    assert.equal(await readModelWindow(installDir, 'claude-sonnet'), 200000);
+    assert.equal(await readModelWindow(installDir, 'claude-sonnet'), 1000000);
 
     await h.sendFromClient({ jsonrpc: '2.0', id: 5, method: 'session/new', params: {} });
     const secondNew = await h.waitForClientMessage((m) => m.id === 5);
     const claudeOpts = secondNew.result.configOptions[0].options.filter((o) => o.value.startsWith('claude-sonnet'));
-    assert.deepEqual(claudeOpts.map((o) => o.value), ['claude-sonnet']);
-    assert.equal(claudeOpts[0].name, 'Claude Sonnet');
+    assert.deepEqual(claudeOpts.map((o) => o.value), [
+      'claude-sonnet',
+      'claude-sonnet-256k',
+      'claude-sonnet-full',
+    ]);
+    assert.equal(claudeOpts[0].name, 'Claude Sonnet (500k)');
   });
 
   it('refuses overwriting existing variant records in publishVariantAlias', async () => {
@@ -304,6 +307,12 @@ describe('acp-proxy protocol gating and variant management', () => {
 
   it('restores persisted session variant on resume and rejects with -32000 if upstream later claims that ID', async () => {
     const installDir = await makeTempDir();
+    await publishVariantAlias(installDir, {
+      variantId: 'gemini-4-hydrogen-256k',
+      baseId: 'gemini-4-hydrogen',
+      capTokens: 256000,
+      isNativeMax: false,
+    });
     const h1 = createHarness({
       installDir,
       onUpstreamMessage: (msg, proxy) => {
@@ -411,6 +420,8 @@ describe('acp-proxy replay isolation, native-max bypass, pre-turn /compact, and 
     const installDir = await makeTempDir();
     const geminiHome = await makeTempDir();
     await createConversationDb(geminiHome, 's-iso', [1, 2]);
+    await writeModelWindow(installDir, 'g4', 1000000);
+    await writeModelWindow(installDir, 'other', 1000000);
 
     const h = createHarness({
       installDir,
@@ -517,6 +528,7 @@ describe('acp-proxy replay isolation, native-max bypass, pre-turn /compact, and 
     const installDir = await makeTempDir();
     const geminiHome = await makeTempDir();
     const dbPath = await createConversationDb(geminiHome, 's-cmp', [1, 2]);
+    await writeModelWindow(installDir, 'g4', 1000000);
     let promptCount = 0;
 
     const h = createHarness({
@@ -942,13 +954,20 @@ rl.on('line', (line) => {
     const settingsPath = path.join(t3Home, 'userdata', 'settings.json');
     await writeFileAtomic(settingsPath, JSON.stringify({
       theme: 'dark',
-      providers: { antigravity: { binaryPath: '/old/custom/agy' } },
+      providerInstances: {
+        antigravity: {
+          driver: 'antigravity',
+          enabled: true,
+          config: { existingSetting: 'preserve-me' },
+        },
+      },
     }, null, 2), 0o644);
 
     await createConversationDb(geminiHome, 'e2e-sess', [1]);
 
     const setupRes = await runSetup({ explicitT3Home: t3Home, env: testEnv });
     assert.equal(setupRes.ok, true);
+    await writeModelWindow(setupRes.installDir, 'gemini-4-hydrogen', 1000000);
     assert.equal(setupRes.settings.changed, true);
 
     // Second setup is idempotent and does not overwrite original backup metadata
@@ -1017,9 +1036,9 @@ rl.on('line', (line) => {
 
     const restoreRes = await runRestore({ explicitT3Home: t3Home, env: testEnv });
     assert.equal(restoreRes.changed, true);
-    assert.equal(restoreRes.restoredTo, '/old/custom/agy');
+    assert.equal(restoreRes.restoredTo, null);
     const restoredSettings = JSON.parse(await readFile(settingsPath, 'utf8'));
-    assert.equal(restoredSettings.providers.antigravity.binaryPath, '/old/custom/agy');
+    assert.deepEqual(restoredSettings.providerInstances.antigravity.config, { existingSetting: 'preserve-me' });
     assert.equal(restoredSettings.theme, 'dark');
   });
 });

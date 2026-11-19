@@ -49,12 +49,38 @@ function isTerminal(status) {
   return TERMINAL.has(status);
 }
 
+function isExplicitFinalMessage(message) {
+  return message?.phase === 'final_answer' || message?.phase === 'final' ||
+    message?.isFinal === true || message?.final === true || message?.finalAnswer === true;
+}
+
+// The T3 projection currently omits message phase. A completed run can therefore
+// contain several persisted assistant messages, including progress updates. In
+// that shape the last message is not evidence of the final answer. Accept a
+// single unphased assistant message for compatibility, or an explicitly marked
+// final message; otherwise keep the request recoverable and unconfirmed.
+export function selectT3FinalAnswer(messages, runId) {
+  if (!Array.isArray(messages)) return null;
+  const candidates = messages.filter(message =>
+    message?.role === 'assistant' && message.runId === runId &&
+    (message.streaming === undefined || message.streaming === false) &&
+    typeof message.text === 'string' && message.text.trim());
+  const ordered = [...candidates].sort((a, b) => {
+    const left = Date.parse(a.createdAt);
+    const right = Date.parse(b.createdAt);
+    return (Number.isFinite(left) ? left : 0) - (Number.isFinite(right) ? right : 0);
+  });
+  const explicit = ordered.filter(isExplicitFinalMessage);
+  if (explicit.length) return explicit.at(-1).text;
+  return candidates.length === 1 ? candidates[0].text : null;
+}
+
 function harvestFromMessages(record, messages) {
   if (!Array.isArray(messages)) return { matches: 0 };
   const matches = messages.filter(m => m.role === 'user' && m.text === record.wireMessage);
   if (matches.length !== 1 || !matches[0].runId) return { matches: matches.length };
   const runId = matches[0].runId;
-  const answer = messages.filter(m => m.role === 'assistant' && m.runId === runId).at(-1)?.text;
+  const answer = selectT3FinalAnswer(messages, runId);
   return { matches: 1, runId, answer: typeof answer === 'string' && answer.trim() ? answer : null };
 }
 
@@ -116,8 +142,8 @@ export function applyT3Projection(record, projection) {
     record.status = run.status === 'failed' ? 'failed' : 'interrupted';
     record.error = {code:record.status === 'failed' ? 'TURN_FAILED' : 'TURN_INTERRUPTED'};
   } else if (ended && run.status === 'completed') {
-    const answer = projection.messages.filter(m => m.runId === run.id && m.threadId === record.threadId && m.role === 'assistant' && m.streaming === false)
-      .sort((a,b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).at(-1)?.text;
+    const answer = selectT3FinalAnswer(
+      projection.messages.filter(m => m.threadId === record.threadId), run.id);
     if (typeof answer === 'string' && answer.trim()) {
       record.status = 'completed'; record.answer = answer; record.error = null;
     } else { record.status = 'unconfirmed'; record.observationState = 'awaiting_final'; return record; }

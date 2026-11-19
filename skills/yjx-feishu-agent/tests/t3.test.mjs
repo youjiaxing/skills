@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { sendT3, requestT3Status, inspectT3Target, applyT3Snapshot, applyT3Projection } from '../scripts/t3.mjs';
+import { sendT3, requestT3Status, inspectT3Target, applyT3Snapshot, applyT3Projection, selectT3FinalAnswer } from '../scripts/t3.mjs';
 import { deliverHarvestedFollowUp, writeJournal, createReceiver, digest } from '../scripts/feishu-core.mjs';
 import { targetFor, validateAgentTargets } from '../scripts/agent-targets.mjs';
 import { createMessageRouter } from '../scripts/message-routes.mjs';
@@ -77,6 +77,30 @@ test('baseline/latest changes and running assistant text are not terminal eviden
   assert.equal(record.status,'running');assert.equal(record.answer,undefined);
   const waiting=applyT3Projection(baseRecord(),projection('run-1','waiting','prompt'));
   assert.equal(waiting.status,'waiting');assert.equal(waiting.error.code,'HOST_INTERACTION_REQUIRED');
+});
+
+test('completed T3 runs with several unphased assistant messages remain unconfirmed',()=>{
+  const data=projection();
+  data.messages.push({threadId:target,runId:'run-1',role:'assistant',text:'测试失败只是因为无法直接替换 datetime.now。',streaming:false,createdAt:'2026-11-18T10:00:01Z'});
+  assert.equal(selectT3FinalAnswer(data.messages,'run-1'),null);
+  const record=applyT3Projection(baseRecord(),data);
+  assert.equal(record.status,'unconfirmed');
+  assert.equal(record.answer,undefined);
+
+  const explicit={...data.messages.at(-1),final:true};
+  assert.equal(selectT3FinalAnswer([...data.messages.slice(0,-1),explicit],'run-1'),explicit.text);
+});
+
+test('snapshot fallback does not deliver the last progress message as an answer',()=>{
+  const record={...baseRecord(),turnId:null};
+  const data={thread:{threadId:target,latestRunId:'run-1',activeRunId:null,status:'completed'},messages:[
+    {role:'user',text:'unique-marker',runId:'run-1'},
+    {role:'assistant',text:'正在检查实现。',runId:'run-1'},
+    {role:'assistant',text:'测试失败只是因为无法直接替换 datetime.now。',runId:'run-1'},
+  ]};
+  applyT3Snapshot(record,data);
+  assert.equal(record.status,'unconfirmed');
+  assert.equal(record.answer,undefined);
 });
 
 test('original run result is recovered after later runs without accepting conflicting identity',()=>{

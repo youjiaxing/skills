@@ -20,6 +20,7 @@ node skills/yjx-feishu-agent/scripts/diagnose-message.mjs --message om_MESSAGE
 | reply 为 unknown | 回复已尝试但缺确认；T3 新账本仅在原 UUID 的一小时有效期内重试冻结投递，过窗待核查 |
 | reply.type / reply.mode | 只读记录实际选择的 `text`、`post` 或 `interactive`，不代表客户端视觉已验收 |
 | reply confirmed，task.failure.stage 为 route_confirmation | 回答已送达，来源记账需另查，不能重发回答 |
+| `reply confirmed` 但正文是“正在处理/测试中/我会继续”等过程说明 | 先核对 `codex` 与 `execution` 的 runId 和原始投影；若同一 T3 run 有多条未标注 phase 的 assistant 消息，说明旧适配器把最后一条过程文本误当答案。修复后的适配器应保持 `unconfirmed/awaiting_final`，不再次投递该过程文本 |
 | feedback.lastWarning | 仅处理标记失败；结合 desired/attempts 判断，不重跑任务 |
 
 诊断只保留消息 ID、固定原因、处理阶段和安全数值错误码，不写消息正文或原始 SDK 异常。绑定群的被忽略事件记录在 `feishu/<app hash>/admissions`，任务仍在 messages，标记在 feedback；有效请求在入口满或停止中仍建立独立 rejections 反馈记录；未通过授权或无法识别原消息的事件不自动回复。上述文件均在仓库外，不自动清空。
