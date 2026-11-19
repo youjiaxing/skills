@@ -22,6 +22,7 @@ export const DEFAULT_CONFIG = {
   compactTriggerRatio: 0.9,
   variantCaps: [
     { suffix: '-256k', label: '256k', capTokens: 256000 },
+    { suffix: '-384k', label: '384k', capTokens: 384000 },
   ],
   includeFullVariant: true,
 };

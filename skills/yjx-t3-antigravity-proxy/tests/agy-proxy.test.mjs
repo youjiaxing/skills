@@ -273,8 +273,10 @@ describe('acp-proxy protocol gating and variant management', () => {
     assert.deepEqual(claudeOpts.map((o) => o.value), [
       'claude-sonnet',
       'claude-sonnet-256k',
+      'claude-sonnet-384k',
       'claude-sonnet-full',
     ]);
+    assert.equal(claudeOpts.find((o) => o.value === 'claude-sonnet-384k').name, 'Claude Sonnet (384k)');
     assert.equal(claudeOpts[0].name, 'Claude Sonnet (500k)');
   });
 
