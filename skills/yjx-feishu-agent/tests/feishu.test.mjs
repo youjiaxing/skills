@@ -238,3 +238,24 @@ test('requireMention false accepts unmentioned messages from allowlisted users o
   fromBot.sender.sender_type = 'app';
   assert.equal(acceptedMessage(fromBot, noMentionConfig, 'ou_bot'), null);
 });
+
+test('loadConfig reloads requireMention before the next admission', async t => {
+  let current = { version: 1, bindings: [{ ...config.bindings[0] }] };
+  const f = await fixture(t, {
+    config: current,
+    loadConfig: async () => structuredClone(current),
+  });
+  const unmentioned = event('om_live_off');
+  unmentioned.message.content = JSON.stringify({ text: '免at提问' });
+  unmentioned.message.mentions = [];
+  await f.receiver.handle(unmentioned);
+  assert.equal(f.calls.length, 0);
+  current = { version: 1, bindings: [{ ...config.bindings[0], requireMention: false }] };
+  const next = event('om_live_on');
+  next.message.content = JSON.stringify({ text: '免at提问' });
+  next.message.mentions = [];
+  await f.receiver.handle(next);
+  await f.receiver.stop();
+  assert.equal(f.calls.length, 1);
+  assert.match(f.calls[0]?.message ?? '', /免at提问/);
+});

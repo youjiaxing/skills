@@ -42,7 +42,7 @@ node skills/yjx-feishu-agent/scripts/feishu.mjs bind --chat oc_GROUP --user ou_U
 node skills/yjx-feishu-agent/scripts/receiver.mjs start
 ```
 
-Windows 将 `--codex` 替换为原生 `codex.exe` 路径；`--cwd` 是该 Codex 请求的工作目录，路径带空格时加引号。以上命令均支持 `--state-dir`。绑定保存在状态目录 `feishu/bindings.json`；再次绑定另一个群可添加映射。同一群已有映射时会拒绝覆盖，因为 `bind` 只新增群。修改已有群的单条映射应先停止接收器，通过 `bindings.mjs rebind` 的旧 UUID 校验和备份流程完成；其他情况可停服后按原结构编辑本机文件，再运行 `bindings.mjs check`。变更配置先停止接收器，再核实并编辑该本机文件；`codex` 和 `cwd` 为进程共用配置。
+Windows 将 `--codex` 替换为原生 `codex.exe` 路径；`--cwd` 是该 Codex 请求的工作目录，路径带空格时加引号。以上命令均支持 `--state-dir`。绑定保存在状态目录 `feishu/bindings.json`；再次绑定另一个群可添加映射。同一群已有映射时会拒绝覆盖，因为 `bind` 只新增群。修改已有群的单条映射应先停止接收器，通过 `bindings.mjs rebind` 的旧 UUID 校验和备份流程完成；其他情况可停服后按原结构编辑本机文件，再运行 `bindings.mjs check`。切换默认会话或引用路由先停止接收器，再核实并编辑该本机文件；`require-mention` 可在接收器运行时写入，下一条消息生效。`codex` 和 `cwd` 为进程共用配置。
 
 ## 查询与重新绑定
 

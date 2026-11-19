@@ -46,7 +46,7 @@ export function setRequireMention(config, {chatId,enabled}) {
 export async function main(argv) {
   const [command, ...args] = argv;
   if (!command || command === '--help') {
-    console.log('Usage: node bindings.mjs list|check [--chat oc_ID] [--state-dir PATH]\nRebind (receiver must be stopped): rebind --chat oc_ID --expected-thread OLD_UUID --thread NEW_UUID [--state-dir PATH]\nQuote routing (receiver must be stopped): quote-routing --chat oc_ID --enabled true|false [--state-dir PATH]\nRequire mention (receiver must be stopped): require-mention --chat oc_ID --enabled true|false [--state-dir PATH]\nNever creates/unarchives chats or replays requests.');
+    console.log('Usage: node bindings.mjs list|check [--chat oc_ID] [--state-dir PATH]\nRebind (receiver must be stopped): rebind --chat oc_ID --expected-thread OLD_UUID --thread NEW_UUID [--state-dir PATH]\nQuote routing (receiver must be stopped): quote-routing --chat oc_ID --enabled true|false [--state-dir PATH]\nRequire mention (live): require-mention --chat oc_ID --enabled true|false [--state-dir PATH]\nNever creates/unarchives chats or replays requests.');
     return;
   }
   if (!['list','check','rebind','quote-routing','require-mention'].includes(command)) throw new Error('Unknown command');
@@ -86,28 +86,41 @@ export async function main(argv) {
     console.log(JSON.stringify({ bindings: rows }));
     return;
   }
+  async function writeBindingChange(nextFactory, extra) {
+    const bindingsLock = await lockThread(stateDir, 'bindings', performance.now() + 8000);
+    if (!bindingsLock) throw new Error('Bindings file is busy');
+    try {
+      const config = JSON.parse(await readFile(file, 'utf8'));
+      const next = await nextFactory(config);
+      const history = path.join(stateDir, 'feishu', 'binding-history');
+      await mkdir(history, { recursive: true, mode: 0o700 });
+      const backup = path.join(history, `${Date.now()}-${randomUUID()}.json`);
+      const handle = await open(backup, 'wx', 0o600);
+      try { await handle.writeFile(JSON.stringify({ previous: config, next, createdAt: new Date().toISOString() })); await handle.sync(); }
+      finally { await handle.close(); }
+      await writeJournal(file, next);
+      console.log(JSON.stringify({ status: command==='rebind' ? 'rebound' : 'configured', chatId: options.chatId,
+        ...extra, history: backup, restartRequired: command !== 'require-mention' }));
+    } finally { await bindingsLock(); }
+  }
+  const nextFactory = config => command==='rebind'
+    ? rebind(config, options, params=>inspectAgentTarget({...params,agentTarget:targetFor(config.bindings.find(b=>b.chatId===options.chatId),params.threadId),t3Command:config.t3Command,t3BaseDir:config.t3BaseDir}))
+    : Promise.resolve(command==='quote-routing' ? setQuoteRouting(config,options) : setRequireMention(config,options));
+  const extra = command==='rebind' ? {threadId:options.threadId}
+    : {[command==='quote-routing' ? 'quoteRouting' : 'requireMention']:options.enabled==='true'};
+  if (command === 'require-mention') {
+    await writeBindingChange(nextFactory, extra);
+    return;
+  }
   const { appId } = await loadCredentials(stateDir);
   const release = await lockThread(path.join(os.homedir(), '.yjx-feishu-agent-receivers'), digest(appId), performance.now());
   if (!release) throw new Error('Stop receiver and inspect leftover lock first');
-  try {
-    const config = JSON.parse(await readFile(file, 'utf8'));
-    const next = command==='rebind'
-      ? await rebind(config, options, params=>inspectAgentTarget({...params,agentTarget:targetFor(config.bindings.find(b=>b.chatId===options.chatId),params.threadId),t3Command:config.t3Command,t3BaseDir:config.t3BaseDir}))
-      : (command==='quote-routing' ? setQuoteRouting(config,options) : setRequireMention(config,options));
-    const history = path.join(stateDir, 'feishu', 'binding-history');
-    await mkdir(history, { recursive: true, mode: 0o700 });
-    const backup = path.join(history, `${Date.now()}-${randomUUID()}.json`);
-    const handle = await open(backup, 'wx', 0o600);
-    try { await handle.writeFile(JSON.stringify({ previous: config, next, createdAt: new Date().toISOString() })); await handle.sync(); }
-    finally { await handle.close(); }
-    await writeJournal(file, next);
-    console.log(JSON.stringify({ status: command==='rebind' ? 'rebound' : 'configured', chatId: options.chatId,
-      ...(command==='rebind' ? {threadId:options.threadId} : {[command==='quote-routing' ? 'quoteRouting' : 'requireMention']:options.enabled==='true'}),history: backup, restartRequired: true }));
-  } finally { await release(); }
+  try { await writeBindingChange(nextFactory, extra); }
+  finally { await release(); }
 }
 try {
   if (realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main(process.argv.slice(2)).catch(() => {
-    console.log(JSON.stringify({ status: 'error', message: 'Check binding, expected target, readable new chat, and stopped receiver; no automatic recovery' }));
+    console.log(JSON.stringify({ status: 'error', message: 'Check binding, enabled flag or expected target; require-mention keeps the receiver running' }));
     process.exitCode = 2;
   });
 } catch { /* Import only. */ }

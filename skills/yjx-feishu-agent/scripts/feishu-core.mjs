@@ -87,6 +87,13 @@ export async function writeJournal(file, record) {
   await rename(temporary, file);
 }
 
+export function applyBindingsSnapshot(config, next) {
+  if (!next || next === config) return config;
+  for (const key of Object.keys(config)) delete config[key];
+  Object.assign(config, next);
+  return config;
+}
+
 
 const PLACEHOLDER_STATUS = new Set(['blocked', 'unconfirmed', 'failed', 'interrupted']);
 
@@ -119,7 +126,7 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
   admitRoute = async (item,persist) => persist({threadId:item.binding.threadId,autoUnarchive:false}),
   confirmReply = async () => {}, prepareReply = answer => ({msgType:'text',content:{text:answer},mode:'text'}),
   feedback = { update() {} }, log = () => {}, refresh = requestT3Status,
-  operationMs = 30000, stopMs = 10000, now = Date.now }) {
+  loadConfig, operationMs = 30000, stopMs = 10000, now = Date.now }) {
   const directory = path.join(stateDir, 'feishu', digest(appId), 'messages');
   const queue = [];
   const active = new Map();
@@ -241,7 +248,16 @@ export function createReceiver({ appId, botId, config, stateDir, reply, send = s
     }
   }
 
+  async function refreshConfig() {
+    if (typeof loadConfig !== 'function') return;
+    try {
+      const next = await loadConfig();
+      if (next) applyBindingsSnapshot(config, validateBindings(next));
+    } catch { /* Keep the last valid snapshot if the file is briefly unreadable. */ }
+  }
+
   async function admit(data) {
+    await refreshConfig();
     const decision = messageDecision(data, config, botId),item=decision.item;
     if (!item) {
       // Metadata only: make ignored bound-group formats diagnosable without logging message bodies.

@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { loadCredentials } from './feishu-credentials.mjs';
 import { defaultStateDir } from './codex.mjs';
 import { lockThread } from './state.mjs';
-import { createReceiver, digest, resultText, validateBindings, writeJournal } from './feishu-core.mjs';
+import { applyBindingsSnapshot, createReceiver, digest, resultText, validateBindings, writeJournal } from './feishu-core.mjs';
 import { receiverPaths, readJson, atomicJson } from './receiver-runtime.mjs';
 import { readTransport, resolveContext } from './feishu-context.mjs';
 import { createMessageRouter } from './message-routes.mjs';
@@ -92,7 +92,7 @@ async function pages(operation) {
 export async function main(argv) {
   const options = args([...argv]);
   if (options.help) {
-    process.stdout.write('Usage: node feishu.mjs diagnose|explain-request|discover|bind|serve [--state-dir PATH]\nExplain: --request-id ID prints the stored result and safe reply without sending.\nBind: --chat oc_... --user ou_... [--thread DEFAULT_UUID] [--codex PATH] [--cwd PATH]\nQuote routing is on by default. Omitting --thread authorizes quote-only access without choosing a default chat.\nOnly bound groups and users with an explicit @bot text message are forwarded.\n');
+    process.stdout.write('Usage: node feishu.mjs diagnose|explain-request|discover|bind|serve [--state-dir PATH]\nExplain: --request-id ID prints the stored result and safe reply without sending.\nBind: --chat oc_... --user ou_... [--thread DEFAULT_UUID] [--codex PATH] [--cwd PATH]\nQuote routing is on by default. Omitting --thread authorizes quote-only access without choosing a default chat.\nBound groups forward allowlisted users; @bot is required unless requireMention is false.\n');
     return;
   }
   const stateDir = path.resolve(options.stateDir ?? defaultStateDir());
@@ -194,8 +194,9 @@ export async function main(argv) {
   const release = options.managed ? await withReceiverControl(runtimePaths, acquire) : await acquire();
   if (!release && options.managed) return;
   if (!release) throw new Error('Another receiver or leftover receiver lock exists; inspect before recovery');
+  const readBindings = async () => validateBindings(JSON.parse(await readFile(configFile, 'utf8')));
   let config;
-  try { config = validateBindings(JSON.parse(await readFile(configFile, 'utf8'))); }
+  try { config = await readBindings(); }
   catch { await release(); throw new Error('Missing or invalid bindings.json; bind a group first'); }
   const owner = await readJson(path.join(runtimePaths.lock, 'owner.json'));
   let lastPublishedConnection;
@@ -231,7 +232,7 @@ export async function main(argv) {
     }});
   const feedback = createProcessingFeedback({stateDir, appId:credentials.appId,
     transport:reactionTransport(credentials, { rateLimiter }), log:print});
-  const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, log: print,
+  const receiver = createReceiver({ appId: credentials.appId, botId, config, stateDir, loadConfig: readBindings, log: print,
     feedback,
     prepareReply: renderReply,
     context:item => resolveContext(item,contextOptions), admitRoute:router.admit, confirmReply:router.rememberReply,
@@ -269,7 +270,10 @@ export async function main(argv) {
       if (state === 'connected') { receiver.tick();outboundFollowUps.tick(); }
       if (state !== previous) { print({ type: 'connection', state }); previous = state; }
       runtimeStage = 'heartbeat';
-      if (Date.now() - heartbeatAt > 1000) { await publish(state); heartbeatAt = Date.now(); }
+      if (Date.now() - heartbeatAt > 1000) {
+        try { applyBindingsSnapshot(config, await readBindings()); } catch { /* Keep serving the last valid snapshot. */ }
+        await publish(state); heartbeatAt = Date.now();
+      }
       runtimeStage = 'stop_control';
       const control = await readJson(path.join(runtimePaths.runtime, 'stop.json'));
       if (control?.pid === process.pid && control?.token === owner.token) { stop('control'); break; }

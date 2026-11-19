@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rebind, setQuoteRouting, setRequireMention } from '../scripts/bindings.mjs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { main, rebind, setQuoteRouting, setRequireMention } from '../scripts/bindings.mjs';
 import { resultText } from '../scripts/feishu-core.mjs';
 import { validateBindings } from '../scripts/feishu-core.mjs';
 import { readTarget } from '../scripts/target.mjs';
@@ -54,4 +57,24 @@ test('only known path components classify active/archive; notLoaded is not delet
   }
   assert.equal((await readTarget({ call: async () => { throw new RpcError({ code: -32600, message: `thread not loaded: ${old}` }); } }, old, 1)).state, 'unavailable');
   assert.equal((await readTarget({ call: async () => { throw Error('transport failed'); } }, old, 1)).state, 'unknown');
+});
+
+test('require-mention CLI writes live without taking the receiver lock', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'yjx-feishu-bindings-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, 'feishu'), { recursive: true, mode: 0o700 });
+  const file = path.join(dir, 'feishu', 'bindings.json');
+  await writeFile(file, JSON.stringify({ version: 1, bindings: [
+    { chatId: 'oc_a', users: ['ou_owner'], threadId: old },
+  ] }));
+  const lines = [];
+  const orig = console.log;
+  console.log = value => { lines.push(String(value)); };
+  try { await main(['require-mention', '--chat', 'oc_a', '--enabled', 'false', '--state-dir', dir]); }
+  finally { console.log = orig; }
+  const result = JSON.parse(lines.at(-1));
+  assert.equal(result.status, 'configured');
+  assert.equal(result.requireMention, false);
+  assert.equal(result.restartRequired, false);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).bindings[0].requireMention, false);
 });
