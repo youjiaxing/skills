@@ -71,6 +71,13 @@ function appendStepsToDb(dbPath, stepTypes) {
   }
 }
 
+function spawnLauncher(launcherPath, args, options = {}) {
+  return spawn(launcherPath, args, {
+    ...options,
+    ...(process.platform === 'win32' ? { shell: true } : {}),
+  });
+}
+
 function createHarness(options = {}) {
   const clientMessages = [];
   const upstreamMessages = [];
@@ -856,7 +863,8 @@ describe('CLI --setup, --status, --restore, launcher generation, and stdio end-t
     await mkdir(versionDir, { recursive: true });
     await writeFileAtomic(path.join(upstreamDir, 'active.json'), JSON.stringify({ releaseId }), 0o644);
 
-    const fakeUpstreamPath = path.join(versionDir, process.platform === 'win32' ? 'agy.exe' : 'antigravity');
+    const fakeUpstreamPath = path.join(versionDir, process.platform === 'win32' ? 'agy.cmd' : 'antigravity');
+    const fakeUpstreamScriptPath = path.join(versionDir, 'fake-upstream.mjs');
     const fakeUpstreamScript = `#!/usr/bin/env node
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
@@ -918,8 +926,18 @@ rl.on('line', (line) => {
   }
 });
 `;
-    await writeFile(fakeUpstreamPath, fakeUpstreamScript, 'utf8');
-    await chmod(fakeUpstreamPath, 0o755);
+    if (process.platform === 'win32') {
+      await writeFile(fakeUpstreamScriptPath, fakeUpstreamScript, 'utf8');
+      await writeFile(
+        fakeUpstreamPath,
+        `@echo off\r\n"${process.execPath}" "%~dp0fake-upstream.mjs" %*\r\nexit /b %errorlevel%\r\n`,
+        'utf8',
+      );
+    } else {
+      await writeFile(fakeUpstreamPath, fakeUpstreamScript, 'utf8');
+      await chmod(fakeUpstreamPath, 0o755);
+    }
+    const testEnv = { ...process.env, AGY_PROXY_UPSTREAM_BIN: fakeUpstreamPath };
 
     const settingsPath = path.join(t3Home, 'userdata', 'settings.json');
     await writeFileAtomic(settingsPath, JSON.stringify({
@@ -929,23 +947,24 @@ rl.on('line', (line) => {
 
     await createConversationDb(geminiHome, 'e2e-sess', [1]);
 
-    const setupRes = await runSetup({ explicitT3Home: t3Home });
+    const setupRes = await runSetup({ explicitT3Home: t3Home, env: testEnv });
     assert.equal(setupRes.ok, true);
     assert.equal(setupRes.settings.changed, true);
 
     // Second setup is idempotent and does not overwrite original backup metadata
-    const setupRes2 = await runSetup({ explicitT3Home: t3Home });
+    const setupRes2 = await runSetup({ explicitT3Home: t3Home, env: testEnv });
     assert.equal(setupRes2.settings.changed, false);
 
-    const statusRes = await runStatus({ explicitT3Home: t3Home });
+    const statusRes = await runStatus({ explicitT3Home: t3Home, env: testEnv });
     assert.equal(statusRes.installed, true);
     assert.equal(statusRes.settingsPointingToProxy, true);
     assert.equal(statusRes.nodeCheck.ok, true);
 
     // Non-ACP passthrough preserves stdout and exit code
     const passthroughRun = await new Promise((resolve) => {
-      const child = spawn(setupRes.launcherPath, ['--version', '--exit-7'], {
+      const child = spawnLauncher(setupRes.launcherPath, ['--version', '--exit-7'], {
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: testEnv,
       });
       let out = '';
       child.stdout.on('data', (c) => { out += c.toString(); });
@@ -955,8 +974,9 @@ rl.on('line', (line) => {
     assert.match(passthroughRun.out, /FAKE_UPSTREAM_CLI:--version --exit-7/);
 
     // End-to-end stdio ACP session via installed launcher
-    const acpChild = spawn(setupRes.launcherPath, ['acp', '--gemini-dir', geminiHome], {
+    const acpChild = spawnLauncher(setupRes.launcherPath, ['acp', '--gemini-dir', geminiHome], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: testEnv,
     });
     const received = [];
     const parser = createLineParser((line) => received.push(JSON.parse(line)));
@@ -995,7 +1015,7 @@ rl.on('line', (line) => {
     acpChild.stdin.end();
     await new Promise((resolve) => acpChild.on('close', resolve));
 
-    const restoreRes = await runRestore({ explicitT3Home: t3Home });
+    const restoreRes = await runRestore({ explicitT3Home: t3Home, env: testEnv });
     assert.equal(restoreRes.changed, true);
     assert.equal(restoreRes.restoredTo, '/old/custom/agy');
     const restoredSettings = JSON.parse(await readFile(settingsPath, 'utf8'));

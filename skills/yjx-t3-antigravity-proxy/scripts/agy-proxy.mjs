@@ -37,6 +37,14 @@ function validateWindowsBatchValue(label, value) {
   return str;
 }
 
+function spawnUpstream(upstreamBinary, upstreamArgs, options = {}) {
+  const windowsScript = process.platform === 'win32' && /\.(?:cmd|bat)$/iu.test(upstreamBinary);
+  return spawn(upstreamBinary, upstreamArgs, {
+    ...options,
+    ...(windowsScript ? { shell: true } : {}),
+  });
+}
+
 export function renderPosixLauncher({ nodePath, runtimeEntry, installDir }) {
   const qNode = quotePosixSingle(nodePath);
   const qEntry = quotePosixSingle(runtimeEntry);
@@ -389,7 +397,7 @@ export async function runRestore(options = {}) {
 
 async function runPassthroughCommand({ upstreamBinary, upstreamArgs }) {
   return await new Promise((resolve) => {
-    const child = spawn(upstreamBinary, upstreamArgs, {
+    const child = spawnUpstream(upstreamBinary, upstreamArgs, {
       stdio: 'inherit',
       windowsHide: true,
     });
@@ -416,7 +424,7 @@ async function runPassthroughCommand({ upstreamBinary, upstreamArgs }) {
 }
 
 async function runAcpProxy({ installDir, upstreamBinary, upstreamArgs, config, geminiHome }) {
-  const child = spawn(upstreamBinary, upstreamArgs, {
+  const child = spawnUpstream(upstreamBinary, upstreamArgs, {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
     detached: process.platform !== 'win32',

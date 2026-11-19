@@ -55,3 +55,7 @@
 - 第三方 `C:\Users\Administrator\.agents\skills\show-me\SKILL.md` 保持未修改。
 
 遵循仓库 [Skill Verification](../../../AGENTS.md#skill-verification)：静态文档审阅、一致性、包装和链接检查，不创建或运行模拟会话行为测试。
+
+## 2026-11-19：与 yjx-grill 的路由边界
+
+明确两者协作关系：`yjx-grill` 主持问题门禁、方案范围、批准选项、实施授权和结论载体写入；`yjx-unslop` 只负责表达组织、去重和必要视图选择。该规则避免自动调用 `yjx-unslop` 时改写讨论流程或授权边界。
