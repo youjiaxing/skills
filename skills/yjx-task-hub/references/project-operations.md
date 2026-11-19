@@ -60,6 +60,8 @@ node <skill-dir>/scripts/hub.mjs stop --session <token>
 
 `before` 必须是完整可写属性快照，示例只省略与说明无关的字段。只读/计算/系统属性不回传。`patch` 是最小变化；名称含“人工”的字段还须列入 `explicitHumanProperties`，且确有用户点名授权。缺失不等于空值，清空须有相应授权。`prepare` 产生 `expected`（完整快照合并补丁），`unchanged:true` 则免写。
 
+URL 属性指向本地文件时使用 `file:///` 加绝对路径；已有共享地址使用 `http://` 或 `https://`。只有用户明确要求发布共享报告时才进入报告发布流程，不自动上传、转换或发布本地文件。
+
 派发传 `action:dispatch`、`opId` 和上述 current，state 取重读的完整可写属性。脚本核对身份父链以及 current.state 与 before 一致；MCP 更新的可写属性取返回 expected，防止未提交字段被隐式重置。schema 不支持保真回传时停止，不猜格式。
 
 ### 正文更新
