@@ -330,7 +330,7 @@ export function createAcpProxySession(opts) {
       const baseId = entry.value;
       const baseName = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : baseId;
       const nativeSize = await getModelNativeSize(baseId);
-      const defaultIsTighter = nativeSize === null || nativeSize > config.defaultCapTokens;
+      const defaultIsTighter = nativeSize !== null && nativeSize > config.defaultCapTokens;
 
       out.push({
         ...entry,
@@ -376,13 +376,17 @@ export function createAcpProxySession(opts) {
     const ensureVariantId = persistedSelection?.variantId || activeSessionVariantId;
     if (ensureVariantId && !conflictedVariantIds.has(ensureVariantId) && !out.some((item) => item.value === ensureVariantId)) {
       const rec = historicalVariants.get(ensureVariantId);
+      const rawBaseEntry = rec ? rawEntries.find((item) => item && item.value === rec.baseId) : null;
       const baseItem = rec ? out.find((item) => item.value === rec.baseId) : null;
       if (rec && baseItem) {
+        const rawBaseName = rawBaseEntry && typeof rawBaseEntry.name === 'string' && rawBaseEntry.name.trim()
+          ? rawBaseEntry.name.trim()
+          : baseItem.name;
         const suffixLabel = rec.isNativeMax ? 'Full' : formatTokenCountLabel(rec.capTokens);
         out.push({
           ...baseItem,
           value: rec.variantId,
-          name: `${baseItem.name.replace(/\s+\([^)]+\)$/u, '')} (${suffixLabel})`,
+          name: `${rawBaseName} (${suffixLabel})`,
         });
       }
     }

@@ -247,6 +247,8 @@ describe('acp-proxy protocol gating and variant management', () => {
     const firstNew = await h.waitForClientMessage((m) => m.id === 2);
     const firstValues = firstNew.result.configOptions[0].options.map((o) => o.value);
     assert.deepEqual(firstValues, ['alpha', 'alpha-full', 'claude-sonnet']);
+    const firstClaude = firstNew.result.configOptions[0].options.find((o) => o.value === 'claude-sonnet');
+    assert.equal(firstClaude.name, 'Claude Sonnet', 'must not label unobserved model with (500k)');
 
     await h.sendFromClient({
       jsonrpc: '2.0',
