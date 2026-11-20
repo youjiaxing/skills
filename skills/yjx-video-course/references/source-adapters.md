@@ -11,7 +11,7 @@
 - `normalize-transcript.mjs`：将 VTT/SRT 或 `[mm:ss]` 时间文本转换为 `body: [{from,to,text}]`，时间为秒；VTT/SRT 保留原始起止与毫秒精度，文本格式的结束时间仍为推断。用 `--help` 查看格式、语言和自动字幕滚动去重选项。
 - `validate-evidence.mjs`：校验时间范围、知识段和主张引用，替代临时 Shell/Node 检查。
 
-浏览器适配器不能绕过登录、反机器人验证或平台权限；它只能把页面状态转成固定字段。遇到 `login_or_verification_required`，以及一切登录态、画质门禁与“浏览器”定义，统一按主 skill 的“访问门禁与登录态判定”执行，本文件不重复规则。
+浏览器适配器不能绕过登录、反机器人验证或平台权限；它只能把页面状态转成固定字段。遇到 `login_or_verification_required`，以及一切登录态、画质门禁与“浏览器”定义，统一按 [访问门禁与登录态判定](access-gates.md) 执行，本文件不重复规则。
 
 - `capture-bilibili-frames.mjs`：匿名下载指定档位并截取解码帧；先探测截帧工具（优先 ffmpeg/ffprobe，其次 OpenCV），都没有时在下载前返回 `frame_tools_missing`（退出码 4）。
 - `extract-hard-subtitles.mjs`：macOS Swift Vision 硬字幕 OCR；非 macOS 或缺少 `swiftc`/`python3` 时输出结构化 `ocr_unavailable`（退出码 3），不抛堆栈。
@@ -51,7 +51,7 @@
 
 软件演示优先请求 1080P 高帧率。只有当 1080P 已确认不可达，才允许退到 720P，且必须同时保留可用帧率并记录回退依据。若 1080P 被登录或权限门槛挡住，立即停止截图并请求用户完成登录，确认后重试 1080P；不得静默降级到 720P 及以下。匿名访问、低画质试验请求和放大插值都不能作为“清晰截图”的证据。
 
-以 Bilibili 为例，画质代码 `80/64/32/16` 分别对应 1080P/720P/480P/360P。匿名播放请求即使返回包含 1080P/720P 的 `accept_quality`，也可能只实际下发 480P/360P 的 DASH 流；必须核对响应中真正可用的 `dash.video` 尺寸、帧率和播放器实际 `videoWidth × videoHeight`，不能只看菜单文案。画质结论的登录态依据见主 skill。
+以 Bilibili 为例，画质代码 `80/64/32/16` 分别对应 1080P/720P/480P/360P。匿名播放请求即使返回包含 1080P/720P 的 `accept_quality`，也可能只实际下发 480P/360P 的 DASH 流；必须核对响应中真正可用的 `dash.video` 尺寸、帧率和播放器实际 `videoWidth × videoHeight`，不能只看菜单文案。画质结论的登录态依据见 [访问门禁与登录态判定](access-gates.md)。
 
 **有浏览器时优先浏览器路径：** 页面所在的内置浏览器通常已经登录 Bilibili。正式取证先通过浏览器标签执行：
 
@@ -66,7 +66,7 @@ const result = await captureBilibiliFramesFromBrowser(tab, {
 });
 ```
 
-该脚本在页面内请求站点 `api.bilibili.com` 的 `playurl`，使用当前浏览器正常登录态，不读取或导出 Cookie。只读 DOM 无法取帧时，自动尝试同一绑定标签的原生 CDP 页面执行；两种执行能力均不可用时返回 `frame_capture_capability_unavailable`。已具备原生执行能力但页面报错或执行超时返回 `frame_capture_failed`，不误报为能力缺失。首次使用宿主的 `cdp` 能力前，先读取该能力的工具说明，再调用脚本。返回 `status: captured` 时才继续；其他返回码的含义与下一步见主 skill 的“访问门禁与登录态判定”。
+该脚本在页面内请求站点 `api.bilibili.com` 的 `playurl`，使用当前浏览器正常登录态，不读取或导出 Cookie。只读 DOM 无法取帧时，自动尝试同一绑定标签的原生 CDP 页面执行；两种执行能力均不可用时返回 `frame_capture_capability_unavailable`。已具备原生执行能力但页面报错或执行超时返回 `frame_capture_failed`，不误报为能力缺失。首次使用宿主的 `cdp` 能力前，先读取该能力的工具说明，再调用脚本。返回 `status: captured` 时才继续；其他返回码的含义与下一步见 [访问门禁与登录态判定](access-gates.md)。
 
 ### 内置浏览器截图与原生取帧回退
 
@@ -94,7 +94,7 @@ node scripts/capture-bilibili-frames.mjs \
 
 ## 访问门禁
 
-见主 skill 的“访问门禁与登录态判定”。
+见 [访问门禁与登录态判定](access-gates.md)。
 
 ## 无浏览器 / 非 macOS 降级路线
 
@@ -135,7 +135,7 @@ node scripts/capture-bilibili-frames.mjs \
 - 字幕读取调用 `captureBilibiliSubtitle(tab)`；先核验身份，并用返回的 `source_identity` 核对 BV、分P与 CID；可将已确认身份通过 `expectedIdentity` 锁定。`subtitle_exported` 且返回非空、带合法起止时间的 JSON `body` 数组才表示取得文本；普通 JSON 元数据不能算导出成功。
 - 仅接收明确匹配当前 CID 的元数据及其链接，或实际已观察到的 `{aid}{cid}{32位十六进制hash}` AI 字幕路径；不因同属字幕域名就接受，也不选最后一个跨分集响应。未知文件命名且无元数据关联时保留“当前未取得”。读取后重新核验页面，自动跳集则返回 `source_changed`，不返回旧集正文。
 - `subtitle_empty_response` 表示已关联目标集的空响应；`subtitle_response_unparsed` 表示响应已关联但格式尚未解析；`subtitle_identity_unverified` 表示身份未核实，不能将其当作“没有字幕”。
-- 身份核验失败时先读返回的 `identity_status`、时长和原因，等待播放器就绪后复查；公开标称时长与播放器解码时长容许两秒以内的尾差，BV、分P与 CID 关联仍须一致。
+- 身份核验失败时先读返回的 `identity_status`、时长和原因，等待播放器就绪后复查；公开标称时长与播放器解码时长容许两秒以内的尾差，BV、分P与 CID 关联仍须一致。若页面已加载、字幕或播放器可用，但适配器无法从 `__INITIAL_STATE__` 或常规页面接口解析 CID，不直接判定“来源不可确认”：先在当前浏览器页面内复核 URL 分集参数、页面标题、视频元素时长与解码尺寸以及页内播放信息，将“适配器身份解析缺口”与“来源身份未确认”分开记录；只有页内关键身份字段仍无法一致核对时才阻塞该集。
 - 当前已实测播放器 `/x/player/wbi/v2` 的 `data.subtitle.subtitles` 轨道，以及 `/x/v2/subtitle/web/view` 中 `oid=目标CID`、`pid=目标aid` 的联合关联；这里只在该字幕接口解释 `oid/pid`，不推广到其他接口。一个接口的空响应不能覆盖另一个接口已发现的轨道；`subtitle_track_not_loaded` 表示已发现轨道但尚未取得正文。
 - 已用真实 Bilibili 视频 `BV1xztt6tEtu` 第 58 集回归：登录和页面身份确认通过，选择“中文”轨道后实际读取 `aisubtitle.hdslb.com` JSON，得到 154 条带 `from/to/content` 的字幕文本。
 - `subtitle_empty_response` 是一次已完成的接口核验结果，不是“适配器还没做完”。记录接口、HTTP 状态、响应字节数和当前分集后，若页面没有实际暴露其他字幕轨道，就结束本次 Bilibili 字幕路线；不盲猜 `preferred_language` 或反复重放同一请求。

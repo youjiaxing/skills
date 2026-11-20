@@ -36,9 +36,9 @@
 
 - 起止时间均以原视频为基准，数值有限，满足 `0 <= time_start <= time_end <= duration_seconds`。不确定时长必须先确认，才能通过涉及范围的检查。
 - 证据产物状态与界面状态分开审核：已成功导出的字幕、音频或画面文件继续作为证据；一次播放器刷新、跳转或渲染异常只能记录为当前观察失败。对临时异常至少复查同一来源和时间段，或读取已保存产物，不能据此把“当前未渲染”改判为“来源不存在”。
-- 软件演示画面审核必须包含分辨率与帧率链检查：请求画质、实际画质、实际帧率、原始解码帧、播放器渲染尺寸和最终裁剪尺寸是否记录并一致。分辨率和帧率分开判断：默认优先实际 1080P，最低最终图门槛为 720P；在选定分辨率内优先实际帧率更高的流，但不把 1080P 自动标成高帧率。登录与画质门禁按主 skill 的“访问门禁与登录态判定”审核。原始解码帧高度低于 720 像素、实际档位低于已声明可达档位，或最终文字不可辨认时，改用合适源重取；无法重取时只能降级为文字转录和观察事实，不能标为“图片与凭据”检查通过，也不能在未说明原因时设置完成状态。
+- 软件演示画面审核必须包含分辨率与帧率链检查：请求画质、实际画质、实际帧率、原始解码帧、播放器渲染尺寸和最终裁剪尺寸是否记录并一致。分辨率和帧率分开判断：默认优先实际 1080P，最低最终图门槛为 720P；在选定分辨率内优先实际帧率更高的流，但不把 1080P 自动标成高帧率。登录、画质与裁剪门槛按 [访问门禁与登录态判定](access-gates.md) 和 [画面取帧与画质门禁](visual-capture.md) 审核。原始解码帧高度低于 720 像素、实际档位低于已声明可达档位，或最终文字不可辨认时，改用合适源重取；无法重取时只能降级为文字转录和观察事实，不能标为“图片与凭据”检查通过，也不能在未说明原因时设置完成状态。
 - **截图边界与构图审核**：聚焦裁剪旨在剥离浏览器标签、地址栏、播放列表等外部非视频外壳；只要不遮挡教学核心内容（代码、终端、图表），画面自带的讲者摄像头与原生字幕默认视为自然视频构图允许保留，严禁因未抠除边角摄像头或字幕而判定审核不通过，避免过度微调带来的无谓耗时。
-- 登录态审核：检查结论是否符合主 skill“访问门禁与登录态判定”，四种状态没有混写，匿名或外部请求结果没有被当作未登录并据此要求用户登录（否则审核失败）。
+- 登录态审核：检查结论是否符合 [访问门禁与登录态判定](access-gates.md)，四种状态没有混写，匿名或外部请求结果没有被当作未登录并据此要求用户登录（否则审核失败）。
 - 对转换后的音频核对时长和音轨完整性；片段转写要记录裁切起点，并把局部时间加回偏移。中间裁剪、加速或拼接必须保留时间映射，无法映射时不用该产物生成锚点。
 - 字幕或转写段中有较长空白、明显首尾缺失或不连续时，检查是否只是静音、片段下载或截断；覆盖比例不是内容准确性的证明。
 - 分集 ID、轨道语言与证据一致。AI 字幕、译文与配音不一致时保留冲突，不只凭文案语言认定匹配。
@@ -84,7 +84,40 @@
 
 审核通过只允许进入下一交付步骤，不证明 Notion 已写入。写入与外部后置核验遵守 [Notion 交付](notion-delivery.md)（并发上传图片、一步创建页面并单次回读核验）。
 
-`delivery.json` 是逐集恢复的事实来源。每次中断或失败都追加不含凭据的事件，恢复时从最后一个已验证状态继续；运行 `node scripts/validate-delivery.mjs <delivery.json> <输出目录>` 失败时，停止该集的外部写入或完成标记。
+`delivery.json` 是逐集恢复的事实来源。每次中断或失败都追加不含凭据的事件，恢复时从最后一个已验证状态继续；运行 `node scripts/validate-delivery.mjs <delivery.json> <输出目录>` 失败时，停止该集的外部写入或完成标记。纯本地交付（未请求 Notion，从 `draft_audited` 直接进入 `completed`）示例：
+
+```json
+{
+  "source_id": "bilibili:BV1xztt6tEtu:p=58",
+  "episode_id": "58",
+  "state": "completed",
+  "state_history": [
+    { "state": "source_verified", "at": "2026-10-16T13:04:00.000Z" },
+    { "state": "evidence_ready", "at": "2026-10-16T13:09:30.000Z" },
+    { "state": "draft_audited", "at": "2026-10-16T13:15:00.000Z" },
+    { "state": "completed", "at": "2026-10-16T13:16:00.000Z" }
+  ],
+  "evidence_file": "evidence/evidence.json",
+  "course_file": "course.md",
+  "audit": {
+    "method": "current_agent_review",
+    "reason": "host has no subagent support",
+    "result": "pass",
+    "at": "2026-10-16T13:15:00.000Z"
+  },
+  "capabilities": {
+    "login_state": "browser_session_unverified",
+    "subtitle_text": "当前未取得（anonymous_request 返回空轨道）",
+    "hard_subtitle_ocr": "ocr_unavailable: platform_not_macos",
+    "transcription": "faster-whisper small (int8, CPU)",
+    "frames": "720P 30fps anonymous progressive, frame_backend=ffmpeg"
+  },
+  "events": [
+    { "at": "2026-10-16T13:05:00.000Z", "type": "capability_gap", "detail": "no host browser; login state unverified" }
+  ],
+  "notion": { "requested": false }
+}
+```
 
 ## 阻塞报告
 
