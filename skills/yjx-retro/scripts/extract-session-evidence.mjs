@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-const RETRO_SKILL_NAME = "yjx-retro-skill";
+const RETRO_SKILL_NAMES = new Set(["yjx-retro", "yjx-retro-skill"]);
 const RUN_OUTCOME_FOLLOWING_RUNS = 3;
 
 function oneLine(text, max) {
@@ -87,7 +87,7 @@ Options:
   --since-time <ISO>      Inclusive cross-thread evidence start (otherwise derived from the parent's range)
   --until-time <ISO>      Exclusive cross-thread evidence cutoff; never reuse parent ordinals in children
   --subagents-only        Output only compact child evidence, reusing the parent's existing context
-  --preflight             Read only session metadata, compaction/handoff markers and yjx-retro-skill invocations,
+  --preflight             Read only session metadata, compaction/handoff markers and yjx-retro / yjx-retro-skill invocations,
                            then print the review range start and routing decision; each earlier invocation
                            carries runOutcomes (its run plus up to 3 following runs: status, tool count,
                            assistant output, last reply preview) for judging whether it delivered
@@ -286,7 +286,7 @@ export async function preflightFiles(filePaths, opts = {}) {
       ) {
         const rawText = extractContentText(payload.content);
         const cls = classifyUserMessage(rawText);
-        if (cls.kind === "skill_injection" && cls.name === RETRO_SKILL_NAME) {
+        if (cls.kind === "skill_injection" && RETRO_SKILL_NAMES.has(cls.name)) {
           const inv = {
             location: `${tag}:L${lineNo}`,
             ordinal: ord,
@@ -401,11 +401,11 @@ function safeJsonParse(raw, fallback = {}) {
 function isRetroInvocationText(text) {
   if (!text || typeof text !== "string") return false;
   const cls = classifyUserMessage(text);
-  if (cls.kind === "skill_injection" && cls.name === RETRO_SKILL_NAME) {
+  if (cls.kind === "skill_injection" && RETRO_SKILL_NAMES.has(cls.name)) {
     return true;
   }
   if (cls.kind === "human") {
-    return /(?:^|\s|\$|\/|\[)yjx-retro-skill(?:\b|\]|$)/i.test(cls.cleanText);
+    return /(?:^|\s|\$|\/|\[)(?:yjx-retro-skill|yjx-retro)(?![\w-])/i.test(cls.cleanText);
   }
   return false;
 }
@@ -2311,13 +2311,14 @@ function readT3Evidence(db, threadId) {
   return { id: threadId, meta, events, fingerprints: new Set(), gaps: [], providers };
 }
 
-function summarizeChildEvidence(data, events, gaps) {
+function summarizeChildEvidence(data, events, gaps, { isRoot = false } = {}) {
   const tools = new Map();
   const commands = new Map();
   const skills = [];
   const requirements = [];
   const failures = [];
   const toolCalls = [];
+  const rootOmittedTools = new Map();
   let result = null;
   for (const e of events) {
     if (e.type === "user") {
@@ -2356,8 +2357,19 @@ function summarizeChildEvidence(data, events, gaps) {
           if (input.skill) skills.push({ location: e.location, name: input.skill });
         }
       }
-      if (e.output === null || e.output === undefined) gaps.push({ reason: "tool-result-unavailable", location: e.location });
+      if (e.output === null || e.output === undefined) {
+        if (isRoot && !outcome.failed && String(e.status || "").toLowerCase() === "completed") {
+          const toolLabel = e.toolName || "unknown";
+          rootOmittedTools.set(toolLabel, (rootOmittedTools.get(toolLabel) || 0) + 1);
+        } else {
+          gaps.push({ reason: "tool-result-unavailable", location: e.location });
+        }
+      }
     }
+  }
+  if (rootOmittedTools.size > 0) {
+    const summary = [...rootOmittedTools.entries()].map(([name, cnt]) => `${name} x${cnt}`).join(", ");
+    gaps.push({ reason: `root-completed-tool-output-not-persisted (${summary})` });
   }
   return {
     coverage: gaps.length ? "partial-index; not a completed review" : "indexed; model review required",
@@ -2492,7 +2504,7 @@ export async function collectSubagentEvidence(opts) {
         gaps.push({ reason: "fork-history-boundary-unverified" });
       }
       if (!isRoot && !data.events.length) gaps.push({ reason: "child-events-unavailable" });
-      node.evidence = summarizeChildEvidence(data, visible.filter((e) => e.type !== "subagent"), gaps);
+      node.evidence = summarizeChildEvidence(data, visible.filter((e) => e.type !== "subagent"), gaps, { isRoot });
       node.evidence.inheritedExcluded = inheritedExcluded;
       node.evidence.updatedAfterCutoff = updatedAfterCutoff;
       node.active = activityInRange;

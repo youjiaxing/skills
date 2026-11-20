@@ -8,7 +8,7 @@ import {
   analyzeFiles,
   formatMarkdown,
   preflightFiles,
-} from "../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs";
+} from "../skills/yjx-retro/scripts/extract-session-evidence.mjs";
 
 function meta(ordinal) {
   return { ordinal, type: "session_meta", payload: { id: "sess-r", cwd: "/repo" } };
@@ -209,7 +209,7 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
     preflightT3Thread,
     analyzeT3Thread,
     lookupT3Item,
-  } = await import("../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs");
+  } = await import("../skills/yjx-retro/scripts/extract-session-evidence.mjs");
 
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-evidence-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -394,7 +394,7 @@ test("T3 SQLite 多定时器与 freshContext 分段：预检分流 full，剥离
     preflightT3Thread,
     analyzeT3Thread,
     formatMarkdown,
-  } = await import("../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs");
+  } = await import("../skills/yjx-retro/scripts/extract-session-evidence.mjs");
 
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-timers-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -603,7 +603,7 @@ test("T3 SQLite 无 scheduled_tasks 表时仍可从 turn_item_id 解码历史定
   const {
     preflightT3Thread,
     analyzeT3Thread,
-  } = await import("../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs");
+  } = await import("../skills/yjx-retro/scripts/extract-session-evidence.mjs");
 
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-noschedtable-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -747,7 +747,7 @@ test("JSONL 预检：同一轮里的 $skill 消息与 skill 注入属于同一�
 test("T3 SQLite：预检附带后续轮次结果；完整提取输出逐轮工具统计、工具调用列表、Skill 文件读写区分、$skill 候选与失败判定依据", async (t) => {
   const { DatabaseSync } = await import("node:sqlite");
   const { preflightT3Thread, analyzeT3Thread } = await import(
-    "../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs"
+    "../skills/yjx-retro/scripts/extract-session-evidence.mjs"
   );
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-outcome-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -853,7 +853,7 @@ test("T3 SQLite：预检附带后续轮次结果；完整提取输出逐轮工�
 test("Skill 读写判定：写入临时文件附带 Test-Path 或 here-string 提及技能路径时不误报为读写 Skill", async (t) => {
   const { DatabaseSync } = await import("node:sqlite");
   const { analyzeT3Thread } = await import(
-    "../skills/yjx-retro-skill/scripts/extract-session-evidence.mjs"
+    "../skills/yjx-retro/scripts/extract-session-evidence.mjs"
   );
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-skill-access-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -920,4 +920,62 @@ test("Skill 读写判定：写入临时文件附带 Test-Path 或 here-string �
     report.skills.fileWrites.map((w) => [w.callId, w.paths]),
     [["c3", ["D:/repo/skills/real/SKILL.md"]]]
   );
+});
+
+test("preflightFiles 同时识别新名 yjx-retro 与历史名 yjx-retro-skill，且不误判 yjx-retro-sessions", async (t) => {
+  const ev = (ordinal, type, extra = {}) => ({ ordinal, type: "event_msg", payload: { type, ...extra } });
+  const file = await writeSession(t, [
+    meta(0),
+    ev(1, "task_started", { turn_id: "t1" }),
+    human(2, "task A"),
+    skill(3, "yjx-retro-skill"),
+    ev(4, "task_complete", {}),
+    ev(5, "task_started", { turn_id: "t2" }),
+    human(6, "使用 $yjx-retro-sessions 扫描历史"),
+    ev(7, "task_complete", {}),
+    ev(8, "task_started", { turn_id: "t3" }),
+    human(9, "task B"),
+    human(10, "$yjx-retro 再复盘一次"),
+    skill(11, "yjx-retro"),
+  ]);
+  const pre = await preflightFiles([file]);
+  assert.equal(pre.retroInvocations.length, 3);
+  assert.equal(pre.previousRetro.ordinal, 3);
+  assert.equal(pre.rangeStartOrdinal, 3);
+});
+
+test("collectSubagentEvidence 聚合根线程已成功完成但未存 output 的只读工具，不刷屏 tool-result-unavailable", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { collectSubagentEvidence } = await import("../skills/yjx-retro/scripts/extract-session-evidence.mjs");
+  const dir = await mkdtemp(path.join(os.tmpdir(), "yjx-root-gaps-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dbPath = path.join(dir, "statev2.sqlite");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, title TEXT, payload_json TEXT);
+    CREATE TABLE orchestration_v2_projection_turn_items (
+      turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT,
+      provider_thread_id TEXT, ordinal INTEGER, type TEXT NOT NULL, status TEXT NOT NULL,
+      updated_at TEXT NOT NULL, payload_json TEXT NOT NULL
+    );
+    CREATE TABLE orchestration_v2_projection_provider_threads (
+      provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, payload_json TEXT NOT NULL
+    );
+    CREATE TABLE orchestration_v2_projection_subagents (
+      subagent_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, child_thread_id TEXT,
+      provider TEXT, provider_thread_id TEXT, origin TEXT, status TEXT,
+      started_at TEXT, completed_at TEXT, updated_at TEXT, payload_json TEXT
+    );
+  `);
+  const ts = "2026-11-20T01:00:00.000Z";
+  db.prepare("INSERT INTO orchestration_v2_projection_threads VALUES (?,?,?)").run("t-root", "root", "{}");
+  const add = db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?,?,?,?,?,?,?,?,?)");
+  add.run("u1", "t-root", "r1", "pt1", 1, "user_message", "completed", ts, JSON.stringify({ text: "hello", startedAt: ts }));
+  add.run("d1", "t-root", "r1", "pt1", 2, "dynamic_tool", "completed", ts, JSON.stringify({ toolName: "Read", input: { Path: "a.md" }, output: null, startedAt: ts }));
+  add.run("d2", "t-root", "r1", "pt1", 3, "dynamic_tool", "completed", ts, JSON.stringify({ toolName: "Read", input: { Path: "b.md" }, output: null, startedAt: ts }));
+  db.close();
+
+  const ev = await collectSubagentEvidence({ sessionId: "t-root", t3Db: dbPath });
+  assert.equal(ev.gaps.length, 1);
+  assert.equal(ev.gaps[0].reason, "root-completed-tool-output-not-persisted (Read x2)");
 });

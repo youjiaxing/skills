@@ -1,5 +1,5 @@
 ---
-name: comic-video-pipeline
+name: yjx-comic-video
 description: >-
   Use before making or changing any 'dynamic comic' video built from still
   images + code animation + TTS voice (character dialogue, comedic explainer);

@@ -91,9 +91,10 @@ npx skills add youjiaxing/skills --skill yjx-grill
 ### 5. 本机钉钉只读解析
 
 - **`yjx-dingtalk`**：只在用户明确要求查询钉钉时手动调用。以共享只读方式读取本机客户端已缓存的数据库与 WAL，现场推导 V3 密钥且不落盘；副本默认存于 `~/.yjx-dingtalk/`。不关闭或重启钉钉，不注入、不读进程内存，不改钉钉数据。撤回消息只输出元数据。真实数据验证目前仅覆盖 Windows（钉钉 9.0.1），macOS/Linux 的客户端兼容性仍属验收工作。
-### 6. 会话后的 Skill 复盘
+### 6. 会话复盘与多会话能力挖掘
 
-- **[`yjx-retro-skill`](skills/yjx-retro-skill/SKILL.md)**：实质任务结束后手动调用，依据当前上下文或原始会话记录复盘整个任务过程与用户每一次纠正，向已用/未调用 Skill 优化、新建或拆分 Skill 提议（输出概要卡片）、项目文档/Spec 及项目/用户级 `AGENTS.md` 四层去特例化分流。当前上下文完整时由主代理单代理直读，已压缩或跨会话时委派隔离子代理取证；默认只提建议不直接修改或创建 skill。
+- **[`yjx-retro`](skills/yjx-retro/SKILL.md)**：单次实质任务结束后手动调用（脚本兼容识别历史调用名 `yjx-retro-skill`），依据当前上下文或原始会话记录复盘过程、试错转折、前次建议落地回查（Follow-through）与用户每一次纠正，按确定性脚本/Hook 护栏优先原则及 Skill、项目文档、仓库与个人 `AGENTS.md` 四层精确分流，并借助 [`retro-ledger.mjs`](skills/yjx-retro/scripts/retro-ledger.mjs) 原子维护跨会话弱候选与决策记忆。当前上下文完整时由主代理单代理直读，已压缩或跨会话时委派隔离子代理取证；默认只提建议不直接实施。
+- **[`yjx-retro-sessions`](skills/yjx-retro-sessions/SKILL.md)**：按需手动调用，通过 0-token 本地预扫脚本 [`mine-sessions.mjs`](skills/yjx-retro-sessions/scripts/mine-sessions.mjs) 跨 T3 Code、Codex CLI 与 Claude Code CLI 历史会话聚合重复指令、高频报错与高摩擦会话（自动基于 T3 `nativeThreadRef` 去重 CLI 重复记录），并配 [`health-check.mjs`](skills/yjx-retro-sessions/scripts/health-check.mjs) 做规则/Skill 静态死链与体积体检；仅将压缩摘要与 Top K 高信号切片交给模型深挖，兼顾能力提升与额度控制。
 
 ### 7. 飞书 Agent 桥接
 

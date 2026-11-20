@@ -69,12 +69,25 @@ async function readJsonSafe(file) {
   catch { return null; }
 }
 
+async function renameWithWindowsRetry(temp, file) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(temp, file);
+      return;
+    } catch (error) {
+      const transient = error && (error.code === 'EPERM' || error.code === 'EBUSY' || error.code === 'EACCES');
+      if (!transient || attempt >= 5) throw error;
+      await delay(15 * (attempt + 1));
+    }
+  }
+}
+
 async function writeJsonAtomic(file, data) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await writeFile(temp, JSON.stringify(data), { mode: 0o600 });
-    await rename(temp, file);
+    await renameWithWindowsRetry(temp, file);
   } finally {
     await rm(temp, { force: true }).catch(() => {});
   }
