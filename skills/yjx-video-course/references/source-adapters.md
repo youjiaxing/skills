@@ -35,21 +35,7 @@
 
 状态使用“已确认”“当前未取得”“不适用”或“尚未确认”，不要把接口成功、菜单显示或单个加载结果直接当成内容证据。
 
-画面能力必须按**最终产出分辨率**确认，而不是只写“能截图”。对软件演示，至少记录：
-
-| 字段 | 要求 |
-| --- | --- |
-| `capture_surface` | 截的是播放器元素本身、视频解码帧，还是整页截图 |
-| `selected_quality` | 播放器或源文件实际采用的清晰度档位（例如 1080P、720P） |
-| `selected_frame_rate` | 实际采用帧率；高帧率版本存在时不得无声丢掉 |
-| `decoded_frame_size` | `video.videoWidth × video.videoHeight` |
-| `rendered_player_size` | 视频元素实际渲染的 CSS 像素尺寸 |
-| `device_pixel_ratio` | 当前页面 DPR |
-| `final_image_size` | 最终要嵌入课程的图片宽高 |
-
-若 `rendered_player_size` 明显小于 `decoded_frame_size`，整页或播放器截图会把桌面界面缩到几百像素宽，终端文字随即变成不可读的模糊块。此时的截图即使“没有播放器外壳”，也不满足课程画面门槛。
-
-软件演示优先请求 1080P 高帧率。只有当 1080P 已确认不可达，才允许退到 720P，且必须同时保留可用帧率并记录回退依据。若 1080P 被登录或权限门槛挡住，立即停止截图并请求用户完成登录，确认后重试 1080P；不得静默降级到 720P 及以下。匿名访问、低画质试验请求和放大插值都不能作为“清晰截图”的证据。
+画面能力字段（`capture_surface`、`selected_quality`、`selected_frame_rate`、`decoded_frame_size`、`rendered_player_size`、`device_pixel_ratio`、`final_image_size`）、软件演示必须使用原始解码帧的裁剪规则，以及 **1080P 优先、最低 720P** 的分辨率与帧率门槛，统一遵守 [画面取帧与画质门禁](visual-capture.md)。
 
 以 Bilibili 为例，画质代码 `80/64/32/16` 分别对应 1080P/720P/480P/360P。匿名播放请求即使返回包含 1080P/720P 的 `accept_quality`，也可能只实际下发 480P/360P 的 DASH 流；必须核对响应中真正可用的 `dash.video` 尺寸、帧率和播放器实际 `videoWidth × videoHeight`，不能只看菜单文案。画质结论的登录态依据见 [访问门禁与登录态判定](access-gates.md)。
 
