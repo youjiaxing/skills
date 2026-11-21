@@ -166,13 +166,15 @@ test('concurrent stale-lock reclamation serializes contenders without clobbering
   const limiterB = createFeishuRateLimiter({ gateDir, appId, minIntervalMs: 50, sleep: async () => {} });
   const limiterC = createFeishuRateLimiter({ gateDir, appId, minIntervalMs: 50, sleep: async () => {} });
 
+  const tStart = Date.now();
   await Promise.all([
     limiterA.recordCooldown(100),
     limiterB.recordCooldown(200),
     limiterC.recordCooldown(300),
   ]);
   const gateState = JSON.parse(await (await import('node:fs/promises')).readFile(limiterA.gateFile, 'utf8'));
-  assert.ok(gateState.cooldownUntil >= Date.now() + 200);
+  assert.ok(gateState.cooldownUntil >= tStart + 300);
+  assert.ok(gateState.cooldownUntil <= Date.now() + 300);
 });
 
 test('deadlineMs stops rate-limit retries before caller timeout and records cooldown', async t => {

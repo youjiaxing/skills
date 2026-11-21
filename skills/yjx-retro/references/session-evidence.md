@@ -44,11 +44,12 @@ node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<parent-th
 ```bash
 node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-id>" --item-id "<turn-item-id-1>" [--item-id "<turn-item-id-2>" ...]
 node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<child-thread-id>" --format md
+node "<skill-dir>/scripts/extract-session-evidence.mjs" --cleanup "<temp-evidence-index.md>"
 ```
 
 若目标记录属于显式 JSONL 文件列表或其他非标准格式，可通过 `--file <path>`、`--until-ordinal <n>` 或先检查记录实际格式再按消息顺序分段提取。
 
-基于提取出的完整真人输入与定位索引，围绕疑点回查特定行号或 `itemId` 的原始消息、完整工具输出及关联产物（调用成功不等于产物正确），不把整份原始日志载入主代理上下文。取证子代理清理其创建的临时索引文件后返回：
+基于提取出的完整真人输入与定位索引，围绕疑点回查特定行号或 `itemId` 的原始消息、完整工具输出及关联产物（调用成功不等于产物正确），不把整份原始日志载入主代理上下文。使用 `--output` 写出临时索引时，读取完毕后通过上述 `--cleanup` 命令删除该临时文件再返回：
 
 - 目标身份、截止点、覆盖范围（含多 Agent 会话涉及的各 Run / Provider、相关子代理及其基础检查情况）与缺口；
 - 实际使用的 skill 及执行时版本依据（未使用记为无；同时留存与本次任务痛点相关的候选 skill 线索，并注明是否有证据表明其在任务执行时已可用）；
@@ -57,7 +58,7 @@ node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<child-thr
 - 脚本与模型职责边界线索（两个方向）：重复或周期流程中的模型参与方式、固定规则处理与原始输出规模，以及脚本或规则以关键词、正则、固定条件代替语义判定的位置，附调用或产物定位；即使未发生错误也保留；
 - 归因依据、反证、未解决疑点及按 [SKILL.md 第 3 节](../SKILL.md) 划分的最小改进方向线索。
 
-临时索引确有必要时放在任务专属临时位置，由创建者负责清理。报告与交接仅包含判断必要的信息，脱敏凭据和无关私人内容。
+临时索引确有必要时放在系统临时目录下以 `retro` 开头的文件名（如 `/tmp/retro_evidence.md`），由创建者用 `--cleanup` 清理。报告与交接仅包含判断必要的信息，脱敏凭据和无关私人内容。
 
 ## 证据限制
 

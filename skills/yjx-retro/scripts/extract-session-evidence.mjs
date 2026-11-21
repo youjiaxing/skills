@@ -74,6 +74,7 @@ function printHelp() {
   node extract-session-evidence.mjs --session-id <thread-or-session-id> [options]
   node extract-session-evidence.mjs --file <rollout.jsonl> [--file <rollout2.jsonl> ...] [options]
   node extract-session-evidence.mjs --item-id <turn-item-id> [--item-id <id2> ...] [--session-id <id>] [options]
+  node extract-session-evidence.mjs --cleanup <temp-evidence-path>
 
 Options:
   --session-id <id>       Locate T3 thread in <t3-db> or rollout-*.jsonl files under <codex-home>/sessions
@@ -94,6 +95,7 @@ Options:
   --item-id <id>          Fetch full un-truncated JSON record(s) for one or more T3 turn_item_id values (repeatable)
   --format <json|md>      Output format: json (default) or md
   --output <path>         Write output to file instead of stdout
+  --cleanup <path>        Remove a temporary retro* evidence file inside the system temp directory
   --help, -h              Show this help message
 `);
 }
@@ -114,6 +116,7 @@ function parseArgs(argv) {
     itemIds: [],
     format: "json",
     output: null,
+    cleanupPath: null,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -152,6 +155,10 @@ function parseArgs(argv) {
       opts.format = argv[++i];
     } else if (arg === "--output") {
       opts.output = argv[++i];
+    } else if (arg === "--cleanup") {
+      const value = argv[++i];
+      if (!value) throw new Error("--cleanup requires a file path");
+      opts.cleanupPath = value;
     } else if (!arg.startsWith("-")) {
       opts.files.push(arg);
     } else {
@@ -637,6 +644,42 @@ export function lookupT3Items(dbPath, itemIds, rawThreadId = null) {
   }
 }
 
+export function cleanupTempEvidenceFile(targetPath) {
+  if (!targetPath) throw new Error("--cleanup requires a file path");
+  const resolved = path.resolve(targetPath);
+  const allowedRoots = [fs.realpathSync(os.tmpdir())];
+  try {
+    const tmpReal = fs.realpathSync("/tmp");
+    if (!allowedRoots.includes(tmpReal)) allowedRoots.push(tmpReal);
+  } catch {}
+  const baseName = path.basename(resolved);
+  if (!/^retro[-_A-Za-z0-9.]*\.(?:md|json)$/i.test(baseName)) {
+    throw new Error(`Refusing to cleanup non-retro file name: ${baseName}`);
+  }
+  const parentDir = path.dirname(resolved);
+  let parentReal;
+  try {
+    parentReal = fs.realpathSync(parentDir);
+  } catch {
+    parentReal = parentDir;
+  }
+  const insideAllowedTmp = allowedRoots.some(
+    (root) => parentReal === root || parentReal.startsWith(root + path.sep)
+  );
+  if (!insideAllowedTmp) {
+    throw new Error(`Refusing to cleanup file outside system temp directory: ${resolved}`);
+  }
+  if (!fs.existsSync(resolved)) {
+    return { cleaned: false, reason: "not-found", path: resolved };
+  }
+  const st = fs.lstatSync(resolved);
+  if (!st.isFile()) {
+    throw new Error(`Refusing to cleanup non-regular file (symlink/directory): ${resolved}`);
+  }
+  fs.unlinkSync(resolved);
+  return { cleaned: true, path: resolved };
+}
+
 export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
   const threadId = normalizeT3ThreadId(rawThreadId);
   const untilOrdinal = opts.untilOrdinal ?? null;
@@ -1013,6 +1056,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
     const compactions = [];
     const handoffs = [];
     const turnAborts = [];
+    const approvalRequests = [];
     const subagents = [];
     const historicalGaps = [];
     const skillInjections = [];
@@ -1182,6 +1226,20 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             payload.reason ||
             payload.title ||
             item.type,
+        });
+        continue;
+      }
+
+      if (item.type === "approval_request") {
+        approvalRequests.push({
+          location: loc,
+          itemId: item.turn_item_id,
+          ordinal: ord,
+          timestamp: ts,
+          completedAt: payload.completedAt || null,
+          status: item.status || payload.status || null,
+          requestKind: payload.requestKind || null,
+          promptPreview: oneLine(payload.prompt || "", 200),
         });
         continue;
       }
@@ -1595,6 +1653,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       subagents,
       historicalGaps,
       turnAborts,
+      approvalRequests,
       skills: {
         injected: skillInjections,
         userTokens: skillTokens,
@@ -2343,6 +2402,7 @@ function readT3Evidence(db, threadId) {
       input: typeof p.input === "string" ? p.input : JSON.stringify(p.input ?? ""),
       output: p.output, status: row.status, exitCode: p.exitCode,
       childThreadId: p.childThreadId || null, parentSubagentId: p.subagentId || null,
+      requestKind: p.requestKind || null,
       prompt: p.prompt || null, completedAt: p.completedAt || null,
     };
   });
@@ -2372,6 +2432,8 @@ function summarizeChildEvidence(data, events, gaps, { isRoot = false } = {}) {
       result = { location: e.location, itemId: e.itemId || null, phase: e.phase || null, preview: oneLine(e.text, 320), truncated: e.text.length > 320 };
     } else if (e.type === "error" || e.type === "run_interrupt_request") {
       failures.push({ location: e.location, reason: e.type });
+    } else if (e.type === "approval_request") {
+      failures.push({ location: e.location, reason: `approval_request (${e.status || "unknown"}, ${e.requestKind || "unknown"}): ${oneLine(e.prompt || "", 120)}` });
     } else if (e.type === "tool") {
       const outcome = parseT3ToolOutcome("dynamic_tool", e.status, { output: e.output, exitCode: e.exitCode });
       const group = tools.get(e.toolName) || { name: e.toolName, calls: 0, failed: 0, outputChars: 0 };
@@ -2809,6 +2871,29 @@ function formatMarkdown(report) {
       );
     }
   }
+  const approvalRequests = Array.isArray(report.approvalRequests) ? report.approvalRequests : [];
+  if (approvalRequests.length > 0) {
+    lines.push("");
+    lines.push(`## Approval Requests (${approvalRequests.length})`);
+    for (const req of approvalRequests) {
+      const itemNote = req.itemId ? ` [item \`${req.itemId}\`]` : "";
+      const endNote = req.completedAt ? ` -> ${req.completedAt}` : "";
+      lines.push(
+        `- ${req.location} (ordinal ${req.ordinal}, ${req.timestamp || "?"}${endNote})${itemNote} kind=${req.requestKind || "unknown"} status=${req.status || "unknown"}: \`${(req.promptPreview || "").replace(/`/g, "'")}\``
+      );
+    }
+  }
+  const turnAborts = Array.isArray(report.turnAborts) ? report.turnAborts : [];
+  if (turnAborts.length > 0) {
+    lines.push("");
+    lines.push(`## Interrupts / Errors (${turnAborts.length})`);
+    for (const ab of turnAborts) {
+      const itemNote = ab.itemId ? ` [item \`${ab.itemId}\`]` : "";
+      lines.push(
+        `- ${ab.location} (ordinal ${ab.ordinal ?? "?"}, ${ab.timestamp || "?"})${itemNote}: ${ab.reason || "aborted"}`
+      );
+    }
+  }
   if (Array.isArray(report.scheduledTriggers) && report.scheduledTriggers.length > 0) {
     lines.push("");
     lines.push(`## Scheduled Triggers (${report.scheduledTriggers.length})`);
@@ -2886,6 +2971,11 @@ function writeOutput(outText, outputPath) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.cleanupPath) {
+    const result = cleanupTempEvidenceFile(opts.cleanupPath);
+    writeOutput(JSON.stringify(result, null, 2), opts.output);
+    return;
+  }
   if (!opts.sessionId && opts.files.length === 0 && opts.itemIds.length === 0) {
     opts.sessionId = process.env.T3CODE_THREAD_ID || process.env.CODEX_THREAD_ID || null;
   }

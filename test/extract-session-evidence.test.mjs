@@ -211,6 +211,7 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
     analyzeT3Thread,
     lookupT3Item,
     lookupT3Items,
+    cleanupTempEvidenceFile,
   } = await import("../skills/yjx-retro/scripts/extract-session-evidence.mjs");
 
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-evidence-"));
@@ -354,6 +355,17 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
     text: "我将使用 yjx-retro-skill 进行复盘。",
     completedAt: "2026-11-13T07:55:15.000Z",
   });
+  addItem("item:appr1", "run:2", "pt:claude:2", 2000007, "approval_request", "completed", {
+    requestKind: "command",
+    prompt: "/bin/zsh -lc 'rm -f /tmp/retro_old.md'",
+    startedAt: "2026-11-13T07:55:16.000Z",
+    completedAt: "2026-11-13T07:56:00.000Z",
+  });
+  addItem("item:err1", "run:2", "pt:claude:2", 2000008, "error", "failed", {
+    title: "Answer delivery not confirmed",
+    failure: { message: "T3 Code could not confirm that your answer reached the agent." },
+    startedAt: "2026-11-13T07:56:01.000Z",
+  });
   db.close();
 
   // 1. 预检：虽无 compaction，但存在跨 Provider handoff，应返回 full，且候选复盘包含 userPreview 与 assistantPreview
@@ -384,6 +396,8 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
   assert.match(md, /## Runs \/ Providers \(2\)/);
   assert.match(md, /## Context Handoffs \(1\)/);
   assert.match(md, /Decoded Citation/);
+  assert.match(md, /## Approval Requests \(1\)/);
+  assert.match(md, /## Interrupts \/ Errors \(1\)/);
 
   // 3. 单条 itemId 回查
   const item = lookupT3Item(dbPath, "item:cmd2", threadId);
@@ -411,6 +425,22 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
   const parsedBatch = JSON.parse(cliBatch);
   assert.equal(parsedBatch.count, 2);
   assert.deepEqual(parsedBatch.items.map((x) => x.itemId), ["item:u2", "item:cmd2"]);
+
+  // 5. 安全清理临时索引文件（允许系统临时目录下 retro* 文件，拒绝非临时目录与非 retro 文件）
+  const tempRetroFile = path.join(os.tmpdir(), `retro-test-${Date.now()}.md`);
+  await writeFile(tempRetroFile, "# temp\n", "utf8");
+  const cleanCli = execFileSync(
+    process.execPath,
+    [
+      new URL("../skills/yjx-retro/scripts/extract-session-evidence.mjs", import.meta.url).pathname,
+      "--cleanup",
+      tempRetroFile,
+    ],
+    { encoding: "utf8" }
+  );
+  assert.equal(JSON.parse(cleanCli).cleaned, true);
+  assert.throws(() => cleanupTempEvidenceFile(path.join(os.tmpdir(), "not-retro.md")), /non-retro/);
+  assert.throws(() => cleanupTempEvidenceFile("/etc/retro-forbidden.md"), /outside system temp/);
 });
 test("T3 SQLite 多定时器与 freshContext 分段：预检分流 full，剥离定时触发并聚合工具经济性与子代理子线程统计", async (t) => {
   const { DatabaseSync } = await import("node:sqlite");
