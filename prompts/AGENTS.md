@@ -60,7 +60,12 @@ discarded after synthesis and the benefit justifies coordination cost.
   actual blockers. Reuse an existing subagent only for follow-ups on the same
   unresolved question or targeted reviewer re-checks; spawn a fresh isolated
   subagent and close finished ones when switching to an independent
-  investigation goal. Use available, authorized equivalents when they establish
+  investigation goal. Give active subagents generous wait windows and keep
+  calling `wait_agent` across `timed_out` polls until a final status
+  (`completed`/`errored`) arrives; call `close_agent` only after completion or
+  when cancelling genuinely obsolete work, never imposing arbitrary short
+  timeouts (such as 120s/180s) to shut down a running subagent. Use available,
+  authorized equivalents when they establish
   the same evidence; otherwise return supported partial findings and the
   blocker for primary reassessment. Escalate scope or access expansion to the
   primary. Temporary verification artifacts require explicit scope, isolation,

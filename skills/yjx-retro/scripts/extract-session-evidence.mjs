@@ -73,7 +73,7 @@ function printHelp() {
   console.log(`Usage:
   node extract-session-evidence.mjs --session-id <thread-or-session-id> [options]
   node extract-session-evidence.mjs --file <rollout.jsonl> [--file <rollout2.jsonl> ...] [options]
-  node extract-session-evidence.mjs --item-id <turn-item-id> [--session-id <id>] [options]
+  node extract-session-evidence.mjs --item-id <turn-item-id> [--item-id <id2> ...] [--session-id <id>] [options]
 
 Options:
   --session-id <id>       Locate T3 thread in <t3-db> or rollout-*.jsonl files under <codex-home>/sessions
@@ -91,7 +91,7 @@ Options:
                            then print the review range start and routing decision; each earlier invocation
                            carries runOutcomes (its run plus up to 3 following runs: status, tool count,
                            assistant output, last reply preview) for judging whether it delivered
-  --item-id <id>          Fetch full un-truncated JSON record for a single T3 turn_item_id
+  --item-id <id>          Fetch full un-truncated JSON record(s) for one or more T3 turn_item_id values (repeatable)
   --format <json|md>      Output format: json (default) or md
   --output <path>         Write output to file instead of stdout
   --help, -h              Show this help message
@@ -111,7 +111,7 @@ function parseArgs(argv) {
     untilTime: null,
     subagentsOnly: false,
     preflight: false,
-    itemId: null,
+    itemIds: [],
     format: "json",
     output: null,
     help: false,
@@ -145,7 +145,9 @@ function parseArgs(argv) {
     } else if (arg === "--preflight") {
       opts.preflight = true;
     } else if (arg === "--item-id") {
-      opts.itemId = argv[++i];
+      const value = argv[++i];
+      if (!value) throw new Error("--item-id requires a turn_item_id value");
+      opts.itemIds.push(value);
     } else if (arg === "--format") {
       opts.format = argv[++i];
     } else if (arg === "--output") {
@@ -589,6 +591,47 @@ export function lookupT3Item(dbPath, itemId, rawThreadId = null) {
       updatedAt: row.updated_at,
       payload: safeJsonParse(row.payload_json, null),
     };
+  } finally {
+    db.close();
+  }
+}
+
+export function lookupT3Items(dbPath, itemIds, rawThreadId = null) {
+  const uniqueIds = [];
+  for (const id of itemIds || []) {
+    if (id && !uniqueIds.includes(id)) uniqueIds.push(id);
+  }
+  if (uniqueIds.length === 0) return [];
+  if (!dbPath || !fs.existsSync(dbPath)) {
+    throw new Error(`T3 database not found: ${dbPath}`);
+  }
+  const threadId = normalizeT3ThreadId(rawThreadId);
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+  try {
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const sql = threadId
+      ? `SELECT thread_id, turn_item_id, run_id, provider_thread_id, ordinal, type, status, updated_at, payload_json FROM orchestration_v2_projection_turn_items WHERE turn_item_id IN (${placeholders}) AND thread_id = ?`
+      : `SELECT thread_id, turn_item_id, run_id, provider_thread_id, ordinal, type, status, updated_at, payload_json FROM orchestration_v2_projection_turn_items WHERE turn_item_id IN (${placeholders})`;
+    const rows = threadId ? db.prepare(sql).all(...uniqueIds, threadId) : db.prepare(sql).all(...uniqueIds);
+    const byId = new Map(rows.map((r) => [r.turn_item_id, r]));
+    const missing = uniqueIds.filter((id) => !byId.has(id));
+    if (missing.length > 0) {
+      throw new Error(`Turn item(s) not found in T3 database: ${missing.join(", ")}`);
+    }
+    return uniqueIds.map((id) => {
+      const row = byId.get(id);
+      return {
+        threadId: row.thread_id,
+        itemId: row.turn_item_id,
+        runId: row.run_id,
+        providerThreadId: row.provider_thread_id,
+        ordinal: row.ordinal,
+        type: row.type,
+        status: row.status,
+        updatedAt: row.updated_at,
+        payload: safeJsonParse(row.payload_json, null),
+      };
+    });
   } finally {
     db.close();
   }
@@ -2843,17 +2886,25 @@ function writeOutput(outText, outputPath) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  if (!opts.sessionId && opts.files.length === 0 && !opts.itemId) {
+  if (!opts.sessionId && opts.files.length === 0 && opts.itemIds.length === 0) {
     opts.sessionId = process.env.T3CODE_THREAD_ID || process.env.CODEX_THREAD_ID || null;
   }
-  if (opts.help || (!opts.sessionId && opts.files.length === 0 && !opts.itemId)) {
+  if (opts.help || (!opts.sessionId && opts.files.length === 0 && opts.itemIds.length === 0)) {
     printHelp();
     process.exit(opts.help ? 0 : 1);
   }
 
-  if (opts.itemId) {
-    const itemRecord = lookupT3Item(opts.t3Db, opts.itemId, opts.sessionId);
+  if (opts.itemIds.length === 1) {
+    const itemRecord = lookupT3Item(opts.t3Db, opts.itemIds[0], opts.sessionId);
     writeOutput(JSON.stringify(itemRecord, null, 2), opts.output);
+    return;
+  }
+  if (opts.itemIds.length > 1) {
+    const items = lookupT3Items(opts.t3Db, opts.itemIds, opts.sessionId);
+    writeOutput(
+      JSON.stringify({ threadId: normalizeT3ThreadId(opts.sessionId), count: items.length, items }, null, 2),
+      opts.output
+    );
     return;
   }
 

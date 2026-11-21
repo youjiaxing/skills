@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -209,6 +210,7 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
     preflightT3Thread,
     analyzeT3Thread,
     lookupT3Item,
+    lookupT3Items,
   } = await import("../skills/yjx-retro/scripts/extract-session-evidence.mjs");
 
   const root = await mkdtemp(path.join(os.tmpdir(), "yjx-t3-evidence-"));
@@ -387,6 +389,28 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
   const item = lookupT3Item(dbPath, "item:cmd2", threadId);
   assert.equal(item.type, "command_execution");
   assert.equal(item.payload.exitCode, 1);
+
+  // 4. 批量 itemIds 回查（含 CLI 重复 --item-id 参数）
+  const items = lookupT3Items(dbPath, ["item:cmd2", "item:u2", "item:cmd2"], threadId);
+  assert.deepEqual(items.map((x) => x.itemId), ["item:cmd2", "item:u2"]);
+  const cliBatch = execFileSync(
+    process.execPath,
+    [
+      new URL("../skills/yjx-retro/scripts/extract-session-evidence.mjs", import.meta.url).pathname,
+      "--t3-db",
+      dbPath,
+      "--session-id",
+      threadId,
+      "--item-id",
+      "item:u2",
+      "--item-id",
+      "item:cmd2",
+    ],
+    { encoding: "utf8" }
+  );
+  const parsedBatch = JSON.parse(cliBatch);
+  assert.equal(parsedBatch.count, 2);
+  assert.deepEqual(parsedBatch.items.map((x) => x.itemId), ["item:u2", "item:cmd2"]);
 });
 test("T3 SQLite 多定时器与 freshContext 分段：预检分流 full，剥离定时触发并聚合工具经济性与子代理子线程统计", async (t) => {
   const { DatabaseSync } = await import("node:sqlite");

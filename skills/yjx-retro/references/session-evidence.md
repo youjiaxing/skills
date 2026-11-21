@@ -39,10 +39,10 @@ node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<parent-th
 
 逐子线程索引包含请求与结果短摘要及定位、Skill 证据、逐次工具调用与输出规模、失败候选、重复调用和父关联。短摘要明确为节选；为满足必要覆盖应按定位补读，不能把索引生成成功写成模型审阅完成。原生恢复或继承历史的真实运行路径未经核验时，保留未验证状态；静态检查和构造数据的解析验证不能代替真实路径验证。
 
-需要围绕疑点回查某条 T3 记录（如某个失败工具调用、子代理结果或长消息）的完整未截断载荷时，直接按索引中的 `itemId` 调用单条回查；已完成子代理基础检查后，需补读其原文时，以 `childThreadId` 作为 `--session-id` 再次提取该子代理线程，并使用该子线程自己的 ordinal 固定范围：
+需要围绕疑点回查某条或多条 T3 记录（如失败工具调用、子代理结果或长消息）的完整未截断载荷时，按索引中的 `itemId` 调用单条或重复传入 `--item-id` 批量回查；已完成子代理基础检查后，需补读其原文时，以 `childThreadId` 作为 `--session-id` 再次提取该子代理线程，并使用该子线程自己的 ordinal 固定范围：
 
 ```bash
-node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-id>" --item-id "<turn-item-id>"
+node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<thread-id>" --item-id "<turn-item-id-1>" [--item-id "<turn-item-id-2>" ...]
 node "<skill-dir>/scripts/extract-session-evidence.mjs" --session-id "<child-thread-id>" --format md
 ```
 
