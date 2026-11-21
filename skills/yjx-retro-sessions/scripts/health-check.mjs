@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Zero-token static health precheck for agent rule files and skills.
- * Flags dead relative markdown links, missing script references, frontmatter
- * mismatches, and size/line budget warnings.
+ * Flags dead relative markdown links, dead heading anchors across SKILL.md and
+ * references/*.md, frontmatter mismatches, and size/line budget warnings.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -11,6 +11,24 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_RULE_BYTES_WARN = 20_000;
 const DEFAULT_RULE_BYTES_CAP = 24_000;
 const DEFAULT_SKILL_LINES_WARN = 500;
+
+function collectReferenceFiles(refRoot, out) {
+  if (!fs.existsSync(refRoot)) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(refRoot, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of entries) {
+    const full = path.join(refRoot, ent.name);
+    if (ent.isDirectory()) {
+      collectReferenceFiles(full, out);
+    } else if ((ent.isFile() || ent.isSymbolicLink()) && ent.name.endsWith(".md")) {
+      out.push({ filePath: full, kind: "reference" });
+    }
+  }
+}
 
 function collectRuleAndSkillFiles(rootDir) {
   const files = [];
@@ -32,10 +50,12 @@ function collectRuleAndSkillFiles(rootDir) {
     }
     for (const ent of entries) {
       if (!ent.isDirectory() && !ent.isSymbolicLink()) continue;
-      const skillFile = path.join(skillBase, ent.name, "SKILL.md");
+      const skillDir = path.join(skillBase, ent.name);
+      const skillFile = path.join(skillDir, "SKILL.md");
       if (fs.existsSync(skillFile)) {
         files.push({ filePath: skillFile, kind: "skill", dirName: ent.name });
       }
+      collectReferenceFiles(path.join(skillDir, "references"), files);
     }
   }
   return files;
@@ -56,24 +76,87 @@ function stripCodeBlocksAndComments(text) {
   return text.replace(/```[\s\S]*?```/g, "").replace(/<!--[\s\S]*?-->/g, "");
 }
 
-function checkRelativeLinks(text, filePath, rootDir) {
+function toGfmBaseSlug(rawHeading) {
+  // Match GitHub-slugger behavior: preserve intraword '_' (e.g. snake_case/filenames in code spans)
+  // and preserve 1:1 spaces as '-' after stripping punctuation (e.g. "a / b" -> "a--b").
+  return rawHeading
+    .replace(/\s+#+\s*$/, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/[*~]/g, "")
+    .replace(/(^|[^\p{L}\p{N}])_+|_+([^\p{L}\p{N}]|$)/gu, "$1$2")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .replace(/ /g, "-");
+}
+
+function getHeadingAnchors(filePath, cache) {
+  if (cache.has(filePath)) return cache.get(filePath);
+  const raw = fs.readFileSync(filePath, "utf8");
+  const cleaned = stripCodeBlocksAndComments(raw);
+  const counts = new Map();
+  const anchors = new Set();
+  for (const line of cleaned.split(/\r?\n/)) {
+    const m = line.match(/^#{1,6}\s+(.+?)\s*$/);
+    if (!m) continue;
+    const base = toGfmBaseSlug(m[1]);
+    if (!base) continue;
+    const n = counts.get(base) ?? 0;
+    counts.set(base, n + 1);
+    anchors.add(n === 0 ? base : `${base}-${n}`);
+  }
+  cache.set(filePath, anchors);
+  return anchors;
+}
+
+function decodeHash(hash) {
+  try {
+    return decodeURIComponent(hash);
+  } catch {
+    return hash;
+  }
+}
+
+function checkRelativeLinks(text, filePath, rootDir, anchorCache) {
   const issues = [];
   const cleaned = stripCodeBlocksAndComments(text);
   const baseDir = path.dirname(filePath);
   const linkRe = /\[[^\]]*\]\(([^)]+)\)/g;
   let m;
   while ((m = linkRe.exec(cleaned)) !== null) {
-    let target = m[1].trim();
-    if (!target || /^(https?:|mailto:|t3-citation:|#)/i.test(target)) continue;
-    if (/^file:\/\//i.test(target)) continue;
+    const rawTarget = m[1].trim();
+    let target = rawTarget;
+    if (!target || /^(https?:|mailto:|t3-citation:|file:\/\/)/i.test(target)) continue;
     if (/^(?:link|url|<[^>]+>)$/i.test(target)) continue;
     if (target.startsWith("<") && target.endsWith(">")) target = target.slice(1, -1);
-    target = target.replace(/#.*$/, "").replace(/:\d+(?::\d+)?$/, "").trim();
-    if (!target) continue;
-    const resolvedFromFile = path.resolve(baseDir, target);
-    const resolvedFromRoot = path.resolve(rootDir, target);
-    if (!fs.existsSync(resolvedFromFile) && !fs.existsSync(resolvedFromRoot)) {
-      issues.push({ type: "dead_link", target: m[1].trim() });
+
+    const hashIdx = target.indexOf("#");
+    const rawHash = hashIdx >= 0 ? target.slice(hashIdx + 1).trim() : "";
+    const filePart = (hashIdx >= 0 ? target.slice(0, hashIdx) : target).replace(/:\d+(?::\d+)?$/, "").trim();
+
+    let resolvedTarget = null;
+    if (!filePart) {
+      if (!rawHash) continue;
+      resolvedTarget = filePath;
+    } else {
+      const resolvedFromFile = path.resolve(baseDir, filePart);
+      const resolvedFromRoot = path.resolve(rootDir, filePart);
+      if (fs.existsSync(resolvedFromFile)) resolvedTarget = resolvedFromFile;
+      else if (fs.existsSync(resolvedFromRoot)) resolvedTarget = resolvedFromRoot;
+      else {
+        issues.push({ type: "dead_link", detail: `Missing target: ${rawTarget}` });
+        continue;
+      }
+    }
+
+    if (rawHash && resolvedTarget.toLowerCase().endsWith(".md") && !/^L\d+(?:-L?\d+)?$/i.test(rawHash)) {
+      const expectedAnchor = decodeHash(rawHash).toLowerCase();
+      const anchors = getHeadingAnchors(resolvedTarget, anchorCache);
+      if (!anchors.has(expectedAnchor)) {
+        issues.push({ type: "dead_anchor", detail: `Missing anchor '#${rawHash}' in '${path.relative(rootDir, resolvedTarget).replace(/\\/g, "/")}'` });
+      }
     }
   }
   return issues;
@@ -89,6 +172,7 @@ export function runHealthCheck({ rootDir = process.cwd(), extraFiles = [] } = {}
 
   const findings = [];
   const inspected = [];
+  const anchorCache = new Map();
 
   for (const item of targets) {
     const raw = fs.readFileSync(item.filePath, "utf8");
@@ -97,10 +181,12 @@ export function runHealthCheck({ rootDir = process.cwd(), extraFiles = [] } = {}
     const relPath = path.relative(absRoot, item.filePath).replace(/\\/g, "/");
     inspected.push({ path: relPath, kind: item.kind, bytes, lines });
 
-    const deadLinks = checkRelativeLinks(raw, item.filePath, absRoot);
-    for (const d of deadLinks) {
-      findings.push({ path: relPath, severity: "error", type: d.type, detail: `Missing target: ${d.target}` });
+    const linkIssues = checkRelativeLinks(raw, item.filePath, absRoot, anchorCache);
+    for (const issue of linkIssues) {
+      findings.push({ path: relPath, severity: "error", type: issue.type, detail: issue.detail });
     }
+
+    if (item.kind === "reference") continue;
 
     if (item.kind === "skill") {
       const fm = parseFrontmatter(raw);

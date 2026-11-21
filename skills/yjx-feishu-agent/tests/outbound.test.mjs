@@ -203,6 +203,8 @@ test('card schema 2.0 with root elements fails locally instead of being rejected
   assert.deepEqual(c.calls.map(x => x[0]), ['send']);
   assert.throws(() => validateCard({ body: { elements: [] } }), /requires schema 2.0/);
   assert.throws(() => validateCard({ schema: '2.0', body: {} }), /elements must be an array/);
+  assert.throws(() => validateCard({ schema: '2.0', body: { elements: [{ tag: 'note', elements: [] }] } }), /does not support note/);
+  assert.throws(() => validateCard({ schema: '2.0', body: { elements: [{ tag: 'action', actions: [] }] } }), /does not support action/);
 });
 
 test('explicit provider rejection is blocked and safely retryable, not unknown', async t => {

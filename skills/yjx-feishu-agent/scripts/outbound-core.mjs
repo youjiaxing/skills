@@ -33,6 +33,16 @@ export function validateCard(content) {
   }
   if (isV2 && !Array.isArray(content.body?.elements)) throw new Error('Card elements must be an array');
   if (!isV2 && !Array.isArray(content.elements)) throw new Error('Card elements must be an array');
+  if (isV2) {
+    const visit = value => {
+      if (Array.isArray(value)) return value.forEach(visit);
+      if (!value || typeof value !== 'object') return;
+      if (value.tag === 'note') throw new Error('Card schema 2.0 does not support note; use markdown with muted font instead');
+      if (value.tag === 'action') throw new Error('Card schema 2.0 does not support action; use a supported interactive component instead');
+      Object.values(value).forEach(visit);
+    };
+    visit(content.body.elements);
+  }
   return content;
 }
 

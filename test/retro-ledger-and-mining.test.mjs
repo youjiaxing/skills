@@ -324,3 +324,40 @@ test("health-check 检出断链与超体积规则文件", async (t) => {
   assert.equal(types.has("dead_link"), true);
   assert.equal(types.has("name_mismatch"), true);
 });
+
+test("health-check 覆盖 references/*.md 断链、同/跨文件 GFM 标题锚点且不误报斜杠标题与参考文件", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yjx-health-ref-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "skills", "demo-skill", "references"), { recursive: true });
+  await writeFile(
+    path.join(root, "skills", "demo-skill", "SKILL.md"),
+    "---\nname: demo-skill\ndescription: demo\n---\n\n[ok](references/guide.md#无浏览器--非-macos-降级路线)\n[snake](references/guide.md#全局-mcp_configjson-配置)\n[self](#内部节)\n\n## 内部节\n"
+  );
+  await writeFile(
+    path.join(root, "skills", "demo-skill", "references", "guide.md"),
+    [
+      "# Guide",
+      "",
+      "## 无浏览器 / 非 macOS 降级路线",
+      "",
+      "## 全局 `mcp_config.json` 配置",
+      "",
+      "[ok-self](#无浏览器--非-macos-降级路线)",
+      "[line-ref](../SKILL.md#L1-L3)",
+      "[bad-anchor](#不存在的锚点)",
+      "[bad-ref](missing-sibling.md)",
+      "",
+    ].join("\n")
+  );
+
+  const res = runHealthCheck({ rootDir: root });
+  assert.equal(res.filesChecked, 2);
+  assert.equal(res.findings.length, 2);
+  assert.deepEqual(
+    res.findings.map((f) => `${f.path}:${f.type}`).sort(),
+    [
+      "skills/demo-skill/references/guide.md:dead_anchor",
+      "skills/demo-skill/references/guide.md:dead_link",
+    ]
+  );
+});
