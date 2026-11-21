@@ -4,12 +4,17 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   analyzeFiles,
   formatMarkdown,
   preflightFiles,
 } from "../skills/yjx-retro/scripts/extract-session-evidence.mjs";
+
+const extractorScript = fileURLToPath(
+  new URL("../skills/yjx-retro/scripts/extract-session-evidence.mjs", import.meta.url)
+);
 
 function meta(ordinal) {
   return { ordinal, type: "session_meta", payload: { id: "sess-r", cwd: "/repo" } };
@@ -410,7 +415,7 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
   const cliBatch = execFileSync(
     process.execPath,
     [
-      new URL("../skills/yjx-retro/scripts/extract-session-evidence.mjs", import.meta.url).pathname,
+      extractorScript,
       "--t3-db",
       dbPath,
       "--session-id",
@@ -432,7 +437,7 @@ test("T3 SQLite 多 Agent 会话：预检识别跨 Provider handoff 分流到 fu
   const cleanCli = execFileSync(
     process.execPath,
     [
-      new URL("../skills/yjx-retro/scripts/extract-session-evidence.mjs", import.meta.url).pathname,
+      extractorScript,
       "--cleanup",
       tempRetroFile,
     ],
