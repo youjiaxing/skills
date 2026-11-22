@@ -6,6 +6,7 @@ import readline from "node:readline";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { discoverT3Relations, formatSessionRelations, summarizeSessionRelations } from "./session-relations.mjs";
 
 const RETRO_SKILL_NAMES = new Set(["yjx-retro", "yjx-retro-skill"]);
 const RUN_OUTCOME_FOLLOWING_RUNS = 3;
@@ -88,7 +89,9 @@ Options:
   --since-time <ISO>      Inclusive cross-thread evidence start (otherwise derived from the parent's range)
   --until-time <ISO>      Exclusive cross-thread evidence cutoff; never reuse parent ordinals in children
   --subagents-only        Output only compact child evidence, reusing the parent's existing context
-  --preflight             Read only session metadata, compaction/handoff markers and yjx-retro / yjx-retro-skill invocations,
+  --relations-only        Discover T3 side chats, forks, ancestors, subagents and returns without reading branch bodies
+  --relation-scope <scope> direct (default): root/ancestors and their neighbors; closure: recursively expand candidates
+  --preflight             Read session metadata, structural relation summaries, compaction/handoff markers and retro invocations,
                            then print the review range start and routing decision; each earlier invocation
                            carries runOutcomes (its run plus up to 3 following runs: status, tool count,
                            assistant output, last reply preview) for judging whether it delivered
@@ -112,6 +115,8 @@ function parseArgs(argv) {
     sinceTime: null,
     untilTime: null,
     subagentsOnly: false,
+    relationsOnly: false,
+    relationScope: "direct",
     preflight: false,
     itemIds: [],
     format: "json",
@@ -145,6 +150,11 @@ function parseArgs(argv) {
       opts[arg === "--since-time" ? "sinceTime" : "untilTime"] = new Date(value).toISOString();
     } else if (arg === "--subagents-only") {
       opts.subagentsOnly = true;
+    } else if (arg === "--relations-only") {
+      opts.relationsOnly = true;
+    } else if (arg === "--relation-scope") {
+      opts.relationScope = argv[++i];
+      if (!["direct", "closure"].includes(opts.relationScope)) throw new Error("--relation-scope requires direct or closure");
     } else if (arg === "--preflight") {
       opts.preflight = true;
     } else if (arg === "--item-id") {
@@ -684,6 +694,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
   const threadId = normalizeT3ThreadId(rawThreadId);
   const untilOrdinal = opts.untilOrdinal ?? null;
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+  db.exec("BEGIN");
   try {
     const threadRow = db
       .prepare("SELECT thread_id, title, payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ?")
@@ -949,11 +960,16 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       rangeScheduledTasks: [...rangeScheduledByTask.values()],
       rangeHumanInputCount,
       forkedFrom: threadPayload.forkedFrom || null,
+      relatedSessions: summarizeSessionRelations(discoverT3Relations(db, threadId, {
+        ...opts, untilOrdinal: effectiveEndOrdinal,
+        untilTime: opts.untilTime || currentRetro?.timestamp || undefined,
+      })),
       files: [{ path: path.resolve(dbPath), tag: "T3DB" }],
       cutoffOrdinal: untilOrdinal,
-      rule: "rangeStartOrdinal defaults to the latest retro candidate from an earlier run (session start if none) and is unconfirmed: confirm the last delivered retro from userPreview/assistantPreview/runOutcomes and rerun with --since-ordinal if it differs; candidates in the current call's run belong to the current call; compaction, cross-provider handoff, freshContext reset, or multiple provider threads inside the range selects full; Forked From is informational only",
+      rule: "rangeStartOrdinal defaults to the latest retro candidate from an earlier run (session start if none) and is unconfirmed: confirm the last delivered retro from userPreview/assistantPreview/runOutcomes and rerun with --since-ordinal if it differs; candidates in the current call's run belong to the current call; compaction, cross-provider handoff, freshContext reset, or multiple provider threads inside the range selects full; relatedSessions discovers structural candidates and inheritance boundaries only, not task relevance or completed review",
     };
   } finally {
+    db.exec("ROLLBACK");
     db.close();
   }
 }
@@ -2704,7 +2720,8 @@ function formatSubagentEvidence(evidence) {
 }
 
 function formatMarkdown(report) {
-  if (report.subagentsOnly) return formatSubagentEvidence(report.subagentEvidence);
+  if (report.subagentsOnly) return [formatSubagentEvidence(report.subagentEvidence),
+    report.relatedSessions ? formatSessionRelations(report.relatedSessions) : ""].filter(Boolean).join("\n\n");
   const lines = [];
   const s = report.session;
   for (const gap of report.historicalGaps || []) lines.push(`- GAP ${gap.location}: ${gap.reason}`);
@@ -2957,7 +2974,15 @@ function formatMarkdown(report) {
     }
   }
   if (report.subagentEvidence) lines.push("", formatSubagentEvidence(report.subagentEvidence));
+  if (report.relatedSessions) lines.push("", formatSessionRelations(report.relatedSessions));
   return lines.join("\n");
+}
+
+export function collectT3Relations(dbPath, rawThreadId, opts = {}) {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  db.exec("BEGIN");
+  try { return discoverT3Relations(db, normalizeT3ThreadId(rawThreadId), opts); }
+  finally { db.exec("ROLLBACK"); db.close(); }
 }
 
 function writeOutput(outText, outputPath) {
@@ -2984,6 +3009,15 @@ async function main() {
     process.exit(opts.help ? 0 : 1);
   }
 
+  if (opts.relationsOnly) {
+    if (opts.files.length || !opts.sessionId || !hasT3Thread(opts.t3Db, opts.sessionId)) {
+      throw new Error("--relations-only requires a locally available T3 thread; use host read-only relations for other sources");
+    }
+    const graph = collectT3Relations(opts.t3Db, opts.sessionId, opts);
+    writeOutput(opts.format === "md" ? formatSessionRelations(graph) : JSON.stringify(graph, null, 2), opts.output);
+    return;
+  }
+
   if (opts.itemIds.length === 1) {
     const itemRecord = lookupT3Item(opts.t3Db, opts.itemIds[0], opts.sessionId);
     writeOutput(JSON.stringify(itemRecord, null, 2), opts.output);
@@ -3005,8 +3039,9 @@ async function main() {
       return;
     }
     const subagentEvidence = await collectSubagentEvidence(opts);
-    const report = opts.subagentsOnly ? { subagentsOnly: true, subagentEvidence } :
-      { ...analyzeT3Thread(opts.t3Db, opts.sessionId, { ...opts, untilTime: subagentEvidence.untilTime }), subagentEvidence };
+    const relatedSessions = summarizeSessionRelations(collectT3Relations(opts.t3Db, opts.sessionId, { ...opts, untilTime: subagentEvidence.untilTime }));
+    const report = opts.subagentsOnly ? { subagentsOnly: true, subagentEvidence, relatedSessions } :
+      { ...analyzeT3Thread(opts.t3Db, opts.sessionId, { ...opts, untilTime: subagentEvidence.untilTime }), subagentEvidence, relatedSessions };
     const outText =
       opts.format === "md" ? formatMarkdown(report) : JSON.stringify(report, null, 2);
     writeOutput(outText, opts.output);

@@ -41,6 +41,8 @@ node "<yjx-retro-dir>/scripts/retro-ledger.mjs" query --cwd "<workspace>" --form
    ```
    只消费其输出的死链、缺失脚本、frontmatter 异常与体量超限（如规则逼近 24,000 字节上限、Skill 超 500 行）告警，不让模型凭印象猜测整仓健康度。
 
+单会话深挖沿用 `yjx-retro` 的关联范围和双线筛选：在已选切片中同时检查过程改进与知识收获，知识按其 `references/knowledge-capture.md` 核验真源与落点，不写入改进台账正文。该交接不改变本 Skill 的高摩擦预扫、Top K 排序与人工调用边界；未入选的低摩擦会话并未因此得到知识覆盖。
+
 ## 2. 跨会话去重、介质分流与最小改进收敛
 
 结合 `writing-for-agents` 标尺整合预扫聚类、高摩擦定位线索、台账 `readyCandidates` 与静态体检结果：
