@@ -10,7 +10,7 @@ description: >-
 
 | 当前任务 | 开工前读取 |
 | --- | --- |
-| 配音、试音或调按次计费生图接口 | [配音与生图接口规范](references/assets-and-tts.md) |
+| 配音、试音、演唱混剪或调按次计费生图接口 | [配音与生图接口规范](references/assets-and-tts.md) |
 | 拆镜、换景、多人站位、换姿势或修合成接缝 | [分镜与连戏](references/shot-continuity.md) |
 | 设计包袱、颜艺切换、听者反应或停顿 | [喜剧表演](references/comedy-performance.md) |
 | 用 HyperFrames 合成、复用组件或排查预览与成片差异 | [HyperFrames 工作方法](references/hyperframes-workflow.md) |
