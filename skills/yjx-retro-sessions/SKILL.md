@@ -41,7 +41,7 @@ node "<yjx-retro-dir>/scripts/retro-ledger.mjs" query --cwd "<workspace>" --form
    ```
    只消费其输出的死链、缺失脚本、frontmatter 异常与体量超限（如规则逼近 24,000 字节上限、Skill 超 500 行）告警，不让模型凭印象猜测整仓健康度。
 
-单会话深挖沿用 `yjx-retro` 的关联范围和双线筛选：在已选切片中同时检查过程改进与知识收获，知识按其 `references/knowledge-capture.md` 核验真源与落点，不写入改进台账正文。该交接不改变本 Skill 的高摩擦预扫、Top K 排序与人工调用边界；未入选的低摩擦会话并未因此得到知识覆盖。
+单会话深挖沿用 `yjx-retro` 的关联范围和双线筛选：在已选切片中同时检查过程改进与知识收获；知识的真源核对、冲突处理、重验、修订传播与使用入口依其 `references/knowledge-capture.md` 处理，不写入改进台账正文，也不将下文改进弱候选的跨会话晋升门槛套用到已核实知识。该交接不改变本 Skill 的高摩擦预扫、Top K 排序与人工调用边界；未入选的低摩擦会话并未因此得到知识覆盖。
 
 ## 2. 跨会话去重、介质分流与最小改进收敛
 
@@ -59,4 +59,4 @@ node "<yjx-retro-dir>/scripts/retro-ledger.mjs" query --cwd "<workspace>" --form
 
 交付遵循“直白问题 + 跨会话实证 + 具体拟改文件与内容 + 预期收益/代价”，禁止把内部脚本字段或未实施提案写成已完成。存在方案取舍或新建/拆分决策且用户未要求只出报告时，按宿主技能发现加载 `yjx-grill`（不可用时用其他可用讨论 Skill 或直接对齐）。
 
-用户对每批建议做出采纳、延后或拒绝决定后，若 `yjx-retro` 可用，调用 `retro-ledger.mjs`（`record-decision` / `record-candidate` / `mark-followthrough`）落盘状态；若获授权实施文档/Skill 修改，按 `AGENTS.md` 仅执行静态检查与链接校验（严禁为提示词/Markdown 编写模拟对话行为测试），并在涉及新脚本逻辑时运行对应功能测试。
+用户对每批改进建议做出采纳、延后或拒绝决定后，若 `yjx-retro` 可用，调用 `retro-ledger.mjs`（`record-decision` / `record-candidate` / `mark-followthrough`）落盘状态；知识建议依前述参考落位。若获授权实施文档/Skill 修改，按 `AGENTS.md` 仅执行静态检查与链接校验（严禁为提示词/Markdown 编写模拟对话行为测试），并在涉及新脚本逻辑时运行对应功能测试。
