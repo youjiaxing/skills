@@ -731,8 +731,16 @@ function main() {
   else process.stdout.write(formatMarkdown(res));
 }
 
-const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isEntrypoint) {
+// Installed skills are symlinks; compare real paths or the script silently skips main().
+function isEntrypoint() {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint()) {
   try {
     main();
   } catch (err) {
