@@ -13,9 +13,9 @@ node <skill-dir>/scripts/hub.mjs request --session <start返回的token> [--file
 node <skill-dir>/scripts/hub.mjs stop --session <token>
 ```
 
-`start` 启动独立本地 Node 协调进程，持有 lock.json 跨越多次 MCP 调用；Windows 使用本地 named pipe，POSIX 使用私有根内 socket，未开放 HTTP 端口。进程只为当次操作持锁，结束或等待用户决定新候选时 stop，下次重新 start/读取。它不是后台同步任务，不会主动查询外部服务。
+`start` 启动独立本地 Node 协调进程，持有 lock.json 跨越多次 MCP 调用；Windows 使用本地 named pipe，POSIX 使用私有根内 socket，未开放 HTTP 端口。进程只为当次操作持锁，结束或等待用户决定新候选时 stop，下次重新 start/读取。协调器默认以 30 分钟空闲 watchdog 兜底：连续 30 分钟没有通过会话令牌校验的 IPC 请求时，自动记录 `incomplete` 并释放进程锁。有效请求会刷新活动时间，处理中的请求不会被 watchdog 中断。它不是后台同步任务，不会主动查询外部服务。
 
-TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，独立 `status` 返回 `lastSync` 和锁状态，`history` 返回各轮记录。启动后记录为 `running`；正常 stop 时，只有全部检查通过并明确提交 `sync-attest` 才记录 `verified`，否则为 `incomplete`。进程中断可能留下 `running`，结合锁状态检查，不把它当作成功。记录是调用方核验的摘要；未启动协调器的调度不会产生记录，也不能由旧记录推断本次运行成功。`verified` 不单独证明锁已释放，应同时检查 `lock:null`。
+TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，独立 `status` 返回 `lastSync` 和锁状态，`history` 返回各轮记录。启动后记录为 `running`；正常 stop 时，只有全部检查通过并明确提交 `sync-attest` 才记录 `verified`，否则为 `incomplete`。空闲 watchdog 或信号收尾只记录 `incomplete`，保留所有未决意图；它不证明外部请求未落地。进程被强制终止时可能留下 `running`，结合锁状态检查，不把它当作成功。记录是调用方核验的摘要；未启动协调器的调度不会产生记录，也不能由旧记录推断本次运行成功。`verified` 不单独证明锁已释放，应同时检查 `lock:null`。
 
 同一配置一次只有一个会话；IPC 请求再串行执行。本地客户端超时视为本地提交结果未知，先 status 对账。当会话中断导致后台协调进程已退出、`request` 或 `stop` 返回 `connect ENOENT` 时，表示原监听管道已关闭：此时直接运行 `start`，由 `acquireLock` 验证旧 PID 已退出（`ESRCH`）后回收旧锁，并由 `Coordinator` 构造器自动回滚仅处于 `prepared` 阶段的未发出意图（任何 `dispatched` 未决项仍保留阻断待对账），随后使用新 token 重新提交完整 `inventory` 继续。锁进程仍存在或身份无法核实时保持占用，不按时间强删。
 

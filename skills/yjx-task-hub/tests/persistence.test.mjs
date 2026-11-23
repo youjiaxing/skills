@@ -66,6 +66,38 @@ test('sync record stays incomplete until coverage and external checks are attest
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'sync-run.json'))).runs.map(x => x.status), ['incomplete', 'verified']);
 });
 
+test('idle coordinator self-releases an abandoned sync lock and records an incomplete run', async t => {
+  const { root, run } = fixture(t);
+  run(['init'], { notionDatabaseId: '11111111-1111-4111-8111-111111111111', notionDataSourceId: 'collection://22222222-2222-4222-8222-222222222222', tbUserId: 'aaaaaaaaaaaaaaaaaaaaaaaa' });
+  const env = { ...process.env, YJX_TASK_HUB_HOME: root, YJX_TASK_HUB_IDLE_TIMEOUT_MS: '100' };
+  const started = JSON.parse(execFileSync(process.execPath, [cli, 'start', '--sync'], { env, encoding: 'utf8', windowsHide: true, timeout: 20000 }));
+  t.after(() => {
+    if (fs.existsSync(path.join(root, 'lock.json'))) {
+      try { run(['stop', '--session', started.session]); } catch {}
+    }
+  });
+  for (let i = 0; i < 100 && fs.existsSync(path.join(root, 'lock.json')); i++) await delay(20);
+  assert.equal(fs.existsSync(path.join(root, 'lock.json')), false);
+  assert.equal(run(['status']).lastSync.status, 'incomplete');
+});
+
+test('valid coordinator requests refresh the idle watchdog', async t => {
+  const { root, run } = fixture(t);
+  run(['init'], { notionDatabaseId: '11111111-1111-4111-8111-111111111111', notionDataSourceId: 'collection://22222222-2222-4222-8222-222222222222', tbUserId: 'aaaaaaaaaaaaaaaaaaaaaaaa' });
+  const env = { ...process.env, YJX_TASK_HUB_HOME: root, YJX_TASK_HUB_IDLE_TIMEOUT_MS: '1000' };
+  const started = JSON.parse(execFileSync(process.execPath, [cli, 'start'], { env, encoding: 'utf8', windowsHide: true, timeout: 20000 }));
+  t.after(() => {
+    if (fs.existsSync(path.join(root, 'lock.json'))) {
+      try { run(['stop', '--session', started.session]); } catch {}
+    }
+  });
+  await delay(300);
+  assert.deepEqual(run(['request', '--session', started.session], { action: 'status' }).pending, []);
+  await delay(300);
+  assert.equal(fs.existsSync(path.join(root, 'lock.json')), true);
+  run(['stop', '--session', started.session]);
+});
+
 test('a second owner cannot acquire a live lock', t => {
   const { root } = fixture(t);
   const lock = acquireLock(root);

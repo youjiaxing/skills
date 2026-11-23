@@ -81,7 +81,7 @@ export function validateConfig(c) {
 }
 
 export function acquireLock(root) {
-  const lock = { lockId: randomUUID(), pid: process.pid, processStartTime: new Date().toISOString(), createdAt: new Date().toISOString() };
+  const lock = { lockId: randomUUID(), pid: process.pid, processStartTime: new Date().toISOString(), createdAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() };
   const writeLock = () => {
     const fd = fs.openSync(safeFile(root, 'lock.json'), 'wx', 0o600);
     try { fs.writeFileSync(fd, JSON.stringify(lock)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
@@ -106,6 +106,11 @@ export function acquireLock(root) {
   }
   return {
     ...lock,
+    touch() {
+      const current = readJson(root, 'lock.json');
+      if (current.lockId !== lock.lockId) throw new Error('锁归属不符，拒绝更新活动时间');
+      atomicJson(root, 'lock.json', { ...current, lastActivityAt: new Date().toISOString() });
+    },
     release() {
       if (readJson(root, 'lock.json').lockId !== lock.lockId) throw new Error('锁归属不符，拒绝释放');
       fs.unlinkSync(safeFile(root, 'lock.json'));
