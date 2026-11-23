@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 const repository = fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..'));
 const names = new Set(['config.json', 'state.json', 'project-state.json', 'lock.json', 'lock.reclaim', 'sync-run.json']);
@@ -80,8 +81,42 @@ export function validateConfig(c) {
   return c;
 }
 
+function processIdentity(pid) {
+  if (process.platform !== 'win32') return undefined;
+  const windowsRoot = process.env.SystemRoot;
+  if (!windowsRoot || !path.isAbsolute(windowsRoot)) return undefined;
+  // Node exposes PID liveness, but not Windows process creation time. Use the
+  // OS-provided PowerShell/.NET interface; never parse a localized date string.
+  const command = `$ErrorActionPreference='Stop'; try { $taskProcess=[System.Diagnostics.Process]::GetProcessById(${pid}); $taskProcess.StartTime.ToUniversalTime().Ticks.ToString() } catch [System.ArgumentException] { 'absent' }`;
+  try {
+    const result = execFileSync(path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    if (result === 'absent') return null;
+    if (/^\d{16,20}$/.test(result)) return `win32:${result}`;
+  } catch { /* Unknown identity must never authorize taking a live lock. */ }
+  return undefined;
+}
+
+function ownerAlive(lock) {
+  try { process.kill(lock.pid, 0); }
+  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+  const identity = processIdentity(lock.pid);
+  if (identity === null) return false;
+  if (identity === undefined) return true;
+  if (lock.processIdentity !== undefined) {
+    if (!/^win32:\d{16,20}$/.test(lock.processIdentity)) throw new Error('锁进程身份不完整，需人工核查');
+    return lock.processIdentity === identity;
+  }
+  // Older versions recorded the lock acquisition time, not the process birth.
+  // Only a process born AFTER that timestamp proves the legacy PID was reused.
+  const recordedAt = Date.parse(lock.createdAt);
+  const bornAt = Number(BigInt(identity.slice(6)) / 10000n - 62135596800000n);
+  return !Number.isFinite(recordedAt) || bornAt <= recordedAt;
+}
+
+let ownIdentity;
 export function acquireLock(root) {
-  const lock = { lockId: randomUUID(), pid: process.pid, processStartTime: new Date().toISOString(), createdAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() };
+  ownIdentity ??= processIdentity(process.pid);
+  const lock = { lockId: randomUUID(), pid: process.pid, processStartTime: new Date().toISOString(), ...(ownIdentity ? { processIdentity: ownIdentity } : {}), createdAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() };
   const writeLock = () => {
     const fd = fs.openSync(safeFile(root, 'lock.json'), 'wx', 0o600);
     try { fs.writeFileSync(fd, JSON.stringify(lock)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
@@ -91,8 +126,7 @@ export function acquireLock(root) {
     if (e.code !== 'EEXIST') throw e;
     const old = readJson(root, 'lock.json');
     if (!Number.isInteger(old.pid) || old.pid <= 0 || !old.lockId) throw new Error('锁内容不完整，需人工核查');
-    try { process.kill(old.pid, 0); throw new Error('已有同步会话持锁，先结束原会话'); }
-    catch (err) { if (err.code !== 'ESRCH') throw err; }
+    if (ownerAlive(old)) throw new Error('已有同步会话持锁，先结束原会话');
     const reclaim = safeFile(root, 'lock.reclaim');
     let fd;
     try { fd = fs.openSync(reclaim, 'wx', 0o600); } catch { throw new Error('恢复锁被占用，需等待或核查持有者'); }

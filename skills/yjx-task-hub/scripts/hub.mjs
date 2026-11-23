@@ -5,6 +5,7 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
 import { privateRoot, safeFile, readJson, atomicJson, validateConfig, acquireLock } from './storage.mjs';
 import { Coordinator } from './coordinator.mjs';
 import { ProjectCoordinator, projectStatus } from './project.mjs';
@@ -15,7 +16,7 @@ const print = value => process.stdout.write(JSON.stringify(value) + '\n');
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 function idleTimeoutMs() {
   const value = Number(process.env.YJX_TASK_HUB_IDLE_TIMEOUT_MS);
-  return Number.isFinite(value) && value >= 100 ? value : DEFAULT_IDLE_TIMEOUT_MS;
+  return Number.isInteger(value) && value >= 100 && value <= 2147483647 ? value : DEFAULT_IDLE_TIMEOUT_MS;
 }
 function saveSyncRun(root, record) {
   const stored = readJson(root, 'sync-run.json', { version: 1, runs: [] });
@@ -57,6 +58,9 @@ async function request(root, payload) {
     client.setTimeout(15000, () => client.destroy(new Error('本地协调器无响应；结果未知，先 status 核对')));
     client.on('connect', () => client.write(JSON.stringify(payload) + '\n'));
     client.on('error', reject);
+    client.on('close', () => {
+      if (!raw.includes('\n')) reject(new Error('本地协调器已关闭；结果未知，先 status 核对'));
+    });
     client.on('data', chunk => {
       raw += chunk;
       if (!raw.includes('\n')) return;
@@ -74,39 +78,57 @@ async function serve(root, syncRun = false, projectMode = false) {
   let coordinator;
   let server;
   let idleTimer;
-  let lastActivityAt = Date.now();
+  let lastActivityAt;
   let inFlight = 0;
   let shutdownStarted = false;
   let completionRecorded = false;
   let released = false;
+  let closingStatus = 'incomplete';
+  let closingReason = null;
   const clients = new Set();
   const socketPath = address(root);
   try {
     coordinator = projectMode ? new ProjectCoordinator(root) : new Coordinator(root);
     const startedAt = new Date().toISOString();
-    if (syncRun) saveSyncRun(root, { session: lock.lockId, startedAt, status: 'running' });
-    const recordCompletion = status => {
+    if (syncRun) {
+      // Owning the lock proves the previous coordinator has exited. Its writes
+      // remain unknown; only close the run record, never its pending operations.
+      const history = readJson(root, 'sync-run.json', { version: 1, runs: [] });
+      const runs = Array.isArray(history.runs) ? history.runs : (history.session ? [history] : []);
+      for (const run of runs) if (run.status === 'running') {
+        saveSyncRun(root, { ...run, status: 'incomplete', stoppedAt: startedAt, stopReason: 'process_restarted' });
+      }
+      saveSyncRun(root, { session: lock.lockId, startedAt, status: 'running' });
+    }
+    const recordCompletion = (status, reason) => {
       if (completionRecorded) return;
       try {
         if (syncRun) {
           const pending = coordinator.pending();
           const coverage = coordinator.syncCoverage();
-          saveSyncRun(root, { session: lock.lockId, startedAt, stoppedAt: new Date().toISOString(), status, syncCoverage: coverage, pendingCount: pending.length, uncommittedPlans: coordinator.plans.size });
+          saveSyncRun(root, { session: lock.lockId, startedAt, stoppedAt: new Date().toISOString(), status, stopReason: reason, syncCoverage: coverage, pendingCount: pending.length, uncommittedPlans: coordinator.plans.size });
         }
+        completionRecorded = true;
       } catch (error) {
         process.stderr.write(`同步记录收尾失败：${error.message}\n`);
-      } finally {
-        completionRecorded = true;
       }
     };
     const release = () => {
-      if (released) return;
+      if (released || inFlight > 0) return;
       released = true;
-      try { lock.release(); } finally { process.exit(0); }
+      try {
+        recordCompletion(closingStatus, closingReason);
+      } finally {
+        try { lock.release(); }
+        catch (error) { process.stderr.write(`锁释放失败：${error.message}\n`); }
+        finally { process.exit(0); }
+      }
     };
-    const shutdown = (gracefulClient = null) => {
+    const shutdown = (reason, gracefulClient = null, status = 'incomplete') => {
       if (shutdownStarted) return;
       shutdownStarted = true;
+      closingStatus = status;
+      closingReason = reason;
       clearTimeout(idleTimer);
       if (!server?.listening) return release();
       server.close(release);
@@ -119,13 +141,12 @@ async function serve(root, syncRun = false, projectMode = false) {
     const armIdleTimer = () => {
       clearTimeout(idleTimer);
       if (shutdownStarted) return;
-      const delay = Math.max(1, idleTimeoutMs() - (Date.now() - lastActivityAt));
+      const delay = inFlight > 0 ? idleTimeoutMs() : Math.max(1, idleTimeoutMs() - (performance.now() - lastActivityAt));
       idleTimer = setTimeout(() => {
         if (shutdownStarted) return;
         if (inFlight > 0) { armIdleTimer(); return; }
-        if (Date.now() - lastActivityAt < idleTimeoutMs()) { armIdleTimer(); return; }
-        recordCompletion('incomplete');
-        shutdown();
+        if (performance.now() - lastActivityAt < idleTimeoutMs()) { armIdleTimer(); return; }
+        shutdown('idle_timeout');
       }, delay);
       idleTimer.unref?.();
     };
@@ -151,20 +172,22 @@ async function serve(root, syncRun = false, projectMode = false) {
         handled = true;
         clearTimeout(requestDeadline);
         queue = queue.then(async () => {
+          let accepted = false;
           inFlight++;
           try {
             if (shutdownStarted) { client.destroy(); return; }
             const payload = JSON.parse(raw.slice(0, raw.indexOf('\n')));
             if (payload.session !== lock.lockId) throw new Error('会话令牌不符；仅当前持锁会话可写入');
-            lock.touch();
-            lastActivityAt = Date.now();
+            try { lock.touch(); }
+            catch (error) { shutdown('lock_lost'); throw error; }
+            accepted = true;
+            lastActivityAt = performance.now();
             armIdleTimer();
             if (payload.action === 'stop') {
               const pending = coordinator.pending();
               const coverage = coordinator.syncCoverage();
               const attested = coordinator.syncAttested && pending.length === 0 && coordinator.plans.size === 0;
-              recordCompletion(attested ? 'verified' : 'incomplete');
-              shutdown(client);
+              shutdown('stop', client, attested ? 'verified' : 'incomplete');
               client.end(JSON.stringify({ stopped: true, pending, syncCoverage: coverage, ...(syncRun ? { syncStatus: attested ? 'verified' : 'incomplete' } : {}) }) + '\n');
               return;
             }
@@ -174,15 +197,15 @@ async function serve(root, syncRun = false, projectMode = false) {
             client.end(JSON.stringify({ error: e.message }) + '\n');
           } finally {
             inFlight--;
-            if (!shutdownStarted) {
-              lastActivityAt = Date.now();
-              try { lock.touch(); } catch { recordCompletion('incomplete'); shutdown(); }
+            if (accepted && !shutdownStarted) {
+              lastActivityAt = performance.now();
+              try { lock.touch(); } catch { shutdown('lock_lost'); }
               armIdleTimer();
             }
+            if (shutdownStarted && clients.size === 0) release();
           }
         }).catch(() => {
-          recordCompletion('incomplete');
-          shutdown();
+          shutdown('request_failure');
         });
       });
     });
@@ -190,8 +213,11 @@ async function serve(root, syncRun = false, projectMode = false) {
     if (process.platform !== 'win32') fs.chmodSync(socketPath, 0o600);
     print({ session: lock.lockId, pid: process.pid, root, mode: projectMode ? 'project' : 'personal', pending: coordinator.pending() });
     process.stdout.end();
+    lastActivityAt = performance.now();
     armIdleTimer();
-    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { recordCompletion('incomplete'); shutdown(); });
+    for (const signal of ['SIGINT', 'SIGTERM', ...(process.platform === 'win32' ? ['SIGBREAK'] : ['SIGHUP'])]) {
+      process.on(signal, () => shutdown(`signal:${signal}`));
+    }
   } catch (e) {
     clearTimeout(idleTimer);
     server?.close(); lock.release(); throw e;

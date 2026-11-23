@@ -13,13 +13,15 @@ node <skill-dir>/scripts/hub.mjs request --session <start返回的token> [--file
 node <skill-dir>/scripts/hub.mjs stop --session <token>
 ```
 
-`start` 启动独立本地 Node 协调进程，持有 lock.json 跨越多次 MCP 调用；Windows 使用本地 named pipe，POSIX 使用私有根内 socket，未开放 HTTP 端口。进程只为当次操作持锁，结束或等待用户决定新候选时 stop，下次重新 start/读取。协调器默认以 30 分钟空闲 watchdog 兜底：连续 30 分钟没有通过会话令牌校验的 IPC 请求时，自动记录 `incomplete` 并释放进程锁。有效请求会刷新活动时间，处理中的请求不会被 watchdog 中断。它不是后台同步任务，不会主动查询外部服务。
+`start` 启动独立本地 Node 协调进程，持有 lock.json 跨越多次 MCP 调用；Windows 使用本地 named pipe，POSIX 使用私有根内 socket，未开放 HTTP 端口。进程只为当次操作持锁，结束或等待用户决定新候选时 stop，下次重新 start/读取。协调器默认以 30 分钟空闲 watchdog 兜底（`YJX_TASK_HUB_IDLE_TIMEOUT_MS` 可设 100–2147483647 的整数毫秒，无效值使用默认值）：连续 30 分钟没有通过会话令牌校验的 IPC 请求时，自动记录 `incomplete` 并释放进程锁。计时从监听就绪后开始，使用单调时钟。通过令牌校验的请求刷新活动时间；错误令牌、无效 JSON 和未完成数据包不续期。处理中的请求不会被 watchdog 中断，关闭后拒绝排队请求并有界销毁连接。它不是后台同步任务，不会主动查询外部服务。
 
-TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，独立 `status` 返回 `lastSync` 和锁状态，`history` 返回各轮记录。启动后记录为 `running`；正常 stop 时，只有全部检查通过并明确提交 `sync-attest` 才记录 `verified`，否则为 `incomplete`。空闲 watchdog 或信号收尾只记录 `incomplete`，保留所有未决意图；它不证明外部请求未落地。进程被强制终止时可能留下 `running`，结合锁状态检查，不把它当作成功。记录是调用方核验的摘要；未启动协调器的调度不会产生记录，也不能由旧记录推断本次运行成功。`verified` 不单独证明锁已释放，应同时检查 `lock:null`。
+TB 完整同步使用 `start --sync`，在私有目录写入 `sync-run.json`，独立 `status` 返回 `lastSync` 和锁状态，`history` 返回各轮记录。启动后记录为 `running`；正常 stop 时，只有全部检查通过并明确提交 `sync-attest` 才记录 `verified`，否则为 `incomplete`。空闲 watchdog 或信号收尾只记录 `incomplete`，保留所有未决意图；它不证明外部请求未落地。进程被强制终止时可能留下 `running`；下一次成功取得锁的同步启动会把遗留 `running` 标为 `incomplete`，原因记为 `process_restarted`，不修改未决操作。收尾记录含 `stopReason`，可区分 `stop`、`idle_timeout`、信号退出和锁归属变化；记录写入失败也继续关闭并释放属于自己的锁。记录是调用方核验的摘要；未启动协调器的调度不会产生记录，也不能由旧记录推断本次运行成功。`verified` 不单独证明锁已释放，应同时检查 `lock:null`。
 
-同一配置一次只有一个会话；IPC 请求再串行执行。本地客户端超时视为本地提交结果未知，先 status 对账。当会话中断导致后台协调进程已退出、`request` 或 `stop` 返回 `connect ENOENT` 时，表示原监听管道已关闭：此时直接运行 `start`，由 `acquireLock` 验证旧 PID 已退出（`ESRCH`）后回收旧锁，并由 `Coordinator` 构造器自动回滚仅处于 `prepared` 阶段的未发出意图（任何 `dispatched` 未决项仍保留阻断待对账），随后使用新 token 重新提交完整 `inventory` 继续。锁进程仍存在或身份无法核实时保持占用，不按时间强删。
+同一配置一次只有一个会话；IPC 请求再串行执行。本地客户端超时视为本地提交结果未知，先 status 对账。当会话中断导致后台协调进程已退出、`request` 或 `stop` 返回 `connect ENOENT` 时，表示原监听管道已关闭：此时直接运行 `start`，由 `acquireLock` 验证旧 PID 已退出（`ESRCH`）后回收旧锁，并由 `Coordinator` 构造器自动回滚仅处于 `prepared` 阶段的未发出意图（任何 `dispatched` 未决项仍保留，仅阻断对应事项待对账），随后使用新 token 重新提交完整 `inventory` 继续。Windows 使用系统 PowerShell/.NET 的进程创建时间核对 PID 身份：PID 已被复用时按死持有者走互斥回收；身份查询失败时保留活锁，不按锁龄强抢。其他平台保留 PID 存活检查。旧版锁没有创建时间指纹时，仅在当前进程出生时间晚于旧锁创建时间时确认 PID 已复用。
 
-`init` 与 `request` 支持 `--file <json-path>` 直接按 UTF-8 读取本地 JSON 文件，也兼容从 `stdin` 读取。批量 `inventory`、`candidates` 或含长标题的请求优先写入仓外私有临时文件并通过 `--file` 传入，用后即删；不要把大段 JSON 或不可信任务正文直接拼进 shell 命令行，以免触发 Windows 命令行长度限制（`os error 206`）或转义损坏。
+启动前先验证本轮所需 MCP 已可调用；连接缺失时直接报告，不启动持锁会话。取得 token 后用 `try/finally` 或等价收尾保证成功、报错和等待用户时均执行 stop，再独立 status 确认锁释放；Agent 被强制取消时由 watchdog 兜底。旧轮次 `incomplete` 本身不阻断新轮次。新轮次先检查 pending，已有未知写入只跳过对应 key，其余事项继续；本轮有未决则记录 `incomplete` 并在当前会话报告 opId、目标和需要的对账证据。
+
+`init` 与 `request` 支持 `--file <json-path>` 直接按 UTF-8 读取本地 JSON 文件，也兼容从 `stdin` 读取。批量 `inventory`、`candidates` 或含长标题的请求优先写入仓外私有临时文件并通过 `--file` 传入，用后即删；不要把大段 JSON 或不可信任务正文直接拼进 shell 命令行，以免触发 Windows 命令行长度限制（`os error 206`）或转义损坏。需要从会话构造文件时使用可读的 UTF-8 JSON/单引号 here-string，不用 Base64 负载代替结构化输入。
 
 工具原始返回需先适配为以下形状。属性值为 view/rows/fetch 实际读取的扁平字段值，缺失字段显式为 null；每次映射保持一致。
 
