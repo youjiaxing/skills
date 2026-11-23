@@ -657,9 +657,13 @@ export function lookupT3Items(dbPath, itemIds, rawThreadId = null) {
 export function cleanupTempEvidenceFile(targetPath) {
   if (!targetPath) throw new Error("--cleanup requires a file path");
   const resolved = path.resolve(targetPath);
-  const allowedRoots = [fs.realpathSync(os.tmpdir())];
+  const canonical = (value) => {
+    const real = fs.realpathSync.native(value);
+    return process.platform === "win32" ? real.toLowerCase() : real;
+  };
+  const allowedRoots = [canonical(os.tmpdir())];
   try {
-    const tmpReal = fs.realpathSync("/tmp");
+    const tmpReal = canonical("/tmp");
     if (!allowedRoots.includes(tmpReal)) allowedRoots.push(tmpReal);
   } catch {}
   const baseName = path.basename(resolved);
@@ -669,7 +673,7 @@ export function cleanupTempEvidenceFile(targetPath) {
   const parentDir = path.dirname(resolved);
   let parentReal;
   try {
-    parentReal = fs.realpathSync(parentDir);
+    parentReal = canonical(parentDir);
   } catch {
     parentReal = parentDir;
   }
@@ -804,6 +808,20 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       }
     }
 
+    const runs = db
+      .prepare(
+        "SELECT run_id, ordinal, provider_instance_id, provider_thread_id, status, payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
+      )
+      .all(threadId)
+      .map((r) => {
+        const rp = safeJsonParse(r.payload_json);
+        return {
+          ...r,
+          freshContext: Boolean(rp.freshContext),
+        };
+      });
+    const runById = new Map(runs.map((r) => [r.run_id, r]));
+
     const retroInvocations = [...retroByOrdinal.values()].sort((a, b) => a.ordinal - b.ordinal);
     // One invocation can leave several candidate messages in the same run (e.g. `$skill` plus its
     // arguments); all of them belong to the current call, never to a previous retro.
@@ -813,7 +831,8 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       Boolean(lastCandidate) &&
       (inv === lastCandidate || (Boolean(lastCandidate.runId) && inv.runId === lastCandidate.runId));
     const currentRetro = retroInvocations.find(isCurrentInvocation) ?? null;
-    const previousRetros = retroInvocations.filter((inv) => !isCurrentInvocation(inv));
+    for (const inv of retroInvocations) inv.runStatus = runById.get(inv.runId)?.status ?? null;
+    const previousRetros = retroInvocations.filter((inv) => !isCurrentInvocation(inv) && inv.runStatus !== "rolled_back");
     const previousRetro = previousRetros[previousRetros.length - 1] ?? null;
     const rangeStartOrdinal = opts.sinceOrdinal ?? (previousRetro ? previousRetro.ordinal : null);
     const effectiveEndOrdinal =
@@ -840,20 +859,6 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
     const rangeScheduledByTask = new Map();
     let rangeScheduledTaskCount = 0;
     let rangeHumanInputCount = 0;
-
-    const runs = db
-      .prepare(
-        "SELECT run_id, ordinal, provider_instance_id, provider_thread_id, status, payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ? ORDER BY ordinal"
-      )
-      .all(threadId)
-      .map((r) => {
-        const rp = safeJsonParse(r.payload_json);
-        return {
-          ...r,
-          freshContext: Boolean(rp.freshContext),
-        };
-      });
-    const runById = new Map(runs.map((r) => [r.run_id, r]));
 
     const outcomeRuns = runs
       .filter((r) => preRunStats.has(r.run_id))
@@ -2630,6 +2635,24 @@ export async function collectSubagentEvidence(opts) {
       node.evidence.updatedAfterCutoff = updatedAfterCutoff;
       node.active = activityInRange;
       node.providerThreads = (data.providers || []).map((p) => ({ providerThreadId: p.providerThreadId, nativeThreadId: p.nativeThreadRef?.nativeId || null }));
+      if (node.source === "t3") {
+        // Expand every loaded T3 identity, including children found only in tool
+        // results. Only the root can use the parent's ordinal cutoff.
+        const structural = discoverT3Relations(db, node.id, {
+          untilOrdinal: isRoot ? opts.untilOrdinal : undefined,
+          untilTime: Number.isFinite(upper) ? new Date(upper).toISOString() : undefined,
+          relationScope: "direct",
+        });
+        for (const edge of structural.edges) {
+          if (edge.kind !== "subagent" || edge.from !== node.id) continue;
+          const relationGaps = structural.gaps.filter((gap) => gap.source === edge.location);
+          gaps.push(...relationGaps);
+          queue.push({ ref: { source: "t3", id: edge.to },
+            parent: { source: "t3", id: node.id, association: "structural", location: edge.location,
+              timeStatus: edge.timeStatus, gaps: relationGaps },
+            inherited: fingerprints, referenced: true });
+        }
+      }
       for (const event of data.events) {
         // Earlier dispatches are retained as relations so resumed/continuing children
         // can be checked in a repeated retro. Post-cutoff dispatches are excluded.

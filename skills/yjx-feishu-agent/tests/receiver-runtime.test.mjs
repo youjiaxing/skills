@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, access, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { receiverPaths, receiverStatus, recoverReceiverLock, atomicJson } from '../scripts/receiver-runtime.mjs';
 import { recoverManagedReceiver } from '../scripts/receiver-recovery.mjs';
-import { taskDefinition, legacyTaskDefinition, previousTaskDefinition, matchesTask, windowsArgument } from '../scripts/receiver.mjs';
+import { taskDefinition, legacyTaskDefinition, previousTaskDefinition, matchesTask, windowsArgument, main } from '../scripts/receiver.mjs';
+import { saveCredentials } from '../scripts/feishu-credentials.mjs';
 
 async function fixture(t) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'yjx-receiver-lifecycle-'));
@@ -108,6 +111,70 @@ test('recovery mutex prevents concurrent recovery from touching a replacement lo
   await mkdir(path.join(f.paths.runtime, 'recover.lock'));
   await assert.rejects(recoverReceiverLock('cli_fixture', { home: f.home, alive: () => false }), { code: 'EEXIST' });
   assert.deepEqual(JSON.parse(await readFile(path.join(f.paths.lock, 'owner.json'), 'utf8')), f.owner);
+});
+
+test('automatic recovery rechecks process liveness before removing a previously dead owner', async t => {
+  const f = await fixture(t);
+  for (const [rejectAt, nextAlive] of [[2, true], [2, null], [3, true], [3, null]]) {
+    let probes = 0;
+    await assert.rejects(recoverManagedReceiver('cli_fixture', {
+      home: f.home, alive: () => ++probes < rejectAt ? false : nextAlive,
+    }), rejectAt === 2 ? /may still be alive/ : /ownership changed/);
+    assert.deepEqual(JSON.parse(await readFile(path.join(f.paths.lock, 'owner.json'))), f.owner);
+  }
+});
+
+test('automatic recovery refuses an owner replaced between process and token checks', async t => {
+  const f = await fixture(t);
+  const replacement = { ...f.owner, token: 'replacement-owner' };
+  let probes = 0;
+  await assert.rejects(recoverManagedReceiver('cli_fixture', { home: f.home, alive: () => {
+    if (++probes === 2) writeFileSync(path.join(f.paths.lock, 'owner.json'), JSON.stringify(replacement));
+    return false;
+  } }), /ownership changed/);
+  assert.deepEqual(JSON.parse(await readFile(path.join(f.paths.lock, 'owner.json'))), replacement);
+});
+
+test('Windows start clears a dead receiver lock before validating task ownership', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t);
+  // Use an exited child as the dead owner; never terminate the real receiver.
+  const child = spawn(process.execPath, ['--version'], { windowsHide: true, stdio: 'ignore' });
+  await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+  await writeFile(path.join(f.paths.lock, 'owner.json'), JSON.stringify({ ...f.owner, pid: child.pid }));
+  await writeFile(path.join(f.paths.runtime, 'status.json'), Buffer.alloc(181));
+  const stateDir = path.join(f.home, 'state');
+  await saveCredentials({ appId: 'cli_fixture', appSecret: 'fixture-only' }, stateDir);
+  const senderLock = path.join(stateDir, 'locks', 'sender', 'owner.json');
+  const journal = path.join(stateDir, 'requests', 'submitted', 'record.json');
+  for (const file of [senderLock, journal]) {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, 'preserve submitted work');
+  }
+  // Deliberately stop before task registration/run; no OS tasks or network calls.
+  await atomicJson(path.join(f.paths.runtime, 'task-registration.json'), { stateDir: 'another-installation' });
+  t.mock.method(os, 'homedir', () => f.home);
+  await assert.rejects(main(['start', '--state-dir', stateDir]), /Task belongs to another state directory/);
+  assert.equal((await receiverStatus('cli_fixture')).state, 'stopped');
+  for (const file of [senderLock, journal]) assert.equal(await readFile(file, 'utf8'), 'preserve submitted work');
+});
+
+test('start preserves stop intent and ownership when a live receiver has unreadable telemetry', async t => {
+  const f = await fixture(t);
+  const owner = { ...f.owner, pid: process.pid };
+  await writeFile(path.join(f.paths.lock, 'owner.json'), JSON.stringify(owner));
+  await writeFile(path.join(f.paths.runtime, 'status.json'), Buffer.alloc(181));
+  const stateDir = path.join(f.home, 'state');
+  await saveCredentials({ appId: 'cli_fixture', appSecret: 'fixture-only' }, stateDir);
+  const recovery = { enabled: false, stateDir };
+  const stop = { pid: owner.pid, token: owner.token };
+  await atomicJson(path.join(f.paths.runtime, 'recovery.json'), recovery);
+  await atomicJson(path.join(f.paths.runtime, 'stop.json'), stop);
+  t.mock.method(os, 'homedir', () => f.home);
+  await assert.rejects(main(['start', '--state-dir', stateDir]), /Receiver ownership is not confirmed/);
+  for (const [file, value] of [['recovery.json', recovery], ['stop.json', stop]]) {
+    assert.deepEqual(JSON.parse(await readFile(path.join(f.paths.runtime, file))), value);
+  }
+  assert.deepEqual(JSON.parse(await readFile(path.join(f.paths.lock, 'owner.json'))), owner);
 });
 
 test('ownerless lock is incomplete rather than stopped and is never automatically removed', async (t) => {

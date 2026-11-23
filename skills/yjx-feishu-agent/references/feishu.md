@@ -69,12 +69,19 @@ rebind 仅更改已存在群的 threadId，要求旧 UUID 完全匹配、新目�
 ```sh
 node skills/yjx-feishu-agent/scripts/receiver.mjs start
 node skills/yjx-feishu-agent/scripts/receiver.mjs status
+node skills/yjx-feishu-agent/scripts/receiver.mjs diagnose
 node skills/yjx-feishu-agent/scripts/receiver.mjs stop
 ```
 
 支持 `--state-dir PATH`。`start` 会等待心跳显示 `running` 且连接为 `connected` 才报告启动成功，随后仍须实群消息验收。`status` 区分运行、停止、死亡进程遗留锁、无 owner 的不完整锁以及未知状态；不能把一个残留 PID 文件当作接收器正在运行。`stop` 写入带当前实例 token 的停止请求，由接收器优雅关闭长连接、等待已接任务完成，再释放锁并退出；不会按 PID 强杀进程。
 
-Windows 使用原生 `schtasks.exe` 注册当前用户的任务：InteractiveToken、LeastPrivilege，当前用户登录时自动触发，不保存登录密码、不提升权限，执行时限设为无限，切换电池不停止。首次失败后每分钟重试，最多再试3次；耗尽后停止并保留故障供排查，不注册周期巡检任务。注册后读回核对任务动作和触发配置。
+接收器离线、异常退出或未自动恢复时，先执行 `diagnose`，再决定是否 `start`；启动可能刷新系统任务的最近结果。该命令仅输出 JSON，不清锁、改配置、保存快照、发消息或触发任务。它分别读取接收器锁与心跳、生命周期/恢复互斥锁、恢复意图、最近故障和本机安装记录；单个文件损坏仍保留其他可读证据。`lastFailure.ownerPidMatches` 只比较 PID，不证明两条记录属于同一次进程实例。
+
+Windows 另查当前应用对应的实际注册任务、重试配置、最近结果、owner PID 的进程信息，以及最近 7 天的事件：任务事件最多 30 条，系统启动/关闭事件最多 10 条；输出查询时间窗、条数上限和 `truncated`。事件状态区分 `disabled`（通道未启用）、`no_records`（窗口内无匹配）、`query_failed`（查询失败，附安全数值错误码）和 `available`。缺少任务为 `not_registered`，OS 桥接失败单列 `os.state:query_failed`；macOS/Linux 返回本机证据，系统任务采集标为 `not_supported`。四项 OS 查询分别在独立进程中限时 12 秒，单项失败保留其余证据；`os.state:partial` 表示部分查询失败。事件记录只覆盖给出的时间窗与条数上限，不证明更早或被截断部分没有事件。不自动启用日志或要求提权。
+
+任务动作只输出与当前入口是否匹配，不输出任务参数、进程命令行、事件 Message 或原始异常。`taskState`、`lastResult`、`restart` 是独立证据：重试配置不证明实际重试；最近结果也可能来自任务运行中再次请求启动，不能直接归因到当前接收进程。退出码只能说明结果类别，未恢复原因需匹配任务实例、PID 和事件时间线；日志未启用、无权限、查询失败或窗口内无记录时保留未知，不据空结果断言没有重试。残留任务 XML 不证明任务仍在注册。诊断不是原子快照，查询期间进程和任务状态可能变化。
+
+Windows 使用原生 `schtasks.exe` 注册当前用户的任务：InteractiveToken、LeastPrivilege，当前用户登录时自动触发，不保存登录密码、不提升权限，执行时限设为无限，切换电池不停止。重试策略配置为失败后每分钟重试、最多再试3次；是否实际触发须核对任务事件，耗尽后保留故障供排查，不注册周期巡检任务。注册后读回核对任务动作和触发配置。
 
 升级旧安装时，核对旧 `<主任务名>-watchdog` 的操作确为本技能 `receiver.mjs ensure` 且状态目录与安装记录一致后，删除该周期任务；保留主任务、请求记录及故障日志。新版本不提供 `ensure` 命令。
 
@@ -82,7 +89,7 @@ Windows 使用原生 `schtasks.exe` 注册当前用户的任务：InteractiveTok
 
 macOS/Linux 使用 detached Node 进程，将标准输出记录在运行目录的 `receiver.log`；未做这两个平台的实机验收，也不安装 launchd/systemd。各平台的 `status.json` 保存实时心跳，`connection-events.ndjson` 保存连接状态变化，位于用户目录 `.yjx-feishu-agent-receivers/runtime/<app hash>`。`recovery.json` 保存启停意图，`last-failure.json` 与 `failures.ndjson` 保存故障阶段和允许的系统/API码，不保存原始异常、堆栈、消息正文或凭证。`receiver.mjs status` 一并显示恢复开关及最近故障。心跳原子替换遇到短暂 EPERM/EACCES/EBUSY 时有限重试，持续失败仍保留错误。任务参数和日志不保存 App Secret；请求结果仍在原状态目录。
 
-每个应用同一系统账户只允许一个接收器，锁在固定的用户目录 `.yjx-feishu-agent-receivers/locks/<app hash>`，与自定义状态目录无关。受管 `serve --managed` 在生命周期锁内先校验启用意图，再识别有效 owner 且确认 PID 已不存在的接收器锁，通过恢复互斥、二次 owner/token/PID 检查后回收，随后重新申请接收器锁。登录启动和任务失败重启因此可从上次进程突然退出恢复。独立 `serve` 和手动 `start` 遇到残留锁仍要求明确检查后执行：
+每个应用同一系统账户只允许一个接收器，锁在固定的用户目录 `.yjx-feishu-agent-receivers/locks/<app hash>`，与自定义状态目录无关。`receiver.mjs start` 和受管 `serve --managed` 都在生命周期锁内识别有效 owner 且确认 PID 已不存在的接收器锁，通过恢复互斥、二次 owner/token/PID 检查后回收，随后继续启动。受管 `serve` 还须先校验启用意图；显式 `start` 则重新启用恢复。手动启动、登录启动和任务失败重启均可回收死亡锁，不需先单独清锁。这不增加任务重试次数，也不保证操作系统在所有退出情形下触发重试。独立 `serve` 保留拒绝残留锁的行为；只需回收死亡锁而暂不启动时，可执行：
 
 ```sh
 node skills/yjx-feishu-agent/scripts/receiver.mjs recover-lock

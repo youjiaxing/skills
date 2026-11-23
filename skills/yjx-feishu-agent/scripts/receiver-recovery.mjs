@@ -20,8 +20,8 @@ export async function setRecovery(paths, stateDir, enabled) {
   });
 }
 
-// Managed logon/failure restart only, under the lifecycle lock and after policy
-// validation. This never touches Codex sender locks or unsettled request records.
+// Called under the lifecycle lock by explicit start, or by managed serve after
+// policy validation. Never touches Codex sender locks or unsettled requests.
 export async function recoverManagedReceiver(appId, options = {}) {
   const status = await receiverStatus(appId, options);
   if (status.state !== 'stale_lock') return { recovered: false, state: status.state };

@@ -10,8 +10,9 @@ import { defaultStateDir } from './codex.mjs';
 import { loadCredentials } from './feishu-credentials.mjs';
 import { receiverPaths, receiverStatus, recoverReceiverLock, readJson, readRuntimeSnapshot, atomicJson, processAlive } from './receiver-runtime.mjs';
 import { outboundFollowUpSummary } from './outbound-followup.mjs';
-import { withReceiverControl, recoveryEnabled, setRecovery } from './receiver-recovery.mjs';
+import { withReceiverControl, recoveryEnabled, setRecovery, recoverManagedReceiver } from './receiver-recovery.mjs';
 import { deliverySummary } from './message-diagnostics.mjs';
+import { receiverDiagnosis } from './receiver-diagnostics.mjs';
 
 const execute = promisify(execFile);
 const script = fileURLToPath(new URL('./feishu.mjs', import.meta.url));
@@ -166,15 +167,21 @@ async function startPosix(paths, stateDir) {
 export async function main(argv) {
   const [command, ...rest] = argv;
   if (!command || command === '--help') {
-    process.stdout.write('Usage: node receiver.mjs start|stop|status|recover-lock [--state-dir PATH]\nWindows: current-user logon task with up to three failure retries. stop disables managed auto-start until start.\nmacOS/Linux: detached Node process; no scheduler installed.\nrecover-lock is explicit and only removes a receiver lock whose PID is confirmed absent.\n');
+    process.stdout.write('Usage: node receiver.mjs start|stop|status|diagnose|recover-lock [--state-dir PATH]\nWindows: current-user logon task with up to three failure retries. stop disables managed auto-start until start.\nmacOS/Linux: detached Node process; no scheduler installed.\ndiagnose is read-only; Windows task/process metadata and event availability are queried over the last 7 days.\nrecover-lock is explicit and only removes a receiver lock whose PID is confirmed absent.\n');
     return;
   }
-  if (!['start', 'stop', 'status', 'recover-lock'].includes(command) ||
+  if (!['start', 'stop', 'status', 'diagnose', 'recover-lock'].includes(command) ||
       (rest.length && (rest.length !== 2 || rest[0] !== '--state-dir' || !rest[1]))) throw new Error('Invalid arguments');
   const stateDir = path.resolve(rest[1] ?? defaultStateDir());
   const { appId } = await loadCredentials(stateDir);
   const paths = receiverPaths(appId);
   const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
+  if (command === 'diagnose') {
+    print(await receiverDiagnosis(appId, stateDir, { expectedAction: {
+      node: process.execPath, args: [script, 'serve', '--managed', '--state-dir', stateDir].map(windowsArgument).join(' '), cwd: path.dirname(script),
+    } }));
+    return;
+  }
   const status = await receiverStatus(appId);
   if (command === 'status') {
     const failure = await readRuntimeSnapshot(path.join(paths.runtime, 'last-failure.json'));
@@ -205,8 +212,8 @@ export async function main(argv) {
     throw new Error('Graceful stop is still pending; inspect status instead of force-killing');
   }
   await withReceiverControl(paths, async () => {
-    const current = await receiverStatus(appId);
-    if (!['running', 'stopped'].includes(current.state)) throw new Error('Receiver lock needs inspection; use status and explicit recover-lock for a dead owner');
+    const current = await recoverManagedReceiver(appId);
+    if (!['running', 'stopped'].includes(current.state)) throw new Error('Receiver ownership is not confirmed; inspect status and receiver locks before starting');
     await setRecovery(paths, stateDir, true);
     await rm(path.join(paths.runtime, 'stop.json'), { force: true });
     if (process.platform === 'win32') await startWindows(paths, stateDir);
