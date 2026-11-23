@@ -118,14 +118,14 @@ function createHarness(options = {}) {
     await proxy.handleUpstreamMessage(JSON.stringify(msg));
   }
 
-  async function waitForClientMessage(predicate, timeoutMs = 2000) {
+  async function waitForMessage(messages, predicate, timeoutMs = 2000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const found = clientMessages.find(predicate);
+      const found = messages.find(predicate);
       if (found) return found;
       await new Promise((r) => setTimeout(r, 10));
     }
-    throw new Error(`Timed out waiting for client message. Seen: ${JSON.stringify(clientMessages)}`);
+    throw new Error(`Timed out waiting for message. Seen: ${JSON.stringify(messages)}`);
   }
 
   return {
@@ -135,9 +135,273 @@ function createHarness(options = {}) {
     retiredReasons,
     sendFromClient,
     sendFromUpstream,
-    waitForClientMessage,
+    waitForClientMessage: (predicate, timeoutMs) => waitForMessage(clientMessages, predicate, timeoutMs),
+    waitForUpstreamMessage: (predicate, timeoutMs) => waitForMessage(upstreamMessages, predicate, timeoutMs),
   };
 }
+
+describe('live model catalog refresh', () => {
+  async function catalogHarness({ legacy = false } = {}) {
+    const installDir = await makeTempDir();
+    const options = [
+      { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'alpha',
+        options: [{ value: 'alpha', name: 'Alpha' }, { value: 'beta', name: 'Beta' }] },
+      { id: 'effort', name: 'Effort', type: 'select', currentValue: 'low',
+        options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
+    ];
+    let nextId = 1;
+    const heldMethods = new Set();
+    const h = createHarness({ installDir, onUpstreamMessage(msg, proxy) {
+      if (heldMethods.has(msg.method)) return;
+      let result;
+      if (msg.method === 'initialize') result = { protocolVersion: 1 };
+      if (msg.method === 'session/new' || msg.method === 'session/resume') {
+        result = { sessionId: msg.params.sessionId || `s-${msg.id}`,
+          ...(legacy ? { models: { currentModelId: 'alpha', availableModels: options[0].options.map(
+            (item) => ({ modelId: item.value, name: item.name }),
+          ) } } : { configOptions: structuredClone(options) }),
+        };
+      }
+      if (msg.method === 'session/set_model') {
+        if (msg.params.modelId === 'rejected') {
+          void proxy.handleUpstreamMessage(JSON.stringify({ jsonrpc: '2.0', id: msg.id,
+            error: { code: -32000, message: 'rejected' } }));
+          return;
+        }
+        result = {};
+      }
+      if (result) void proxy.handleUpstreamMessage(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+    } });
+    async function request(method, params = {}) {
+      const id = nextId++;
+      await h.sendFromClient({ jsonrpc: '2.0', id, method, params });
+      return await h.waitForClientMessage((msg) => msg.id === id);
+    }
+    async function prompt(sessionId) {
+      const id = nextId++;
+      await h.sendFromClient({ jsonrpc: '2.0', id, method: 'session/prompt',
+        params: { sessionId, prompt: [{ type: 'text', text: 'hello' }] } });
+      await h.waitForUpstreamMessage((msg) => msg.id === id);
+      return id;
+    }
+    async function usage(sessionId, size, extra = {}) {
+      await h.sendFromUpstream({ jsonrpc: '2.0', method: 'session/update',
+        params: { sessionId, ...extra, update: { sessionUpdate: 'usage_update', used: 1000, size } } });
+    }
+    async function finish(id) {
+      await h.sendFromUpstream({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+      await h.waitForClientMessage((msg) => msg.id === id);
+    }
+    const updates = (sessionId) => h.clientMessages.filter((msg) => msg.params?.sessionId === sessionId
+      && msg.params.update?.sessionUpdate === 'config_option_update');
+    await request('initialize', { protocolVersion: 1 });
+    return { ...h, installDir, options, heldMethods, request, prompt, usage, finish, updates };
+  }
+
+  const model = (msg) => msg.params.update.configOptions.find((option) => option.id === 'model');
+
+  it('publishes variants in the same live session, deduplicates, and adjusts to smaller native windows', async () => {
+    const h = await catalogHarness();
+    const setup = await h.request('session/new');
+    const sid = setup.result.sessionId;
+    assert.deepEqual(setup.result.configOptions[0].options.map((item) => item.value), ['alpha', 'beta']);
+    const id = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.deepEqual(model(h.updates(sid).at(-1)).options.map((item) => item.value),
+      ['alpha', 'alpha-256k', 'alpha-384k', 'alpha-full', 'beta']);
+    assert.equal(model(h.updates(sid).at(-1)).currentValue, 'alpha');
+    assert.deepEqual(h.updates(sid).at(-1).params.update.configOptions[1], h.options[1]);
+    const count = h.updates(sid).length;
+    await h.usage(sid, 1048576);
+    assert.equal(h.updates(sid).length, count);
+    await h.usage(sid, 300000);
+    assert.deepEqual(model(h.updates(sid).at(-1)).options.map((item) => item.value),
+      ['alpha', 'alpha-256k', 'beta']);
+    await h.finish(id);
+  });
+
+  it('keeps committed model and variant selections when model switches return empty results or fail', async () => {
+    const h = await catalogHarness();
+    const sid = (await h.request('session/new')).result.sessionId;
+    await h.request('session/set_model', { sessionId: sid, modelId: 'beta' });
+    let id = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.equal(model(h.updates(sid).at(-1)).currentValue, 'beta');
+    await h.finish(id);
+    await h.request('session/set_model', { sessionId: sid, modelId: 'beta-384k' });
+    await h.waitForClientMessage((msg) => msg.params?.sessionId === sid
+      && msg.params.update?.configOptions?.[0]?.currentValue === 'beta-384k');
+    const rejected = await h.request('session/set_model', { sessionId: sid, modelId: 'rejected' });
+    assert.ok(rejected.error);
+    id = await h.prompt(sid);
+    await h.usage(sid, 1000000);
+    assert.equal(model(h.updates(sid).at(-1)).currentValue, 'beta-384k');
+    assert.equal(h.proxy.getState().sessions.get(sid).variantId, 'beta-384k');
+    await h.finish(id);
+  });
+
+  it('uses non-model configuration responses and preserves newer configuration notifications', async () => {
+    const h = await catalogHarness();
+    const sid = (await h.request('session/new')).result.sessionId;
+    const configId = 80;
+    await h.sendFromClient({ jsonrpc: '2.0', id: configId, method: 'session/set_config_option',
+      params: { sessionId: sid, configId: 'effort', value: 'high' } });
+    await h.waitForUpstreamMessage((msg) => msg.id === configId);
+    const configured = structuredClone(h.options);
+    configured[1].currentValue = 'high';
+    await h.sendFromUpstream({ jsonrpc: '2.0', id: configId, result: { configOptions: configured } });
+    await h.waitForClientMessage((msg) => msg.id === configId);
+    let id = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.equal(h.updates(sid).at(-1).params.update.configOptions[1].currentValue, 'high');
+    configured[1].currentValue = 'low';
+    await h.sendFromUpstream({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: sid,
+      update: { sessionUpdate: 'config_option_update', configOptions: configured } } });
+    await h.usage(sid, 1000000);
+    assert.equal(h.updates(sid).at(-1).params.update.configOptions[1].currentValue, 'low');
+    await h.finish(id);
+    // A success without configOptions updates only the requested value.
+    await h.sendFromClient({ jsonrpc: '2.0', id: 81, method: 'session/set_config_option',
+      params: { sessionId: sid, configId: 'effort', value: 'high' } });
+    await h.waitForUpstreamMessage((msg) => msg.id === 81);
+    await h.sendFromUpstream({ jsonrpc: '2.0', id: 81, result: {} });
+    await h.waitForClientMessage((msg) => msg.id === 81);
+    id = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.equal(h.updates(sid).at(-1).params.update.configOptions[1].currentValue, 'high');
+    await h.finish(id);
+  });
+
+  it('refreshes other sessions without changing their current models and excludes closed sessions', async () => {
+    const h = await catalogHarness();
+    const a = (await h.request('session/new')).result.sessionId;
+    const b = (await h.request('session/new')).result.sessionId;
+    const closed = (await h.request('session/new')).result.sessionId;
+    await h.request('session/set_model', { sessionId: b, modelId: 'beta' });
+    await h.sendFromClient({ jsonrpc: '2.0', method: 'session/close', params: { sessionId: closed } });
+    const beforeClosed = h.updates(closed).length;
+    const id = await h.prompt(a);
+    await h.usage(a, 1048576);
+    assert.ok(model(h.updates(b).at(-1)).options.some((option) => option.value === 'alpha-384k'));
+    assert.equal(model(h.updates(b).at(-1)).currentValue, 'beta');
+    assert.equal(h.updates(closed).length, beforeClosed);
+    await h.finish(id);
+  });
+
+  it('retries failed alias writes on unchanged usage and still forwards usage and prompt results', async () => {
+    const h = await catalogHarness();
+    const sid = (await h.request('session/new')).result.sessionId;
+    const variantsDir = path.join(h.installDir, 'cache', 'variants');
+    await writeFile(variantsDir, 'block alias writes');
+    const id = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.equal(h.updates(sid).length, 0);
+    assert.ok(h.clientMessages.some((msg) => msg.params?.update?.sessionUpdate === 'usage_update'
+      && msg.params.update.size === 512000));
+    await h.finish(id);
+    await h.sendFromClient({ jsonrpc: '2.0', id: 80, method: 'session/set_config_option',
+      params: { sessionId: sid, configId: 'effort', value: 'high' } });
+    await h.waitForUpstreamMessage((msg) => msg.id === 80);
+    const configured = structuredClone(h.options);
+    configured[1].currentValue = 'high';
+    await h.sendFromUpstream({ jsonrpc: '2.0', id: 80, result: { configOptions: configured } });
+    const response = await h.waitForClientMessage((msg) => msg.id === 80);
+    assert.equal(response.result.configOptions[0].currentValue, 'alpha');
+    assert.equal(response.result.configOptions[1].currentValue, 'high');
+    assert.equal(h.clientMessages.filter((msg) => msg.id === 80).length, 1);
+    await rm(variantsDir);
+    const retry = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.ok(model(h.updates(sid).at(-1)).options.some((item) => item.value === 'alpha-384k'));
+    assert.equal(h.updates(sid).at(-1).params.update.configOptions[1].currentValue, 'high');
+    await h.finish(retry);
+  });
+
+  it('defers a catalog refresh during another session model switch and ignores stale usage', async () => {
+    const h = await catalogHarness();
+    const a = (await h.request('session/new')).result.sessionId;
+    const b = (await h.request('session/new')).result.sessionId;
+    h.heldMethods.add('session/set_model');
+    await h.sendFromClient({ jsonrpc: '2.0', id: 80, method: 'session/set_model',
+      params: { sessionId: b, modelId: 'beta' } });
+    await h.waitForUpstreamMessage((msg) => msg.id === 80);
+    const id = await h.prompt(a);
+    await h.usage(a, 1048576);
+    assert.equal(h.updates(b).length, 0);
+    await h.usage(b, 2000000);
+    assert.equal(await readModelWindow(h.installDir, 'beta'), null);
+    await h.sendFromUpstream({ jsonrpc: '2.0', id: 80, result: {} });
+    await h.waitForClientMessage((msg) => msg.id === 80);
+    const refreshed = await h.waitForClientMessage((msg) => msg.params?.sessionId === b
+      && msg.params.update?.configOptions?.[0]?.options.some((option) => option.value === 'alpha-384k'));
+    assert.equal(model(refreshed).currentValue, 'beta');
+    await h.finish(id);
+  });
+
+  it('defers refresh during resume and retains the committed variant after replay', async () => {
+    const h = await catalogHarness();
+    const a = (await h.request('session/new')).result.sessionId;
+    const b = (await h.request('session/new')).result.sessionId;
+    h.heldMethods.add('session/resume');
+    await h.sendFromClient({ jsonrpc: '2.0', id: 80, method: 'session/resume', params: { sessionId: b } });
+    await h.waitForUpstreamMessage((msg) => msg.id === 80);
+    const replay = structuredClone(h.options);
+    replay[1].currentValue = 'high';
+    await h.sendFromUpstream({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: b,
+      update: { sessionUpdate: 'config_option_update', configOptions: replay } } });
+    const id = await h.prompt(a);
+    await h.usage(a, 1048576);
+    assert.equal(h.updates(b).length, 1, 'only forwarded replay metadata while resume is pending');
+    await h.sendFromUpstream({ jsonrpc: '2.0', id: 80,
+      result: { sessionId: b, configOptions: structuredClone(h.options) } });
+    const resumed = await h.waitForClientMessage((msg) => msg.id === 80);
+    assert.ok(resumed.result.configOptions[0].options.some((option) => option.value === 'alpha-384k'));
+    assert.equal(resumed.result.configOptions[1].currentValue, 'low');
+    assert.equal(h.proxy.getState().sessions.get(b).variantId, 'alpha');
+    await h.finish(id);
+  });
+
+  it('refreshes from in-memory windows even when the window cache cannot be written', async () => {
+    const h = await catalogHarness();
+    const sid = (await h.request('session/new')).result.sessionId;
+    await writeFile(path.join(h.installDir, 'cache', 'models'), 'block window writes');
+    const id = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.ok(model(h.updates(sid).at(-1)).options.some((item) => item.value === 'alpha-full'));
+    await h.finish(id);
+  });
+
+  it('ignores replay windows and replay configuration snapshots', async () => {
+    const h = await catalogHarness();
+    const sid = (await h.request('session/new')).result.sessionId;
+    const id = await h.prompt(sid);
+    await h.usage(sid, 1048576, { _meta: { isReplay: true } });
+    assert.equal(h.updates(sid).length, 0);
+    assert.equal(await readModelWindow(h.installDir, 'alpha'), null);
+    const replay = structuredClone(h.options);
+    replay[1].currentValue = 'high';
+    await h.sendFromUpstream({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: sid,
+      _meta: { isReplay: true }, update: { sessionUpdate: 'config_option_update', configOptions: replay } } });
+    await h.usage(sid, 1048576);
+    assert.equal(h.updates(sid).at(-1).params.update.configOptions[1].currentValue, 'low');
+    await h.finish(id);
+  });
+
+  it('publishes legacy model lists through config updates and survives resumed sessions', async () => {
+    const h = await catalogHarness({ legacy: true });
+    const sid = (await h.request('session/new')).result.sessionId;
+    let id = await h.prompt(sid);
+    await h.usage(sid, 1048576);
+    assert.ok(model(h.updates(sid).at(-1)).options.some((item) => item.value === 'alpha-384k'));
+    await h.finish(id);
+    await h.request('session/set_model', { sessionId: sid, modelId: 'alpha-384k' });
+    await h.request('session/resume', { sessionId: sid });
+    id = await h.prompt(sid);
+    await h.usage(sid, 1000000);
+    assert.equal(model(h.updates(sid).at(-1)).currentValue, 'alpha-384k');
+    await h.finish(id);
+  });
+});
 
 describe('acp-proxy protocol gating and variant management', () => {
   it('enters passthrough when protocolVersion !== 1 and still translates historical synthetic IDs', async () => {
