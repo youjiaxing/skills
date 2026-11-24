@@ -41,6 +41,14 @@
 - 不采用：每个动作都反向准备的绝对化要求、统一时长比例、套用UI循环动效、为流畅而排除硬切。原文未提供项目所需的完整配音/绘稿/渲染实现。
 - [MIT许可证](https://github.com/dylantarre/animation-principles/blob/83597134ba8ff59838270f94d7ac7282ffa3b54d/LICENSE)。
 
+## 视频生成与提示词外部参考（2026-11-24 增补）
+
+- **video-prompting-skill**（固定提交：[79ecf65](https://github.com/Square-Zero-Labs/video-prompting-skill/tree/79ecf65e696733670850cc3fe15e0c844e47bdeb)，`Apache-2.0`）：已读 [SKILL.md](https://github.com/Square-Zero-Labs/video-prompting-skill/blob/79ecf65e696733670850cc3fe15e0c844e47bdeb/video-prompting/SKILL.md) 及仓库文件结构。借鉴 I2V 只描写变化量而不重述静态画风、按动作选最短自然时长、提示词与外部控制参数分离，整理入[视频生成与图生视频提示词规范](video-generation-prompting.md)；不整包引入或依赖其细分模型（`ltx2`、`ovi` 等）全套模版。
+- **openmontage**（固定提交：[2e003e6](https://github.com/openmontageinc/openmontage/tree/2e003e65fa99a0f329478a2c1cdcf26bc481933a)，根仓库 `AGPL-3.0`）：只读核查 [grok-media](https://github.com/openmontageinc/openmontage/blob/2e003e65fa99a0f329478a2c1cdcf26bc481933a/.agents/skills/grok-media/SKILL.md)、[seedance-2-5/reference/techniques.md](https://github.com/openmontageinc/openmontage/blob/2e003e65fa99a0f329478a2c1cdcf26bc481933a/.agents/skills/seedance-2-5/reference/techniques.md) 与目录边界。**仅以自有文字吸收** `STILLNESS LOCK` 显式静止约束与 Grok 短拍/多参考分工经验；不复制上游代码或提示词原文，不引入其官方直连 API/价格假设、自有 TTS 工具及冲突的 `hyperframes` 技能目录。
+- **inference-sh/skills**（固定提交：[13ccb5e](https://github.com/inference-sh/skills/tree/13ccb5ea05deaa3ff9c8ba5c78d1e37756cc14b5)，未见根许可证）：只读核查 [image-to-video](https://github.com/inference-sh/skills/blob/13ccb5ea05deaa3ff9c8ba5c78d1e37756cc14b5/tools/video/image-to-video/SKILL.md) 与 [video-prompting-guide](https://github.com/inference-sh/skills/blob/13ccb5ea05deaa3ff9c8ba5c78d1e37756cc14b5/guides/prompting/video-prompting-guide/SKILL.md) 正文。只参考 *Subtle > Dramatic* 动作克制与单主镜头运动描述原则；不安装其 `belt` CLI 封装，不抄录原文件。
+
+以上三条仅为经核查的外部候选方法提炼，未作为项目成片质量或跨通道契约保证。
+
 ## 复用与维护
 
 本文与相邻参考为针对本流程重述的方法总结，没有复制整个上游 Skill 或组件源码。以后复制/改编实质文档、代码或素材时，在副本保留对应版权、许可证和必要 NOTICE，并标记修改；字体、第三方依赖与服务内容按各自条款处理。
