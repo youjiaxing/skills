@@ -46,7 +46,7 @@ description: 管理 T3 Code 的 Antigravity ACP 上下文封顶代理（macOS �
 - `variantCaps`：额外变体后缀列表（如 `{ "suffix": "-256k", "label": "256k", "capTokens": 256000 }`）。
 - `includeFullVariant`：是否为超过默认封顶的模型暴露原生无封顶 `-full` 档（默认 `true`）。
 
-原生窗口未知时仅暴露上游原始模型 ID，不根据默认封顶猜测并创建档位；收到真实 `usage_update.size` 并缓存后，后续新建或刷新会话才按已观测窗口展开适用档位。已有会话的持久化档位选择会为恢复连续性保留。
+原生窗口未知时仅暴露上游原始模型 ID，不根据默认封顶猜测并创建档位；收到可靠的实时 `usage_update.size` 后，自动向当前代理进程中受影响的会话发布适用变体，无需新建会话。刷新保留当前模型、变体选择与其他配置；失败时保留待刷新状态，在后续实时用量通知或配置操作结束时重试。已有会话的持久化档位选择会为恢复连续性保留。
 
 完成条件：`config.json` 可通过 `node scripts/agy-proxy.mjs --status` 解析并回显预期参数。
 

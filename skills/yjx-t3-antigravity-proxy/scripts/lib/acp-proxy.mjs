@@ -172,6 +172,10 @@ export function createAcpProxySession(opts) {
     const prev = modelWindowCache.get(baseId);
     modelWindowCache.set(baseId, nativeSize);
     if (prev !== nativeSize) {
+      for (const session of sessions.values()) {
+        const { rawEntries } = registerUpstreamIdsFromSetup({ configOptions: session.rawConfigOptions });
+        if (rawEntries.some((entry) => entry.value === baseId)) session.catalogDirty = true;
+      }
       try {
         await writeModelWindow(installDir, baseId, nativeSize);
       } catch (err) {
@@ -199,6 +203,12 @@ export function createAcpProxySession(opts) {
         pendingCompact: false,
         activeCompact: null,
         activeTurnCancel: null,
+        rawConfigOptions: null,
+        configRevision: 0,
+        configBusy: false,
+        catalogReady: false,
+        catalogDirty: false,
+        publishedConfig: null,
         queue: Promise.resolve(),
       };
       sessions.set(sessionId, session);
@@ -212,6 +222,94 @@ export function createAcpProxySession(opts) {
       logError(`Session ${session.sessionId} task failed: ${err?.message || err}`);
     });
     return run;
+  }
+
+  function enqueueConfiguration(session, task) {
+    return enqueueSession(session, async () => {
+      session.configBusy = true;
+      session.configRevision += 1;
+      session.catalogDirty = true;
+      try {
+        return await task();
+      } finally {
+        syncConfigValue(session, 'model', session.baseId);
+        session.configBusy = false;
+        // Never wait for the session queue from the upstream queue: an active
+        // prompt may be waiting for a response behind the current notification.
+        void enqueueUpstream(refreshPendingCatalogs).catch((err) => {
+          logError(`Failed refreshing model catalogs: ${err?.message || err}`);
+        });
+      }
+    });
+  }
+
+  function configOptionsFromSetup(setup) {
+    if (Array.isArray(setup?.configOptions)) return setup.configOptions;
+    if (!Array.isArray(setup?.models?.availableModels)) return null;
+    return [{
+      id: 'model', name: 'Model', category: 'model', type: 'select',
+      currentValue: setup.models.currentModelId,
+      options: setup.models.availableModels.map((model) => ({
+        value: model.modelId, name: model.name,
+        ...(model.description !== undefined ? { description: model.description } : {}),
+      })),
+    }];
+  }
+
+  function rememberSetup(session, setup) {
+    const options = configOptionsFromSetup(setup);
+    if (options === null) return;
+    session.rawConfigOptions = structuredClone(options);
+    session.configRevision += 1;
+    session.catalogDirty = true;
+  }
+
+  function syncConfigValue(session, configId, value) {
+    if (value === null || value === undefined || !session.rawConfigOptions) return;
+    const option = session.rawConfigOptions.find((item) => item.id === configId
+      || (configId === 'model' && item.category === 'model'));
+    if (option && option.currentValue !== value) {
+      option.currentValue = value;
+      session.configRevision += 1;
+      session.catalogDirty = true;
+    }
+  }
+
+  function rememberPublished(session, setup) {
+    const options = configOptionsFromSetup(setup);
+    if (options === null) return;
+    session.publishedConfig = JSON.stringify(options);
+  }
+
+  async function refreshPendingCatalogs() {
+    for (const session of sessions.values()) {
+      if (!session.catalogDirty || !session.catalogReady || session.configBusy
+        || session.inReplay || session.inModelSwitch || !session.rawConfigOptions) continue;
+      const revision = session.configRevision;
+      try {
+        const rewritten = await rewriteSetupObject({
+          configOptions: structuredClone(session.rawConfigOptions),
+        }, session);
+        if (sessions.get(session.sessionId) !== session || session.configRevision !== revision
+          || session.configBusy || session.inReplay || session.inModelSwitch) continue;
+        const signature = JSON.stringify(rewritten.configOptions);
+        if (signature !== session.publishedConfig) {
+          sendToClient({
+            jsonrpc: '2.0', method: 'session/update',
+            params: {
+              sessionId: session.sessionId,
+              update: { sessionUpdate: 'config_option_update', configOptions: rewritten.configOptions },
+            },
+          });
+          session.publishedConfig = signature;
+        }
+        session.catalogDirty = false;
+      } catch (err) {
+        // Keep the dirty bit so a later live usage update can retry, even if
+        // the observed window itself has not changed.
+        logError(`Failed refreshing model catalog for ${session.sessionId}: ${err?.message || err}`);
+      }
+    }
   }
 
   function sendInternalRequest(method, params) {
@@ -655,6 +753,7 @@ export function createAcpProxySession(opts) {
           return;
         }
         const session = getOrCreateSession(resp.result.sessionId);
+        rememberSetup(session, resp.result);
         const rewritten = await rewriteSetupObject(resp.result, session, null);
         const modelOpt = rewritten.configOptions?.find((o) => o && (o.id === 'model' || o.category === 'model'));
         const currentModelId = modelOpt?.currentValue ?? rewritten.models?.currentModelId ?? null;
@@ -674,13 +773,16 @@ export function createAcpProxySession(opts) {
           });
         }
         sendToClient({ ...resp, result: rewritten });
+        rememberPublished(session, rewritten);
+        session.catalogReady = true;
+        void enqueueUpstream(refreshPendingCatalogs);
       });
       return;
     }
 
     if ((msg.method === 'session/load' || msg.method === 'session/resume') && msg.params?.sessionId) {
       const session = getOrCreateSession(msg.params.sessionId);
-      enqueueSession(session, async () => {
+      enqueueConfiguration(session, async () => {
         const persisted = await readSessionSelection(installDir, session.sessionId);
         if (persisted && persisted.variantId !== persisted.baseId && conflictedVariantIds.has(persisted.variantId)) {
           sendToClient({
@@ -721,6 +823,7 @@ export function createAcpProxySession(opts) {
           return;
         }
 
+        rememberSetup(session, resp.result);
         const rewritten = await rewriteSetupObject(resp.result, session, persisted);
         if (persisted) {
           session.variantId = persisted.variantId;
@@ -739,6 +842,8 @@ export function createAcpProxySession(opts) {
         }
         session.lastNativeSize = session.baseId ? await getModelNativeSize(session.baseId) : null;
         sendToClient({ ...resp, result: rewritten });
+        rememberPublished(session, rewritten);
+        session.catalogReady = true;
       });
       return;
     }
@@ -748,7 +853,7 @@ export function createAcpProxySession(opts) {
       && msg.params?.sessionId
     ) {
       const session = getOrCreateSession(msg.params.sessionId);
-      enqueueSession(session, async () => {
+      enqueueConfiguration(session, async () => {
         const requestedVariantId = msg.method === 'session/set_model' ? msg.params.modelId : msg.params.value;
         if (session.conflictedVariantId && requestedVariantId === session.conflictedVariantId) {
           sendToClient({
@@ -808,6 +913,8 @@ export function createAcpProxySession(opts) {
         session.capTokens = target.capTokens;
         session.isNativeMax = Boolean(target.isNativeMax);
         session.conflictedVariantId = null;
+        rememberSetup(session, resp.result);
+        syncConfigValue(session, 'model', session.baseId);
         await writeSessionSelection(installDir, {
           sessionId: session.sessionId,
           variantId: session.variantId,
@@ -849,9 +956,45 @@ export function createAcpProxySession(opts) {
         if (resp.result && Array.isArray(resp.result.configOptions)) {
           const rewritten = await rewriteSetupObject(resp.result, session, null);
           sendToClient({ ...resp, result: rewritten });
+          rememberPublished(session, rewritten);
         } else {
           sendToClient(resp);
         }
+      });
+      return;
+    }
+
+    if (msg.method === 'session/set_config_option' && msg.params?.sessionId) {
+      const session = getOrCreateSession(msg.params.sessionId);
+      enqueueConfiguration(session, async () => {
+        const resp = await forwardClientRequest(msg);
+        if (resp.error) {
+          sendToClient(resp);
+          return;
+        }
+        rememberSetup(session, resp.result);
+        if (!Array.isArray(resp.result?.configOptions)) {
+          syncConfigValue(session, msg.params.configId, msg.params.value);
+        }
+        let rewritten;
+        try {
+          rewritten = await rewriteSetupObject(resp.result, session);
+        } catch (err) {
+          logError(`Failed rewriting configuration response for ${session.sessionId}: ${err?.message || err}`);
+          // A catalog failure must not swallow a successful configuration RPC.
+          // Retain the last usable model options alongside fresh non-model values.
+          const published = session.publishedConfig ? JSON.parse(session.publishedConfig) : [];
+          const model = published.find((option) => option.id === 'model' || option.category === 'model');
+          const canKeepModel = model?.options?.some((option) => option.value === session.variantId);
+          rewritten = canKeepModel && Array.isArray(resp.result?.configOptions)
+            ? { ...resp.result, configOptions: resp.result.configOptions.map((option) => (
+              option.id === 'model' || option.category === 'model'
+                ? { ...model, currentValue: session.variantId } : option
+            )) }
+            : resp.result;
+        }
+        sendToClient({ ...resp, result: rewritten });
+        rememberPublished(session, rewritten);
       });
       return;
     }
@@ -992,6 +1135,11 @@ export function createAcpProxySession(opts) {
         }
 
         if (update.sessionUpdate === 'config_option_update' && Array.isArray(update.configOptions)) {
+          if (isReplay || session?.inReplay) {
+            sendToClient(msg);
+            return;
+          }
+          if (session) rememberSetup(session, { configOptions: update.configOptions });
           const persisted = await readSessionSelection(installDir, sessionId);
           const rewritten = await rewriteSetupObject({ configOptions: update.configOptions }, session, persisted);
           sendToClient({
@@ -1004,6 +1152,7 @@ export function createAcpProxySession(opts) {
               },
             },
           });
+          if (session) rememberPublished(session, rewritten);
           return;
         }
 
@@ -1043,6 +1192,7 @@ export function createAcpProxySession(opts) {
               },
             },
           });
+          await refreshPendingCatalogs();
           return;
         }
       }
