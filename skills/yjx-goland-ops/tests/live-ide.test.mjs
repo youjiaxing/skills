@@ -117,6 +117,97 @@ test('real isolated IDE: configuration, Run, diagnostics, logs and Debug', { ski
     assert.equal(inspected.configuration.storage.shared, true);
     assert.ok(inspected.configuration.beforeRun.some(task => task.provider === 'RunConfigurationTask' && task.enabled === false));
     await command('config.check', { config: 'Probe Run' });
+    // Keep a real launch unobserved after processStarted to reproduce a caller
+    // disappearing before terminal receipt. Only the isolated fixture alters ticks.
+    const fixtureProjectPath = normalized(project).replaceAll("'", "\\'");
+    const fixtureRegistry = "def p=com.intellij.openapi.project.ProjectManager.getInstance().openProjects.find{it.basePath && java.nio.file.Files.isSameFile(new File(it.basePath).toPath(),new File('" + fixtureProjectPath + "').toPath())};assert p!=null;def key=com.intellij.openapi.util.Key.findKeyByName('yjx.goland.ops.v1');def registry=ApplicationManager.getApplication().getUserData(key);";
+    const replayMarker = path.join(root, 'unexpected-replay');
+    const markerLiteral = normalized(replayMarker).replaceAll("'", "\\'");
+    let injectionNumber = 0;
+    async function confirmedFixture(body, name) {
+      const receipt = path.join(root, 'injection-' + (++injectionNumber));
+      const receiptLiteral = normalized(receipt).replaceAll("'", "\\'");
+      await fixtureScript("try {" + body + ";new File('" + receiptLiteral + "').text='ok'} catch(Throwable t){new File('" + receiptLiteral + "').text=t.toString()}", name, false);
+      for (let i = 0; i < 100 && !await exists(receipt); i++) await delay(100);
+      assert.equal(await readFile(receipt, 'utf8'), 'ok', name);
+    }
+    async function unobservedLaunch() {
+      await confirmedFixture(fixtureRegistry + "def c=p.messageBus.connect();c.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,[processStarted:{String executorId,env,h->if(env.runProfile.name=='Probe Run'){def r=registry.requests.values().find{!it.done && it.environment?.is(env)};assert r!=null;r.tick=null;c.disconnect()}}] as com.intellij.execution.ExecutionListener)", 'drop-launch-observer');
+      const lost = await command('run.start', { config: 'Probe Run' }, 'unknown', 12000);
+      const status = await command('run.status', { config: 'Probe Run' });
+      assert.ok(status.pending.some(r => r.requestId === lost.requestId));
+      assert.ok(status.sessions.some(s => s.state === 'running'));
+      return { requestId: lost.requestId, session: status.sessions.find(s => s.state === 'running').session };
+    }
+    async function poisonAndTerminate(lost) {
+      const terminated = path.join(root, 'terminated-' + lost.requestId);
+      const terminatedLiteral = normalized(terminated).replaceAll("'", "\\'");
+      await confirmedFixture(fixtureRegistry + "def r=registry.requests['" + lost.requestId + "'];assert !r.done;assert !r.handler.processTerminated;r.tick={new File('" + markerLiteral + "').text='tick replayed'};r.reconcile={new File('" + markerLiteral + "').text='reconcile replayed'};r.handler.addProcessListener([processTerminated:{e->new File('" + terminatedLiteral + "').text='ended'}] as com.intellij.execution.process.ProcessListener);r.handler.destroyProcess()", 'terminate-unobserved-launch');
+      for (let i = 0; i < 100 && !await exists(terminated); i++) await delay(100);
+      assert.equal(await readFile(terminated, 'utf8'), 'ended');
+      await delay(600); // Retain the production observer's console-flush grace.
+    }
+    async function busyUpdate(requestId) {
+      const busy = await command('config.update', { config: 'Probe Run', revision: inspected.configuration.revision, patch: { programArguments: 'MUST_NOT_APPLY' } }, 'failed');
+      assert.equal(busy.code, 'BUSY');
+      assert.ok(busy.message.includes(requestId));
+    }
+    const lost = await unobservedLaunch();
+    // A timed-out but running launch is still occupied, even after status reads.
+    await busyUpdate(lost.requestId);
+    await poisonAndTerminate(lost);
+    // The acquire path must settle the exact prior launch before a new dispatch,
+    // without first using attempt.show or run.status to advance that request.
+    let recovered;
+    for (let i = 0; i < 20; i++) {
+      recovered = await command('run.start', { config: 'Probe Run' }, null, 30000);
+      if (recovered.outcome !== 'failed' || recovered.code !== 'BUSY') break;
+      await delay(250); // Only a confirmed pre-dispatch BUSY rejection is retryable.
+    }
+    if (recovered.outcome !== 'ok') {
+      const diagnostic = path.join(root, 'terminal-observer.txt');
+      const diagnosticLiteral = normalized(diagnostic).replaceAll("'", "\\'");
+      await confirmedFixture(fixtureRegistry + "def r=registry.requests['" + lost.requestId + "'];def s=com.intellij.execution.RunManager.getInstance(p).allSettings.find{it.name=='Probe Run'};new File('" + diagnosticLiteral + "').text=[done:r.done,advancing:r.advancing,phase:r.phase,terminated:r.handler?.processTerminated,error:r.observerError,observer:r.settleTerminal!=null,profileMatch:r.profile==PathManager.configPath,projectMatch:r.project==p.basePath,configurationMatch:r.environment?.runProfile?.is(s.configuration),busyKey:r.busyKey].toString()", 'capture-terminal-observer');
+      console.log(await readFile(diagnostic, 'utf8'));
+    }
+    assert.equal(recovered.outcome, 'ok', JSON.stringify(recovered));
+    assert.notEqual(recovered.session, lost.session);
+    const original = await command('attempt.show', { request: lost.requestId });
+    assert.equal(original.attempt.result.code, 'PROCESS_EXITED');
+    assert.equal(original.attempt.result.requestId, lost.requestId);
+    assert.equal(await exists(replayMarker), false);
+    await command('run.stop', { session: recovered.session });
+
+    const statusLost = await unobservedLaunch();
+    await poisonAndTerminate(statusLost);
+    // A real process has exited, but without its retained handler there is no
+    // trusted terminal proof. Time and the absence of an active session do not suffice.
+    await confirmedFixture(fixtureRegistry + "def r=registry.requests['" + statusLost.requestId + "'];r.fixtureHandler=r.handler;r.handler=null;r.phase='starting'", 'hide-terminal-evidence');
+    assert.ok((await command('run.status')).pending.some(r => r.requestId === statusLost.requestId));
+    await busyUpdate(statusLost.requestId);
+    await confirmedFixture(fixtureRegistry + "def r=registry.requests['" + statusLost.requestId + "'];r.handler=r.fixtureHandler;r.remove('fixtureHandler');r.phase='terminated'", 'restore-terminal-evidence');
+    // Identity mismatches retain the lock, even for a terminated process.
+    await confirmedFixture(fixtureRegistry + "registry.requests['" + statusLost.requestId + "'].profile=p.basePath", 'mismatch-old-profile');
+    await busyUpdate(statusLost.requestId);
+    const mismatched = await command('run.status');
+    assert.ok(mismatched.pending.some(r => r.requestId === statusLost.requestId));
+    await confirmedFixture(fixtureRegistry + "registry.requests['" + statusLost.requestId + "'].profile=PathManager.configPath;registry.requests['" + statusLost.requestId + "'].project=PathManager.configPath", 'mismatch-old-project');
+    await busyUpdate(statusLost.requestId);
+    await confirmedFixture(fixtureRegistry + "registry.requests['" + statusLost.requestId + "'].project=p.basePath", 'restore-old-target');
+    const settled = await command('run.status');
+    assert.ok(!settled.pending.some(r => r.requestId === statusLost.requestId));
+    assert.equal((await command('attempt.show', { request: statusLost.requestId })).attempt.result.code, 'PROCESS_EXITED');
+    assert.equal(await exists(replayMarker), false);
+
+    // A restart still waiting to stop has no safe launch-terminal observer.
+    // Neither an expired deadline nor arbitrary tick/reconcile is release proof.
+    const unresolvedId = '11111111-1111-4111-8111-111111111111';
+    await confirmedFixture(fixtureRegistry + "def s=com.intellij.execution.RunManager.getInstance(p).allSettings.find{it.name=='Probe Run'};def k=p.basePath+'\\n'+s.uniqueID;def r=[id:'" + unresolvedId + "',operation:'run.restart',profile:PathManager.configPath,project:p.basePath,busyKey:k,deadline:0,done:false,phase:'stopping',tick:{new File('" + markerLiteral + "').text='restart replayed'},reconcile:{new File('" + markerLiteral + "').text='reconcile replayed'}];registry.busy[k]=r", 'unresolved-restart');
+    await busyUpdate(unresolvedId);
+    assert.ok((await command('run.status')).pending.some(r => r.requestId === unresolvedId));
+    assert.equal(await exists(replayMarker), false);
+    await confirmedFixture(fixtureRegistry + "registry.busy.entrySet().removeIf{it.value.id=='" + unresolvedId + "'}", 'remove-restart-fixture');
+    if (process.env.GOLAND_OPS_LIVE_FOCUS === 'terminal-recovery') return;
     const clone = await command('config.clone', { config: 'Probe Run', name: 'Probe Copy', patch: { programArguments: 'run' } });
     assert.equal(clone.configuration.storage.shared, false);
     assert.deepEqual(clone.configuration.beforeRun, inspected.configuration.beforeRun);
@@ -304,11 +395,13 @@ test('real isolated IDE: configuration, Run, diagnostics, logs and Debug', { ski
       for (let i = 0; i < 100 && await profilePID(profile); i++) await delay(100);
       for (let i = 0; i < 100 && processAlive(ownPid); i++) await delay(100);
     }
-    await writeFile(path.join(root, 'evidence.json'), JSON.stringify(results, null, 2));
     // Never retain the copied license in diagnostics.
     await rm(path.join(profile, 'goland.key'), { force: true });
+    const residual = await profilePID(profile) || (ownPid && processAlive(ownPid));
+    if (residual && !failure) failure = new Error('Isolated IDE did not exit; retained test directory: ' + root);
+    await writeFile(path.join(root, 'evidence.json'), JSON.stringify(results, null, 2));
     if (failure || process.env.GOLAND_OPS_KEEP_EVIDENCE) console.log('temporary evidence: ' + root);
-    else if (!(await profilePID(profile))) await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+    else if (!residual) await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
     if (failure) throw failure;
   }
 });

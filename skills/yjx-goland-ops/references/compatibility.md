@@ -31,6 +31,8 @@ node --test skills/yjx-goland-ops/tests/transport.test.mjs
 
 环境变量：`GOLAND_OPS_LIVE_IDE`、`GOLAND_OPS_LIVE_SDK`、`GOLAND_OPS_LIVE_LICENSE`。使用仓库中的 `tests/live-ide.test.mjs` 定向执行。测试不得使用业务项目或既有业务服务；失败证据暂留在输出的临时目录，排查结束清理属于本任务的目录。
 
+仅复验旧启动请求的终态收尾时，额外设置 `GOLAND_OPS_LIVE_FOCUS=terminal-recovery`；复用隔离 IDE 夹具后提前收尾，不执行后续配置持久化和 Debug 流程。覆盖运行中及缺少终止证据时保留占用、终止后 acquire/status 收尾、目标身份不符与未决重启的保护，并检查旧 tick/reconcile 未被调用。
+
 静态文档检查只证明链接、格式和打包一致性，不证明 Agent 必然按提示正确操作。维护只测试关键协议、持久化、凭据、并发和重试等功能，不编写模拟用户/助手对话。
 
 ## 当前验收

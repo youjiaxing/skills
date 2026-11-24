@@ -79,28 +79,39 @@ test('baseline/latest changes and running assistant text are not terminal eviden
   assert.equal(waiting.status,'waiting');assert.equal(waiting.error.code,'HOST_INTERACTION_REQUIRED');
 });
 
-test('completed T3 runs with several unphased assistant messages remain unconfirmed',()=>{
+test('completed unphased runs deliver their last assistant message; phased progress needs a final answer',()=>{
   const data=projection();
-  data.messages.push({threadId:target,runId:'run-1',role:'assistant',text:'测试失败只是因为无法直接替换 datetime.now。',streaming:false,createdAt:'2026-11-18T10:00:01Z'});
-  assert.equal(selectT3FinalAnswer(data.messages,'run-1'),null);
+  data.messages.push({threadId:target,runId:'run-1',role:'assistant',text:'最终结论',streaming:false,createdAt:'2026-11-18T10:00:01Z'});
+  assert.equal(selectT3FinalAnswer(data.messages,'run-1'),'最终结论');
   const record=applyT3Projection(baseRecord(),data);
-  assert.equal(record.status,'unconfirmed');
-  assert.equal(record.answer,undefined);
+  assert.equal(record.status,'completed');
+  assert.equal(record.answer,'最终结论');
 
-  const explicit={...data.messages.at(-1),final:true};
-  assert.equal(selectT3FinalAnswer([...data.messages.slice(0,-1),explicit],'run-1'),explicit.text);
+  const ordered=[{runId:'run-1',role:'assistant',text:'later',sequence:2,createdAt:'2026-11-18T09:00:00Z'},
+    {runId:'run-1',role:'assistant',text:'earlier',sequence:1,createdAt:'2026-11-18T11:00:00Z'}];
+  assert.equal(selectT3FinalAnswer(ordered,'run-1'),'later');
+
+  const phased=data.messages.map(message=>message.role==='assistant'?{...message,phase:'commentary'}:message);
+  assert.equal(selectT3FinalAnswer(phased,'run-1'),null);
+  assert.equal(applyT3Projection(baseRecord(),{...data,messages:phased}).status,'unconfirmed');
+  const explicit={...phased[1],phase:'final_answer'};
+  assert.equal(selectT3FinalAnswer([phased[0],explicit,phased[2]],'run-1'),explicit.text);
 });
 
-test('snapshot fallback does not deliver the last progress message as an answer',()=>{
+test('snapshot fallback delivers only for the completed original run',()=>{
   const record={...baseRecord(),turnId:null};
   const data={thread:{threadId:target,latestRunId:'run-1',activeRunId:null,status:'completed'},messages:[
     {role:'user',text:'unique-marker',runId:'run-1'},
     {role:'assistant',text:'正在检查实现。',runId:'run-1'},
-    {role:'assistant',text:'测试失败只是因为无法直接替换 datetime.now。',runId:'run-1'},
+    {role:'assistant',text:'最终结论',runId:'run-1'},
   ]};
   applyT3Snapshot(record,data);
-  assert.equal(record.status,'unconfirmed');
-  assert.equal(record.answer,undefined);
+  assert.equal(record.status,'completed');
+  assert.equal(record.answer,'最终结论');
+  const running={...baseRecord(),turnId:null};
+  applyT3Snapshot(running,{...data,thread:{...data.thread,activeRunId:'run-1',status:'running'}});
+  assert.equal(running.status,'unconfirmed');
+  assert.equal(running.answer,undefined);
 });
 
 test('original run result is recovered after later runs without accepting conflicting identity',()=>{

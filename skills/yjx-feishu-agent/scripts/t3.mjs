@@ -54,25 +54,23 @@ function isExplicitFinalMessage(message) {
     message?.isFinal === true || message?.final === true || message?.finalAnswer === true;
 }
 
-// The T3 projection currently omits message phase. A completed run can therefore
-// contain several persisted assistant messages, including progress updates. In
-// that shape the last message is not evidence of the final answer. Accept a
-// single unphased assistant message for compatibility, or an explicitly marked
-// final message; otherwise keep the request recoverable and unconfirmed.
+// Callers pass only runs already confirmed completed. Providers that label
+// assistant phases (Codex: commentary/final_answer) must supply a final message;
+// phased progress alone stays unconfirmed. Providers without phase labels (ACP,
+// Claude) persist progress and answer alike, so the last message of the
+// completed run is its answer.
 export function selectT3FinalAnswer(messages, runId) {
   if (!Array.isArray(messages)) return null;
   const candidates = messages.filter(message =>
     message?.role === 'assistant' && message.runId === runId &&
     (message.streaming === undefined || message.streaming === false) &&
     typeof message.text === 'string' && message.text.trim());
-  const ordered = [...candidates].sort((a, b) => {
-    const left = Date.parse(a.createdAt);
-    const right = Date.parse(b.createdAt);
-    return (Number.isFinite(left) ? left : 0) - (Number.isFinite(right) ? right : 0);
-  });
+  const order = message => Number.isInteger(message.sequence) ? message.sequence : (Date.parse(message.createdAt) || 0);
+  const ordered = [...candidates].sort((a, b) => order(a) - order(b));
   const explicit = ordered.filter(isExplicitFinalMessage);
   if (explicit.length) return explicit.at(-1).text;
-  return candidates.length === 1 ? candidates[0].text : null;
+  if (ordered.some(message => typeof message.phase === 'string' && message.phase)) return null;
+  return ordered.length ? ordered.at(-1).text : null;
 }
 
 function harvestFromMessages(record, messages) {

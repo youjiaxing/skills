@@ -129,6 +129,7 @@ def finish = { Map result ->
     record.done = true
     record.tick = null
     record.reconcile = null
+    record.settleTerminal = null
     if (record.busyKey && registry.busy[record.busyKey]?.is(record)) registry.busy.remove(record.busyKey)
     publish(result)
 }
@@ -325,8 +326,20 @@ def chooseRun = { p ->
     if (!matches[0].executors.contains('Run')) fail('RUN_EXECUTOR_UNVERIFIED', '无法证明目标是普通 Run 会话，未执行控制')
     matches[0]
 }
+// Only this dedicated launch observer may settle another request. Its terminal
+// branch cannot dispatch a restart, config write or any other follow-up action.
+def settleTerminal = { prior, String key ->
+    if (prior && !prior.done && prior.busyKey == key && registry.busy[key]?.is(prior) &&
+            samePath(prior.profile, req.profile) && samePath(prior.project, req.project) && prior.settleTerminal != null) {
+        try { prior.settleTerminal() }
+        catch (Throwable t) { prior.observerError = cleanText(t.toString()) } // Keep the lock on uncertain evidence.
+    }
+}
+
 def acquire = { String key ->
     def prior = registry.busy[key]
+    if (prior && !prior.is(record)) settleTerminal(prior, key)
+    prior = registry.busy[key]
     if (prior && !prior.is(record)) fail('BUSY', '配置或会话有未决请求 ' + prior.id)
     registry.busy[key] = record
     record.busyKey = key
@@ -393,7 +406,7 @@ startRun = { p, settings, boolean debug ->
             if (matches(env)) { record.handler = handler; record.phase = 'running'; attachOutput(handler) }
         },
         processTerminated: { String executorId, env, handler, int exitCode ->
-            if (matches(env)) { record.phase = 'terminated'; record.exitCode = exitCode; connection.disconnect() }
+            if (matches(env)) { record.phase = 'terminated'; record.exitCode = exitCode; record.exitObservedAt = now(); connection.disconnect() }
         },
     ] as ExecutionListener)
     record.environment = environment
@@ -433,6 +446,18 @@ startRun = { p, settings, boolean debug ->
             if (sessions.size() == 1) return [outcome: 'ok', debug: debugInfo(debugEntry(p, sessions[0]))]
         }
         null
+    }
+    // Capture exact launch identity. Only confirmed failure/termination is eligible;
+    // running, constructing and unknown launches retain their existing protection.
+    record.settleTerminal = {
+        if (record.done || record.advancing || p.disposed || !record.environment.is(environment) ||
+                record.busyKey != configKey(p, settings) || !environment.runProfile.is(settings.configuration)) return
+        if (!record.launchFailure && !record.handler?.processTerminated) return
+        record.advancing = true
+        try {
+            def answer = startedCondition()
+            if (answer != null && answer.outcome == 'failed') finish(answer)
+        } finally { record.advancing = false }
     }
     watch(startedCondition, false)
     record.startDispatchAttempted = true
@@ -602,6 +627,7 @@ def execute = {
         return
     }
     if (operation == 'run.status') {
+        registry.busy.values().toList().findAll { it.busyKey?.startsWith(p.basePath + '\n') }.each { settleTerminal(it, it.busyKey) }
         def sessions = runSessions(p)
         if (args.session) sessions = sessions.findAll { it.token == args.session }
         if (args.config) { def settings = selectedConfig(p); sessions = sessions.findAll { it.configurations.any { it.uniqueID == settings.uniqueID } } }
