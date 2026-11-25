@@ -280,6 +280,7 @@ export function recordCandidate({
   if (!sessionId) throw new Error("--session-id is required");
   const resolvedDir = getStateDir(stateDir);
   const project = scope === "project" ? resolveProjectIdentity(cwd) : null;
+  const resolvedBaseRoot = scope === "global" ? path.resolve(cwd || process.cwd()) : null;
   const cleanKey = compactText(patternKey, 120);
   const cleanSummary = compactText(summary, LIMITS.summaryMaxChars);
   const cleanFiles = uniqueShortList(relatedFiles, LIMITS.maxRelatedFiles);
@@ -299,6 +300,7 @@ export function recordCandidate({
           seenSessionIds: [sessionId],
           sessions: [sessionId],
           relatedFiles: cleanFiles,
+          ...(resolvedBaseRoot ? { baseRoot: resolvedBaseRoot } : {}),
           firstSeen: nowIso,
           lastSeen: nowIso,
         };
@@ -317,6 +319,14 @@ export function recordCandidate({
       existing.summary = cleanSummary;
       existing.safety = Boolean(existing.safety || safety);
       existing.relatedFiles = uniqueShortList([...(existing.relatedFiles || []), ...cleanFiles], LIMITS.maxRelatedFiles);
+      if (resolvedBaseRoot) {
+        const matchesNew = cleanFiles.some(
+          (f) => !path.isAbsolute(f) && fs.existsSync(path.resolve(resolvedBaseRoot, f))
+        );
+        if (!existing.baseRoot || matchesNew) {
+          existing.baseRoot = resolvedBaseRoot;
+        }
+      }
       existing.lastSeen = nowIso;
       return { action: isNewSession ? "incremented" : "idempotent", entry: existing };
     },
@@ -343,6 +353,7 @@ export function recordDecision({
   if (!summary) throw new Error("--summary is required");
   const resolvedDir = getStateDir(stateDir);
   const project = scope === "project" ? resolveProjectIdentity(cwd) : null;
+  const resolvedBaseRoot = scope === "global" ? path.resolve(cwd || process.cwd()) : null;
   const cleanKey = compactText(patternKey, 120);
 
   return withLockedLedger({
@@ -356,13 +367,30 @@ export function recordDecision({
         [...(prev?.sessions || []), ...(sessionId ? [sessionId] : [])],
         LIMITS.maxStoredSessions
       );
+      const mergedRelatedFiles = uniqueShortList(
+        [...(prev?.relatedFiles || []), ...relatedFiles],
+        LIMITS.maxRelatedFiles
+      );
+      let entryBaseRoot = prev?.baseRoot || null;
+      if (resolvedBaseRoot) {
+        const relPaths = uniqueShortList(
+          [...mergedRelatedFiles, ...(target ? [target] : [])],
+          LIMITS.maxRelatedFiles
+        ).filter((f) => !path.isAbsolute(f));
+        const matchesNew = relPaths.some((f) => fs.existsSync(path.resolve(resolvedBaseRoot, f)));
+        const matchesPrev = entryBaseRoot && relPaths.some((f) => fs.existsSync(path.resolve(entryBaseRoot, f)));
+        if (!entryBaseRoot || matchesNew || !matchesPrev) {
+          entryBaseRoot = resolvedBaseRoot;
+        }
+      }
       const entry = {
         patternKey: cleanKey,
         decision,
         summary: compactText(summary, LIMITS.summaryMaxChars),
         target: target ? compactText(target, 200) : prev?.target || null,
         reason: reason ? compactText(reason, LIMITS.reasonMaxChars) : prev?.reason || null,
-        relatedFiles: uniqueShortList([...(prev?.relatedFiles || []), ...relatedFiles], LIMITS.maxRelatedFiles),
+        relatedFiles: mergedRelatedFiles,
+        ...(entryBaseRoot ? { baseRoot: entryBaseRoot } : {}),
         sessions,
         decidedAt: nowIso,
         followThrough: decision === "applied" ? prev?.followThrough || null : undefined,
@@ -415,13 +443,27 @@ export function markFollowThrough({
   });
 }
 
-function checkMissingFiles(files, baseRoot) {
+function checkEntryFiles(files, scope, entryBaseRoot, fallbackCwd) {
   const missing = [];
+  const unverified = [];
   for (const rel of files || []) {
-    const candidate = path.isAbsolute(rel) ? rel : path.resolve(baseRoot || process.cwd(), rel);
+    if (path.isAbsolute(rel)) {
+      if (!fs.existsSync(rel)) missing.push(rel);
+      continue;
+    }
+    if (scope === "global") {
+      if (entryBaseRoot) {
+        if (!fs.existsSync(path.resolve(entryBaseRoot, rel))) missing.push(rel);
+      } else {
+        const candidate = path.resolve(fallbackCwd || process.cwd(), rel);
+        if (!fs.existsSync(candidate)) unverified.push(rel);
+      }
+      continue;
+    }
+    const candidate = path.resolve(entryBaseRoot || fallbackCwd || process.cwd(), rel);
     if (!fs.existsSync(candidate)) missing.push(rel);
   }
-  return missing;
+  return { missing, unverified };
 }
 
 export function queryLedger({
@@ -459,7 +501,13 @@ export function queryLedger({
   for (const target of scopesToLoad) {
     const ledger = compactLedgerInPlace(readLedgerFile(target.filePath, target.scope, project), nowIso);
     for (const c of ledger.candidates) {
-      const staleFiles = checkMissingFiles(c.relatedFiles, target.baseRoot);
+      const entryBase = target.scope === "global" ? c.baseRoot || null : target.baseRoot;
+      const { missing: staleFiles, unverified: unverifiedFiles } = checkEntryFiles(
+        c.relatedFiles,
+        target.scope,
+        entryBase,
+        cwd
+      );
       const item = {
         scope: target.scope,
         patternKey: c.patternKey,
@@ -469,6 +517,7 @@ export function queryLedger({
         sessions: c.sessions || [],
         relatedFiles: c.relatedFiles || [],
         staleFiles,
+        unverifiedFiles,
         lastSeen: c.lastSeen,
       };
       if (item.distinctSessions >= minSessions || item.safety) {
@@ -497,7 +546,13 @@ export function queryLedger({
         });
       } else if (d.decision === "applied") {
         const filesToCheck = d.relatedFiles?.length ? d.relatedFiles : d.target ? [d.target] : [];
-        const missingFiles = checkMissingFiles(filesToCheck, target.baseRoot);
+        const entryBase = target.scope === "global" ? d.baseRoot || null : target.baseRoot;
+        const { missing: missingFiles, unverified: unverifiedFiles } = checkEntryFiles(
+          filesToCheck,
+          target.scope,
+          entryBase,
+          cwd
+        );
         followThrough.push({
           scope: target.scope,
           patternKey: d.patternKey,
@@ -505,6 +560,7 @@ export function queryLedger({
           target: d.target,
           decidedAt: d.decidedAt,
           missingFiles,
+          unverifiedFiles,
           followThrough: d.followThrough || null,
         });
       }
@@ -543,8 +599,9 @@ function formatQueryMarkdown(res) {
   } else {
     for (const f of res.followThrough) {
       const miss = f.missingFiles.length ? ` | missingFiles=${f.missingFiles.join(", ")}` : "";
+      const unv = f.unverifiedFiles?.length ? ` | unverifiedFiles=${f.unverifiedFiles.join(", ")}` : "";
       const prev = f.followThrough ? ` | prevCheck=${f.followThrough.status}` : "";
-      lines.push(`- [${f.scope}] \`${f.patternKey}\`: ${f.summary} (target: \`${f.target || "n/a"}\`, at ${f.decidedAt}${miss}${prev})`);
+      lines.push(`- [${f.scope}] \`${f.patternKey}\`: ${f.summary} (target: \`${f.target || "n/a"}\`, at ${f.decidedAt}${miss}${unv}${prev})`);
     }
   }
   lines.push("");
@@ -555,7 +612,8 @@ function formatQueryMarkdown(res) {
   } else {
     for (const c of res.readyCandidates) {
       const stale = c.staleFiles.length ? ` | staleFiles=${c.staleFiles.join(", ")}` : "";
-      lines.push(`- [${c.scope}] \`${c.patternKey}\` (${c.distinctSessions} sessions${c.safety ? ", safety" : ""}): ${c.summary}${stale}`);
+      const unv = c.unverifiedFiles?.length ? ` | unverifiedFiles=${c.unverifiedFiles.join(", ")}` : "";
+      lines.push(`- [${c.scope}] \`${c.patternKey}\` (${c.distinctSessions} sessions${c.safety ? ", safety" : ""}): ${c.summary}${stale}${unv}`);
     }
   }
   lines.push("");

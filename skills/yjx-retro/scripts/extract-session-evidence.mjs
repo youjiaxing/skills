@@ -461,6 +461,15 @@ function isCrossContextHandoff(payload) {
   return true;
 }
 
+function isAgentRelayMessage(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  return (
+    payload.creationSource === "mcp" ||
+    payload.createdBy === "agent" ||
+    Boolean(payload.senderThreadId)
+  );
+}
+
 function safeDecodeURIComponent(str) {
   if (typeof str !== "string") return "";
   try {
@@ -752,9 +761,11 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
             rs.lastAssistant = aText;
           }
         } else if (item.type === "user_message" && rs.userPreview === null) {
-          const uText = typeof payload.text === "string" ? payload.text : "";
-          const uCls = classifyUserMessage(uText);
-          if (uCls.kind === "human") rs.userPreview = oneLine(uCls.cleanText, 60);
+          if (!isAgentRelayMessage(payload)) {
+            const uText = typeof payload.text === "string" ? payload.text : "";
+            const uCls = classifyUserMessage(uText);
+            if (uCls.kind === "human") rs.userPreview = oneLine(uCls.cleanText, 60);
+          }
         }
       }
 
@@ -782,7 +793,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
         activeRetroCandidate = null;
         const schedInfo = parseScheduledTaskMessage(item.turn_item_id, payload);
         const text = typeof payload.text === "string" ? payload.text : "";
-        if (!schedInfo && isRetroInvocationText(text) && ord !== null && !retroByOrdinal.has(ord)) {
+        if (!schedInfo && !isAgentRelayMessage(payload) && isRetroInvocationText(text) && ord !== null && !retroByOrdinal.has(ord)) {
           const cls = classifyUserMessage(text);
           const clean = cls.kind === "human" ? cls.cleanText : text.trim();
           const entry = {
@@ -859,6 +870,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
     const rangeScheduledByTask = new Map();
     let rangeScheduledTaskCount = 0;
     let rangeHumanInputCount = 0;
+    let rangeRelayMessageCount = 0;
 
     const outcomeRuns = runs
       .filter((r) => preRunStats.has(r.run_id))
@@ -923,6 +935,8 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
           }
           if (schedInfo.triggerKind === "scheduled-manual") entry.manualCount++;
           else entry.scheduledCount++;
+        } else if (isAgentRelayMessage(payload)) {
+          rangeRelayMessageCount++;
         } else {
           const text = typeof payload.text === "string" ? payload.text : "";
           const cls = classifyUserMessage(text);
@@ -964,6 +978,7 @@ export function preflightT3Thread(dbPath, rawThreadId, opts = {}) {
       rangeScheduledTaskCount,
       rangeScheduledTasks: [...rangeScheduledByTask.values()],
       rangeHumanInputCount,
+      rangeRelayMessageCount,
       forkedFrom: threadPayload.forkedFrom || null,
       relatedSessions: summarizeSessionRelations(discoverT3Relations(db, threadId, {
         ...opts, untilOrdinal: effectiveEndOrdinal,
@@ -1088,6 +1103,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
     const nonZeroTools = [];
     const suspiciousSuccessOutputs = [];
     const humanInputs = [];
+    const relayMessages = [];
     const scheduledTriggers = [];
     const runStatsMap = new Map();
     const contextSegments = [];
@@ -1350,6 +1366,41 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
             name: cls.name,
             path: cls.path,
             sha256: cls.sha256,
+          });
+        } else if (isAgentRelayMessage(payload)) {
+          if (runStats && runStats.triggerKind === "unknown") {
+            runStats.triggerKind = "agent_relay";
+            runStats.triggerLocation = loc;
+            runStats.triggerItemId = item.turn_item_id;
+            runStats.triggerOrdinal = ord;
+          }
+          const relayText = cls.kind === "human" ? cls.cleanText : rawText.trim();
+          const citations = decodeT3Citations(relayText);
+          const attachedContexts = Array.isArray(payload.context?.records)
+            ? payload.context.records.map((r) => ({
+                kind: r.kind || null,
+                threadId: r.threadId || null,
+                environmentId: r.environmentId || null,
+                title: r.title || r.label || null,
+              }))
+            : [];
+          relayMessages.push({
+            index: relayMessages.length + 1,
+            location: loc,
+            itemId: item.turn_item_id,
+            ordinal: ord,
+            timestamp: ts,
+            runId: item.run_id || null,
+            runOrdinal: run?.ordinal ?? null,
+            freshContext: Boolean(run?.freshContext),
+            agent: agentTag,
+            createdBy: payload.createdBy || null,
+            creationSource: payload.creationSource || null,
+            senderThreadId: payload.senderThreadId || null,
+            text: relayText,
+            citations,
+            attachedContexts,
+            precedingAssistant: lastAssistant ? { ...lastAssistant } : null,
           });
         } else if (cls.kind === "human") {
           if (runStats && runStats.triggerKind === "unknown") {
@@ -1685,6 +1736,7 @@ export function analyzeT3Thread(dbPath, rawThreadId, opts = {}) {
       suspiciousSuccessOutputs,
       wrapperCounts: {},
       humanInputs,
+      relayMessages,
     };
   } finally {
     db.close();
@@ -2979,6 +3031,31 @@ function formatMarkdown(report) {
     lines.push("```text");
     lines.push(h.text);
     lines.push("```");
+  }
+  const relayMessages = Array.isArray(report.relayMessages) ? report.relayMessages : [];
+  if (relayMessages.length > 0) {
+    lines.push("");
+    lines.push(`## Relay Messages (${relayMessages.length})`);
+    for (const r of relayMessages) {
+      const agentNote = r.agent ? ` [${r.agent}]` : "";
+      const sourceNote = r.creationSource ? ` source=\`${r.creationSource}\`` : "";
+      const senderNote = r.senderThreadId ? ` senderThread=\`${r.senderThreadId}\`` : "";
+      const itemNote = r.itemId ? ` item \`${r.itemId}\`` : "";
+      lines.push(
+        `### [${r.index}] ${r.location} (ordinal ${r.ordinal}, ${r.timestamp})${agentNote}${sourceNote}${senderNote}${itemNote}`
+      );
+      if (r.precedingAssistant) {
+        lines.push(
+          `> Preceding Assistant (${r.precedingAssistant.location}): ${r.precedingAssistant.preview.replace(
+            /\n/g,
+            " "
+          )}`
+        );
+      }
+      lines.push("```text");
+      lines.push(r.text);
+      lines.push("```");
+    }
   }
   if (Array.isArray(report.toolCalls) && report.toolCalls.length > 0) {
     lines.push("");
